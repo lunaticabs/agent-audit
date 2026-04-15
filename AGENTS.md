@@ -12,11 +12,10 @@ description: Coordinate the repository's Codex-first smart contract audit workfl
 
 ## Tool Skills
 
-Use these repo skills as needed:
+Use these repo skills in `.agents/skills/` as needed:
 
 - `$audit-workspace`
 - `$audit-source-fetch`
-- `$audit-chain-checks`
 - `$audit-ir-builder`
 - `$audit-dependency-scan`
 - `$audit-slither`
@@ -27,17 +26,29 @@ Use these repo skills as needed:
 - `$foundry-anvil`
 - `$foundry-chisel`
 
-## Recommended Review Order
+## Recommended Workflow
 
-1. Create or load a run workspace.
-2. Fetch verified source.
-3. Build IR.
-4. Run dependency analysis.
-5. Aggregate neutral materials.
-6. Read `reports/materials_manifest.json` and then inspect raw evidence files directly.
-7. If live-chain context is useful, decide whether to invoke direct chain checks with Cast.
-8. If static analysis is worth the noise for this target, decide whether to invoke Slither directly.
-9. If a concrete hypothesis needs dynamic validation, decide whether to invoke Echidna, Forge, Anvil, or Cast directly.
+The repository CLI prepares deterministic materials only.
+
+Suggested order:
+
+1. `init-run`
+2. `fetch-source`
+3. `build-ir`
+4. `run-dependency`
+5. `aggregate-materials`
+
+After that:
+
+- inspect `reports/materials_manifest.json`
+- inspect raw evidence files
+- decide whether use tools like: Slither, Echidna, Forge, Cast, or Anvil
+- if you run direct tools, save their artifacts under the same `runs/<run_id>/artifacts/` tree
+- rerun `aggregate-materials` if you want the manifest to list those optional artifacts
+
+Repository-side findings, when present, live in `artifacts/dependency_findings.json`.
+
+Finally, if you think you have figured out the all real vulnerabilities, or the contract is safe, give a report in JSON, and save it in `runs/<run_id>/reprots/final_reprot.json`.
 
 ## Primary Files
 
@@ -48,10 +59,3 @@ Use these repo skills as needed:
 - `ir/privilege_matrix.json`
 - `artifacts/dependency_findings.json`
 - `reports/materials_manifest.json`
-
-## Notes
-
-- Repository-side findings, when present, live in `artifacts/dependency_findings.json`.
-- When you invoke direct tools such as chain checks, Slither, Echidna, Forge, Cast, or Anvil, prefer saving evidence under the current `runs/<run_id>/artifacts/` directory.
-- After saving direct tool artifacts, rerun `$audit-materials` if you want `reports/materials_manifest.json` to pick them up.
-- Workflow notes live in `references/workflow.md`.

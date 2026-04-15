@@ -20,4 +20,3 @@ Notes:
 
 - Repository-side findings, when present, live in `artifacts/dependency_findings.json`.
 - If you save direct tool artifacts under the current `runs/<run_id>/artifacts/`, rerunning this step will surface them in `reports/materials_manifest.json` under optional tool artifacts.
-- This step only organizes material. It does not generate a final report or verdict.

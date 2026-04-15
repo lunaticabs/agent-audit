@@ -15,5 +15,3 @@ Inspect first:
 
 - `artifacts/dependency_findings.json`
 - `artifacts/source_bundle.json`
-
-This step prepares dependency-focused findings material. It does not replace manual review.
