@@ -11,30 +11,36 @@ Use `cast` through the repository devShell:
 nix develop .#default -c cast <subcommand> ...
 ```
 
+RPC source:
+
+- By default, use the repository-local `.env` value in `AGENT_AUDIT_RPC_URL`.
+- Direct shell commands need the current shell to load `.env` first so `"$AGENT_AUDIT_RPC_URL"` expands correctly.
+- If the task needs a different chain or a local fork, explicitly say so and override it on purpose.
+
 Common audit workflows:
 
 - block number:
 
 ```bash
-nix develop .#default -c cast block-number --rpc-url <rpc_url>
+nix develop .#default -c bash -lc 'source .env && cast block-number --rpc-url "$AGENT_AUDIT_RPC_URL"'
 ```
 
 - deployed bytecode:
 
 ```bash
-nix develop .#default -c cast code <address> --rpc-url <rpc_url>
+nix develop .#default -c bash -lc 'source .env && cast code <address> --rpc-url "$AGENT_AUDIT_RPC_URL"'
 ```
 
 - storage slot:
 
 ```bash
-nix develop .#default -c cast storage <address> <slot> --rpc-url <rpc_url>
+nix develop .#default -c bash -lc 'source .env && cast storage <address> <slot> --rpc-url "$AGENT_AUDIT_RPC_URL"'
 ```
 
 - read-only contract call:
 
 ```bash
-nix develop .#default -c cast call <contract> "balanceOf(address)(uint256)" <arg> --rpc-url <rpc_url>
+nix develop .#default -c bash -lc 'source .env && cast call <contract> "balanceOf(address)(uint256)" <arg> --rpc-url "$AGENT_AUDIT_RPC_URL"'
 ```
 
 - decode selectors or calldata:

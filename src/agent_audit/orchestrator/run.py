@@ -63,11 +63,18 @@ def fetch_source_for_run(config: AppConfig, run_id: str) -> Tuple[RunWorkspace, 
     context = load_request_context(workspace)
     pipeline = AuditPipelineService(config=config, workspace=workspace)
     status = pipeline.fetch_contract_source(address=context.address, chain=context.chain)
+    slither_status = "not_prepared"
+    if status == "source_fetched":
+        slither_status = pipeline.prepare_slither_project(address=context.address, chain=context.chain)
     payload = _step_payload(
         workspace=workspace,
         step="fetch-source",
         status=status,
         artifact_index=pipeline.write_artifact_index(),
+        extra={
+            "slither_project_status": slither_status,
+            "slither_build_manifest_path": "slither_project/build_manifest.json" if slither_status == "prepared" else "",
+        },
     )
     workspace.write_json("logs/fetch_source_result.json", payload)
     return workspace, payload
@@ -100,6 +107,25 @@ def run_dependency_for_run(config: AppConfig, run_id: str) -> Tuple[RunWorkspace
         artifact_index=pipeline.write_artifact_index(),
     )
     workspace.write_json("logs/run_dependency_result.json", payload)
+    return workspace, payload
+
+
+def prepare_slither_for_run(config: AppConfig, run_id: str) -> Tuple[RunWorkspace, Dict[str, Any]]:
+    workspace = load_workspace(config, run_id)
+    context = load_request_context(workspace)
+    pipeline = AuditPipelineService(config=config, workspace=workspace)
+    status = pipeline.prepare_slither_project(address=context.address, chain=context.chain)
+    payload = _step_payload(
+        workspace=workspace,
+        step="prepare-slither",
+        status=status,
+        artifact_index=pipeline.write_artifact_index(),
+        extra={
+            "slither_build_manifest_path": "slither_project/build_manifest.json",
+            "slither_project_root": "slither_project",
+        },
+    )
+    workspace.write_json("logs/prepare_slither_result.json", payload)
     return workspace, payload
 
 

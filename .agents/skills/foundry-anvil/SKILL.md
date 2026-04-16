@@ -11,6 +11,12 @@ Use `anvil` through the repository devShell:
 nix develop .#default -c anvil
 ```
 
+RPC source:
+
+- When fork mode is needed, default to the repository-local `.env` value in `AGENT_AUDIT_RPC_URL`.
+- Direct shell commands need the current shell to load `.env` first so `"$AGENT_AUDIT_RPC_URL"` expands correctly.
+- Only override it when you intentionally need a different chain or provider.
+
 Common audit workflows:
 
 - start a local dev node:
@@ -22,13 +28,13 @@ nix develop .#default -c anvil
 - fork a live chain:
 
 ```bash
-nix develop .#default -c anvil --fork-url <rpc_url>
+nix develop .#default -c bash -lc 'source .env && anvil --fork-url "$AGENT_AUDIT_RPC_URL"'
 ```
 
 - enable automatic impersonation:
 
 ```bash
-nix develop .#default -c anvil --fork-url <rpc_url> --auto-impersonate
+nix develop .#default -c bash -lc 'source .env && anvil --fork-url "$AGENT_AUDIT_RPC_URL" --auto-impersonate'
 ```
 
 Default artifact convention for a current run:

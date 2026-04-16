@@ -38,6 +38,37 @@ uv sync
 cp .env.example .env
 ```
 
+`fetch-source` 现在支持更多 Etherscan V2 系链。通常你可以继续使用同一个 V2 API base URL，
+只通过 `--chain` 或 `input/request.json` 里的链名切换目标链。
+
+例如常见主网别名包括：
+
+- `eth`
+- `base`
+- `arb`
+- `op`
+- `polygon`
+- `bsc`
+- `avax`
+- `linea`
+- `blast`
+- `scroll`
+- `mantle`
+- `gnosis`
+- `celo`
+- `zksync`
+
+也支持常见测试网别名，例如：
+
+- `sepolia`
+- `base-sepolia`
+- `arb-sepolia`
+- `op-sepolia`
+- `amoy`
+- `fuji`
+- `linea-sepolia`
+- `scroll-sepolia`
+
 3. 分步准备审计材料
 
 ```bash
@@ -51,6 +82,14 @@ UV_CACHE_DIR=/tmp/uv-cache uv run agent-audit run-dependency --run-id <run_id>
 UV_CACHE_DIR=/tmp/uv-cache uv run agent-audit aggregate-materials --run-id <run_id>
 ```
 
+`fetch-source` 成功后会自动准备 `slither_project/` 兼容工作区。
+
+如果后面需要手动重建这个工作区，再执行：
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv run agent-audit prepare-slither --run-id <run_id>
+```
+
 4. 在 Codex 中使用 workflow skill，再按需调用独立工具 skills
 
 ```text
@@ -59,14 +98,18 @@ Prepare review materials step by step, inspect runs/<run_id>/reports/materials_m
 and decide which tools to run next.
 ```
 
-示例提示词已经从脚本层移到：
+主入口说明现在在：
 
-- `.agents/skills/smart-contract-audit/references/prompts.md`
+- `AGENTS.md`
+
+当前和 Slither 稳定运行相关的设计文档：
+
+- `docs/slither_project_design.md`
 
 ## 技能结构
 
-- `.agents/skills/smart-contract-audit/`
-  主 workflow skill，只描述整体协作方式
+- `AGENTS.md`
+  主 workflow 入口
 - `.agents/skills/audit-workspace/`
   初始化 run 工作区
 - `.agents/skills/audit-source-fetch/`
@@ -101,6 +144,7 @@ and decide which tools to run next.
 - `ir/privilege_matrix.json`
 - `artifacts/dependency_findings.json`
 - `reports/materials_manifest.json`
+- `slither_project/build_manifest.json`
 
 ## 当前原则
 
@@ -111,4 +155,3 @@ and decide which tools to run next.
 
 TODO:
 测试非顶级模型的审计效果
-添加非eth链支持

@@ -11,6 +11,12 @@ Use `forge` through the repository devShell:
 nix develop .#default -c forge <subcommand> ...
 ```
 
+RPC source:
+
+- When a script or fork test needs a live RPC, default to the repository-local `.env` value in `AGENT_AUDIT_RPC_URL`.
+- Direct shell commands need the current shell to load `.env` first so `"$AGENT_AUDIT_RPC_URL"` expands correctly.
+- Only override it when the task intentionally targets another chain or a local Anvil node.
+
 For audit work, the most relevant workflows are:
 
 - build:
@@ -40,7 +46,7 @@ nix develop .#default -c forge test -vvvv
 - run a Solidity script in simulation or fork context:
 
 ```bash
-nix develop .#default -c forge script script/<Name>.s.sol --fork-url <rpc_url>
+nix develop .#default -c bash -lc 'source .env && forge script script/<Name>.s.sol --fork-url "$AGENT_AUDIT_RPC_URL"'
 ```
 
 Default artifact convention for a current run:

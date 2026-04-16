@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import json
+import os
 from pathlib import Path
+import re
+import shutil
+import subprocess
 from typing import Any, Dict, List
 
 from agent_audit.config import AppConfig
@@ -443,6 +447,117 @@ class AuditPipelineService:
         )
         return status
 
+    def prepare_slither_project(self, address: str, chain: str) -> str:
+        slither_root = self.workspace.root / "slither_project"
+        bundle_payload = self._load_source_bundle_payload()
+        if not bundle_payload or bundle_payload.get("status") != "fetched":
+            if slither_root.exists():
+                shutil.rmtree(slither_root)
+            slither_root.mkdir(parents=True, exist_ok=True)
+            manifest = {
+                "target": {"address": address, "chain": chain},
+                "run_id": self.workspace.run_id,
+                "status": "source_not_fetched",
+                "note": "Fetch verified source before preparing a Slither project.",
+            }
+            manifest_path = self.workspace.write_json("slither_project/build_manifest.json", manifest)
+            self._record(
+                step="prepare_slither_project",
+                path=manifest_path,
+                kind="prep",
+                status="configured_not_executed",
+                summary="Skipped Slither project preparation because source fetching did not complete.",
+            )
+            return "source_not_fetched"
+
+        sources_root = self.workspace.root / "sources"
+        if not sources_root.exists():
+            if slither_root.exists():
+                shutil.rmtree(slither_root)
+            slither_root.mkdir(parents=True, exist_ok=True)
+            manifest = {
+                "target": {"address": address, "chain": chain},
+                "run_id": self.workspace.run_id,
+                "status": "source_files_missing",
+                "note": "Source bundle exists but sources/ is missing.",
+            }
+            manifest_path = self.workspace.write_json("slither_project/build_manifest.json", manifest)
+            self._record(
+                step="prepare_slither_project",
+                path=manifest_path,
+                kind="prep",
+                status="executed_with_error",
+                summary="Failed Slither project preparation because source files are missing.",
+            )
+            return "source_files_missing"
+
+        if slither_root.exists():
+            shutil.rmtree(slither_root)
+        slither_root.mkdir(parents=True, exist_ok=True)
+
+        linked_entries = self._link_slither_source_entries(sources_root, slither_root)
+        node_modules_links = self._create_slither_node_modules(sources_root / "npm", slither_root / "node_modules")
+
+        analysis_target = self._analysis_target_payload(bundle_payload)
+        compiler_version = self._compiler_version_for_path(bundle_payload, str(analysis_target.get("path") or ""))
+        source_meta = self._source_meta_for_path(bundle_payload, str(analysis_target.get("path") or ""))
+        provider_remappings = self._provider_remappings(source_meta)
+        generated_remappings = self._node_modules_remappings(node_modules_links)
+        remappings = self._merge_remapping_lists(provider_remappings, generated_remappings)
+        include_paths = self._slither_include_paths(linked_entries, bool(node_modules_links))
+        solc_args = self._slither_solc_args(include_paths)
+
+        remappings_path = self.workspace.write_text(
+            "slither_project/remappings.txt",
+            "".join(f"{entry}\n" for entry in remappings),
+        )
+        config_path = self.workspace.write_json(
+            "slither_project/slither_inputs.json",
+            {
+                "status": "prepared",
+                "working_dir": ".",
+                "base_path": ".",
+                "include_paths": include_paths,
+                "remappings_file": remappings_path,
+                "remappings": remappings,
+                "solc_args": solc_args,
+            },
+        )
+        manifest_path = self.workspace.write_json(
+            "slither_project/build_manifest.json",
+            {
+                "target": {"address": address, "chain": chain},
+                "run_id": self.workspace.run_id,
+                "status": "prepared",
+                "slither_project_root": "slither_project",
+                "analysis_target": analysis_target,
+                "compiler_version": compiler_version,
+                "solc_version": self._extract_semver(compiler_version),
+                "solc_select": self._solc_select_status(self._extract_semver(compiler_version)),
+                "linked_source_entries": linked_entries,
+                "node_modules_links": node_modules_links,
+                "remappings": remappings,
+                "solc_args": solc_args,
+                "config_path": config_path,
+                "preferred_target": str(analysis_target.get("path") or "."),
+                "preferred_working_dir": "slither_project",
+            },
+        )
+
+        for path, summary in [
+            (remappings_path, "Prepared Slither remappings."),
+            (config_path, "Prepared Slither config metadata."),
+            (manifest_path, "Prepared a deterministic Slither project manifest."),
+        ]:
+            self._record(
+                step="prepare_slither_project",
+                path=path,
+                kind="prep",
+                status="executed",
+                summary=summary,
+            )
+        return "prepared"
+
     def aggregate_materials(self, address: str, chain: str) -> str:
         manifest_path = self.workspace.write_json(
             "reports/materials_manifest.json",
@@ -473,6 +588,9 @@ class AuditPipelineService:
                         "artifacts/static_plan.json",
                         "artifacts/slither_raw.json",
                         "artifacts/static_findings.json",
+                        "slither_project/build_manifest.json",
+                        "slither_project/remappings.txt",
+                        "slither_project/slither_inputs.json",
                     ]
                 ),
                 "artifact_records": [asdict(item) for item in self.artifacts],
@@ -569,6 +687,275 @@ class AuditPipelineService:
                 existing.append(relative_path)
         return existing
 
+    def _link_slither_source_entries(self, sources_root: Path, slither_root: Path) -> List[Dict[str, Any]]:
+        linked: List[Dict[str, Any]] = []
+        for entry in sorted(sources_root.iterdir(), key=lambda item: item.name):
+            link_path = slither_root / entry.name
+            self._recreate_symlink(link_path, entry)
+            linked.append(
+                {
+                    "path": entry.name,
+                    "target": self.workspace.relative(entry),
+                    "kind": "directory" if entry.is_dir() else "file",
+                }
+            )
+        return linked
+
+    def _create_slither_node_modules(self, npm_root: Path, node_modules_root: Path) -> List[Dict[str, Any]]:
+        links: List[Dict[str, Any]] = []
+        if not npm_root.exists():
+            return links
+
+        for entry in sorted(npm_root.iterdir(), key=lambda item: item.name):
+            if not entry.is_dir():
+                continue
+            if entry.name.startswith("@"):
+                for package_dir in sorted(entry.iterdir(), key=lambda item: item.name):
+                    if not package_dir.is_dir():
+                        continue
+                    alias_name, version = self._split_versioned_package_name(package_dir.name)
+                    link_path = node_modules_root / entry.name / alias_name
+                    self._recreate_symlink(link_path, package_dir)
+                    links.append(
+                        {
+                            "alias": f"{entry.name}/{alias_name}",
+                            "version": version,
+                            "link_path": self.workspace.relative(link_path),
+                            "target": self.workspace.relative(package_dir),
+                        }
+                    )
+            else:
+                alias_name, version = self._split_versioned_package_name(entry.name)
+                link_path = node_modules_root / alias_name
+                self._recreate_symlink(link_path, entry)
+                links.append(
+                    {
+                        "alias": alias_name,
+                        "version": version,
+                        "link_path": self.workspace.relative(link_path),
+                        "target": self.workspace.relative(entry),
+                    }
+                )
+        return links
+
+    def _recreate_symlink(self, link_path: Path, target_path: Path) -> None:
+        if link_path.exists() or link_path.is_symlink():
+            if link_path.is_dir() and not link_path.is_symlink():
+                shutil.rmtree(link_path)
+            else:
+                link_path.unlink()
+        link_path.parent.mkdir(parents=True, exist_ok=True)
+        relative_target = os.path.relpath(target_path, start=link_path.parent)
+        link_path.symlink_to(relative_target, target_is_directory=target_path.is_dir())
+
+    def _split_versioned_package_name(self, name: str) -> tuple[str, str]:
+        match = re.match(r"^(?P<package>.+)@(?P<version>\d[\w.+-]*)$", name)
+        if not match:
+            return name, ""
+        return match.group("package"), match.group("version")
+
+    def _analysis_target_payload(self, bundle_payload: Dict[str, Any]) -> Dict[str, Any]:
+        preferred_path = str(bundle_payload.get("contract", {}).get("file_name") or "")
+        if preferred_path and self._record_for_path(bundle_payload, preferred_path):
+            return {
+                "address": str(bundle_payload.get("target", {}).get("address") or ""),
+                "contract_name": str(bundle_payload.get("contract", {}).get("name") or ""),
+                "path": preferred_path,
+                "role": "target",
+                "prepared_path": preferred_path,
+            }
+
+        analysis_target = bundle_payload.get("analysis_target")
+        if isinstance(analysis_target, dict) and str(analysis_target.get("path") or ""):
+            return {
+                "address": str(analysis_target.get("address") or bundle_payload.get("target", {}).get("address") or ""),
+                "contract_name": str(analysis_target.get("contract_name") or ""),
+                "path": str(analysis_target.get("path") or ""),
+                "role": str(analysis_target.get("role") or ""),
+                "prepared_path": str(analysis_target.get("path") or ""),
+            }
+
+        primary_files = bundle_payload.get("files")
+        first_path = ""
+        if isinstance(primary_files, list) and primary_files:
+            first_path = str(primary_files[0].get("path") or "")
+        return {
+            "address": str(bundle_payload.get("target", {}).get("address") or ""),
+            "contract_name": str(bundle_payload.get("contract", {}).get("name") or ""),
+            "path": first_path,
+            "role": "target",
+            "prepared_path": first_path,
+        }
+
+    def _collect_bundle_records(self, bundle_payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+        records: List[Dict[str, Any]] = [
+            {
+                "files": bundle_payload.get("files", []),
+                "compiler": bundle_payload.get("compiler", {}),
+                "source_meta": bundle_payload.get("source_meta", {}),
+                "contract": bundle_payload.get("contract", {}),
+                "role": "target",
+                "address": bundle_payload.get("target", {}).get("address", ""),
+            }
+        ]
+        for key in ("dependencies", "related_contracts"):
+            entries = bundle_payload.get(key)
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                records.extend(self._collect_record_tree(entry))
+        return records
+
+    def _collect_record_tree(self, record: Dict[str, Any]) -> List[Dict[str, Any]]:
+        records = [record]
+        related = record.get("related_contracts")
+        if isinstance(related, list):
+            for nested in related:
+                if isinstance(nested, dict):
+                    records.extend(self._collect_record_tree(nested))
+        return records
+
+    def _record_for_path(self, bundle_payload: Dict[str, Any], relative_path: str) -> Dict[str, Any]:
+        for record in self._collect_bundle_records(bundle_payload):
+            files = record.get("files")
+            if not isinstance(files, list):
+                continue
+            for item in files:
+                if isinstance(item, dict) and str(item.get("path") or "") == relative_path:
+                    return record
+        return {}
+
+    def _compiler_version_for_path(self, bundle_payload: Dict[str, Any], relative_path: str) -> str:
+        record = self._record_for_path(bundle_payload, relative_path)
+        compiler = record.get("compiler")
+        if isinstance(compiler, dict):
+            return str(compiler.get("version") or "")
+        return ""
+
+    def _source_meta_for_path(self, bundle_payload: Dict[str, Any], relative_path: str) -> Dict[str, Any]:
+        record = self._record_for_path(bundle_payload, relative_path)
+        source_meta = record.get("source_meta")
+        return source_meta if isinstance(source_meta, dict) else {}
+
+    def _provider_remappings(self, source_meta: Dict[str, Any]) -> List[str]:
+        settings = source_meta.get("settings")
+        if not isinstance(settings, dict):
+            return []
+        remappings = settings.get("remappings")
+        if not isinstance(remappings, list):
+            return []
+        return [str(item) for item in remappings if isinstance(item, str) and item]
+
+    def _node_modules_remappings(self, node_modules_links: List[Dict[str, Any]]) -> List[str]:
+        remappings: List[str] = []
+        for item in node_modules_links:
+            alias = str(item.get("alias") or "").strip("/")
+            if not alias:
+                continue
+            remappings.append(f"{alias}/=node_modules/{alias}/")
+        return remappings
+
+    def _merge_remapping_lists(self, *groups: List[str]) -> List[str]:
+        merged: List[str] = []
+        seen = set()
+        for group in groups:
+            for entry in group:
+                if entry in seen:
+                    continue
+                seen.add(entry)
+                merged.append(entry)
+        return merged
+
+    def _slither_include_paths(self, linked_entries: List[Dict[str, Any]], has_node_modules: bool) -> List[str]:
+        include_paths = ["."]
+        if has_node_modules:
+            include_paths.append("node_modules")
+        for entry in linked_entries:
+            path = str(entry.get("path") or "")
+            if path and path not in include_paths:
+                include_paths.append(path)
+        return include_paths
+
+    def _slither_solc_args(self, include_paths: List[str]) -> str:
+        args = ["--base-path", "."]
+        allow_paths: List[str] = ["."]
+        for entry in include_paths:
+            if entry == ".":
+                continue
+            args.extend(["--include-path", entry])
+            allow_paths.append(entry)
+        args.extend(["--allow-paths", ",".join(dict.fromkeys(allow_paths))])
+        return " ".join(args)
+
+    def _extract_semver(self, compiler_version: str) -> str:
+        match = re.search(r"(\d+\.\d+\.\d+)", compiler_version or "")
+        return match.group(1) if match else ""
+
+    def _solc_select_status(self, requested_version: str) -> Dict[str, Any]:
+        if not requested_version:
+            return {
+                "requested_version": "",
+                "is_installed": False,
+                "current_version": "",
+                "available_versions": [],
+                "recommended_action": "No semantic compiler version could be extracted from source metadata.",
+            }
+
+        try:
+            result = subprocess.run(
+                ["nix", "develop", ".#default", "-c", "solc-select", "versions"],
+                cwd=self.workspace.project_root,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+        except Exception as exc:
+            return {
+                "requested_version": requested_version,
+                "is_installed": False,
+                "current_version": "",
+                "available_versions": [],
+                "recommended_action": f"Could not query solc-select versions: {exc}",
+            }
+
+        available_versions: List[str] = []
+        current_version = ""
+        for raw_line in result.stdout.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            match = re.match(r"(?P<version>\d+\.\d+\.\d+)(?:\s+\(current.*\))?$", line)
+            if not match:
+                continue
+            version = match.group("version")
+            available_versions.append(version)
+            if "(current" in line:
+                current_version = version
+
+        is_installed = requested_version in available_versions
+        if is_installed:
+            recommended_action = (
+                f"Run `solc-select use {requested_version}` inside the devShell before invoking Slither."
+            )
+        else:
+            recommended_action = (
+                f"`{requested_version}` is not installed in solc-select. Install or select it before Slither, "
+                f"for example with `solc-select use {requested_version} --always-install`."
+            )
+
+        return {
+            "requested_version": requested_version,
+            "is_installed": is_installed,
+            "current_version": current_version,
+            "available_versions": available_versions,
+            "recommended_action": recommended_action,
+            "command_status": "ok" if result.returncode == 0 else "error",
+            "stderr_preview": result.stderr[:1000],
+        }
+
     def _all_bundle_files(self, bundle_payload: Dict[str, Any]) -> List[Dict[str, Any]]:
         files: List[Dict[str, Any]] = []
         primary_files = bundle_payload.get("files")
@@ -629,7 +1016,10 @@ class AuditPipelineService:
                         }
 
         first_primary_path = ""
-        if primary_files:
+        preferred_path = str(primary_contract.get("file_name") or "") if isinstance(primary_contract, dict) else ""
+        if preferred_path and any(str(item.get("path") or "") == preferred_path for item in primary_files):
+            first_primary_path = preferred_path
+        elif primary_files:
             first_primary_path = str(primary_files[0].get("path") or "")
         return {
             "address": address,

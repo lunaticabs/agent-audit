@@ -11,6 +11,7 @@ from agent_audit.orchestrator.run import (
     build_ir_for_run,
     fetch_source_for_run,
     init_audit_run,
+    prepare_slither_for_run,
     run_dependency_for_run,
 )
 
@@ -40,6 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("fetch-source", "Fetch verified source into an existing run workspace."),
         ("build-ir", "Build IR for an existing run workspace."),
         ("run-dependency", "Run high-signal dependency analysis for an existing run workspace."),
+        ("prepare-slither", "Prepare an import-compatible Slither project workspace for an existing run."),
         ("aggregate-materials", "Aggregate prepared findings and write neutral review materials."),
     ]:
         step_parser = subparsers.add_parser(name, help=help_text)
@@ -95,6 +97,9 @@ def main() -> int:
         return _print_step_result(payload)
     if args.command == "run-dependency":
         _, payload = run_dependency_for_run(config, args.run_id)
+        return _print_step_result(payload)
+    if args.command == "prepare-slither":
+        _, payload = prepare_slither_for_run(config, args.run_id)
         return _print_step_result(payload)
     if args.command == "aggregate-materials":
         _, payload = aggregate_materials_for_run(config, args.run_id)
