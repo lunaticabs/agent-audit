@@ -1,17 +1,7 @@
 ---
-name: audit-slither
-description: Use Slither directly in the current shell when verified source is available and you want static-analysis signals on a chosen target file.
+name: slither
+description: Use Slither directly in the current shell when verified source is available
 ---
-
-# Audit Slither
-
-`fetch-source` normally prepares the Slither workspace for you.
-
-If you need to rebuild it manually:
-
-```bash
-UV_CACHE_DIR=/tmp/uv-cache uv run agent-audit prepare-slither --run-id <run_id>
-```
 
 Run Slither with the CLI-generated `preferred_working_dir` and `preferred_target` from `slither_project/build_manifest.json`.
 

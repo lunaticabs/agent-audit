@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, List, Tuple
 
 from agent_audit.config import AppConfig
 from agent_audit.services.pipeline import AuditPipelineService
@@ -35,6 +35,42 @@ def init_audit_run(
         },
     )
     return workspace
+
+
+def prepare_run(
+    config: AppConfig,
+    *,
+    address: str,
+    chain: str,
+) -> Tuple[RunWorkspace, Dict[str, Any]]:
+    workspace = init_audit_run(
+        config,
+        address=address,
+        chain=chain,
+    )
+
+    step_payloads: List[Dict[str, Any]] = []
+    for step_fn in (
+        fetch_source_for_run,
+        build_ir_for_run,
+        run_dependency_for_run,
+        prepare_slither_for_run,
+        aggregate_materials_for_run,
+    ):
+        _, payload = step_fn(config, workspace.run_id)
+        step_payloads.append(payload)
+
+    _, status_payload = get_run_status(config, workspace.run_id)
+    payload = {
+        "run_id": workspace.run_id,
+        "run_dir": str(workspace.root),
+        "address": address,
+        "chain": chain,
+        "steps": step_payloads,
+        "status": status_payload,
+    }
+    workspace.write_json("logs/prepare_run_result.json", payload)
+    return workspace, payload
 
 
 def load_workspace(config: AppConfig, run_id: str) -> RunWorkspace:
@@ -150,6 +186,63 @@ def aggregate_materials_for_run(
         },
     )
     workspace.write_json("logs/aggregate_materials_result.json", payload)
+    return workspace, payload
+
+
+def get_run_status(
+    config: AppConfig,
+    run_id: str,
+) -> Tuple[RunWorkspace, Dict[str, Any]]:
+    workspace = load_workspace(config, run_id)
+    request_path = workspace.root / "input" / "request.json"
+    context = load_request_context(workspace) if request_path.exists() else RunRequestContext("", "")
+
+    source_bundle_path = workspace.root / "artifacts" / "source_bundle.json"
+    dependency_findings_path = workspace.root / "artifacts" / "dependency_findings.json"
+    contracts_ir_path = workspace.root / "ir" / "contracts.json"
+    slither_manifest_path = workspace.root / "slither_project" / "build_manifest.json"
+    materials_manifest_path = workspace.root / "reports" / "materials_manifest.json"
+
+    source_bundle = json.loads(source_bundle_path.read_text()) if source_bundle_path.exists() else {}
+    dependency_findings = (
+        json.loads(dependency_findings_path.read_text()) if dependency_findings_path.exists() else {}
+    )
+    contracts_ir = json.loads(contracts_ir_path.read_text()) if contracts_ir_path.exists() else {}
+    slither_manifest = json.loads(slither_manifest_path.read_text()) if slither_manifest_path.exists() else {}
+
+    ir_status = str(contracts_ir.get("status") or "")
+    if not ir_status and contracts_ir_path.exists():
+        ir_status = "ir_generated"
+
+    payload = {
+        "run_id": workspace.run_id,
+        "run_dir": str(workspace.root),
+        "target": {
+            "address": context.address,
+            "chain": context.chain,
+        },
+        "statuses": {
+            "source_fetch": str(source_bundle.get("status") or "not_prepared"),
+            "ir": ir_status or "not_prepared",
+            "dependency": str(dependency_findings.get("status") or "not_prepared"),
+            "slither": str(slither_manifest.get("status") or "not_prepared"),
+            "materials": "prepared" if materials_manifest_path.exists() else "not_prepared",
+        },
+        "paths": {
+            "request": "input/request.json" if request_path.exists() else "",
+            "source_bundle": "artifacts/source_bundle.json" if source_bundle_path.exists() else "",
+            "contracts_ir": "ir/contracts.json" if contracts_ir_path.exists() else "",
+            "dependency_findings": (
+                "artifacts/dependency_findings.json" if dependency_findings_path.exists() else ""
+            ),
+            "slither_manifest": (
+                "slither_project/build_manifest.json" if slither_manifest_path.exists() else ""
+            ),
+            "materials_manifest": (
+                "reports/materials_manifest.json" if materials_manifest_path.exists() else ""
+            ),
+        },
+    }
     return workspace, payload
 
 

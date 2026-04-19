@@ -14,11 +14,11 @@ The repository CLI can prepare almost all materials you need.
 
 Suggested order:
 
-1. `$audit-workspace`
-2. `$audit-source-fetch`
-3. `$audit-ir-builder`
-4. `$audit-dependency-scan`
-5. `$audit-materials`
+1. `$workspace`
+2. `$source-fetch`
+3. `$ir-builder`
+4. `$dependency-scan`
+5. `$aggregate-materials`
 
 After that:
 
@@ -26,7 +26,7 @@ After that:
 - inspect raw evidence files
 - decide whether use tools like: Slither, Echidna, Forge, Cast, or Anvil
 - if you run direct tools, save their artifacts under the same `runs/<run_id>/artifacts/` tree
-- reuse `$audit-materials` if you want the manifest to list those optional artifacts
+- reuse `$aggregate-materials` if you want the manifest to list those optional artifacts
 
 Finally:
 

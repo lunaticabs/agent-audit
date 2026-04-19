@@ -26,7 +26,7 @@ Prepare the normal materials first. If a specific high-signal hypothesis looks w
 decide whether to invoke Echidna and explain why that hypothesis merits fuzzing.
 ```
 
-Check AGENTS.md and inspect 0xB2185950F5A0A46687ac331916508aadA202e063 on eth.
+Audit 0x4cD00E387622C35bDDB9b4c962C136462338BC31 on eth.
 
 note:
 

@@ -499,28 +499,31 @@ class AuditPipelineService:
         node_modules_links = self._create_slither_node_modules(sources_root / "npm", slither_root / "node_modules")
 
         analysis_target = self._analysis_target_payload(bundle_payload)
-        compiler_version = self._compiler_version_for_path(bundle_payload, str(analysis_target.get("path") or ""))
-        source_meta = self._source_meta_for_path(bundle_payload, str(analysis_target.get("path") or ""))
-        provider_remappings = self._provider_remappings(source_meta)
-        generated_remappings = self._node_modules_remappings(node_modules_links)
-        remappings = self._merge_remapping_lists(provider_remappings, generated_remappings)
-        include_paths = self._slither_include_paths(linked_entries, bool(node_modules_links))
-        solc_args = self._slither_solc_args(include_paths)
+        preferred_settings = self._slither_target_settings(
+            bundle_payload=bundle_payload,
+            linked_entries=linked_entries,
+            node_modules_links=node_modules_links,
+            target_path=str(analysis_target.get("path") or ""),
+        )
+        analysis_target["prepared_path"] = preferred_settings["prepared_target"]
+        analysis_target["prepared_root"] = preferred_settings["prepared_root"]
 
         remappings_path = self.workspace.write_text(
             "slither_project/remappings.txt",
-            "".join(f"{entry}\n" for entry in remappings),
+            "".join(f"{entry}\n" for entry in preferred_settings["remappings"]),
         )
         config_path = self.workspace.write_json(
             "slither_project/slither_inputs.json",
             {
                 "status": "prepared",
-                "working_dir": ".",
+                "working_dir": preferred_settings["working_dir_token"],
                 "base_path": ".",
-                "include_paths": include_paths,
-                "remappings_file": remappings_path,
-                "remappings": remappings,
-                "solc_args": solc_args,
+                "include_paths": preferred_settings["include_paths"],
+                "remappings_file": preferred_settings["remappings_file"],
+                "remappings": preferred_settings["remappings"],
+                "solc_args": preferred_settings["solc_args"],
+                "target_path": preferred_settings["target_path"],
+                "prepared_target": preferred_settings["prepared_target"],
             },
         )
         manifest_path = self.workspace.write_json(
@@ -531,16 +534,17 @@ class AuditPipelineService:
                 "status": "prepared",
                 "slither_project_root": "slither_project",
                 "analysis_target": analysis_target,
-                "compiler_version": compiler_version,
-                "solc_version": self._extract_semver(compiler_version),
-                "solc_select": self._solc_select_status(self._extract_semver(compiler_version)),
+                "compiler_version": preferred_settings["compiler_version"],
+                "solc_version": preferred_settings["solc_version"],
+                "solc_select": preferred_settings["solc_select"],
                 "linked_source_entries": linked_entries,
                 "node_modules_links": node_modules_links,
-                "remappings": remappings,
-                "solc_args": solc_args,
+                "remappings": preferred_settings["remappings"],
+                "solc_args": preferred_settings["solc_args"],
                 "config_path": config_path,
-                "preferred_target": str(analysis_target.get("path") or "."),
-                "preferred_working_dir": "slither_project",
+                "preferred_target": preferred_settings["prepared_target"],
+                "preferred_working_dir": preferred_settings["working_dir"],
+                "preferred_source_root": preferred_settings["source_root"],
             },
         )
 
@@ -585,12 +589,20 @@ class AuditPipelineService:
                         "artifacts/chain_checks_plan.json",
                         "artifacts/chain_checks_output.txt",
                         "artifacts/chain_checks_findings.json",
+                        "artifacts/chain_index.json",
                         "artifacts/static_plan.json",
                         "artifacts/slither_raw.json",
                         "artifacts/static_findings.json",
+                        "artifacts/analyzer_index.json",
                         "slither_project/build_manifest.json",
                         "slither_project/remappings.txt",
                         "slither_project/slither_inputs.json",
+                    ]
+                )
+                + self._existing_tree(
+                    [
+                        "artifacts/analyzer",
+                        "artifacts/chain",
                     ]
                 ),
                 "artifact_records": [asdict(item) for item in self.artifacts],
@@ -685,6 +697,28 @@ class AuditPipelineService:
         for relative_path in relative_paths:
             if (self.workspace.root / relative_path).exists():
                 existing.append(relative_path)
+        return existing
+
+    def _existing_tree(self, relative_roots: List[str]) -> List[str]:
+        existing: List[str] = []
+        seen = set()
+        for relative_root in relative_roots:
+            root = self.workspace.root / relative_root
+            if root.is_file():
+                if relative_root not in seen:
+                    existing.append(relative_root)
+                    seen.add(relative_root)
+                continue
+            if not root.exists():
+                continue
+            for path in sorted(root.rglob("*")):
+                if not path.is_file():
+                    continue
+                relative_path = self.workspace.relative(path)
+                if relative_path in seen:
+                    continue
+                existing.append(relative_path)
+                seen.add(relative_path)
         return existing
 
     def _link_slither_source_entries(self, sources_root: Path, slither_root: Path) -> List[Dict[str, Any]]:
@@ -868,14 +902,86 @@ class AuditPipelineService:
                 merged.append(entry)
         return merged
 
-    def _slither_include_paths(self, linked_entries: List[Dict[str, Any]], has_node_modules: bool) -> List[str]:
+    def _slither_target_settings(
+        self,
+        *,
+        bundle_payload: Dict[str, Any],
+        linked_entries: List[Dict[str, Any]],
+        node_modules_links: List[Dict[str, Any]],
+        target_path: str,
+    ) -> Dict[str, Any]:
+        normalized_target_path = str(target_path or ".").lstrip("./") or "."
+        source_root = self._slither_source_root_for_target(normalized_target_path, linked_entries)
+        prepared_target = self._slither_relative_target_path(normalized_target_path, source_root)
+        compiler_version = self._compiler_version_for_path(bundle_payload, normalized_target_path)
+        solc_version = self._extract_semver(compiler_version)
+        source_meta = self._source_meta_for_path(bundle_payload, normalized_target_path)
+        provider_remappings = self._provider_remappings(source_meta)
+        generated_remappings = self._node_modules_remappings(node_modules_links)
+        remappings = self._merge_remapping_lists(provider_remappings, generated_remappings)
+        use_project_root = bool(remappings)
+        working_root = "" if use_project_root else source_root
+        prepared_root = "." if use_project_root else (source_root or ".")
+        prepared_target = (
+            normalized_target_path
+            if use_project_root
+            else self._slither_relative_target_path(normalized_target_path, source_root)
+        )
+        include_paths = self._slither_include_paths(working_root, bool(node_modules_links))
+        return {
+            "target_path": normalized_target_path,
+            "source_root": source_root,
+            "prepared_root": prepared_root,
+            "prepared_target": prepared_target,
+            "working_dir": f"slither_project/{working_root}" if working_root else "slither_project",
+            "working_dir_token": working_root or ".",
+            "compiler_version": compiler_version,
+            "solc_version": solc_version,
+            "solc_select": self._solc_select_status(solc_version),
+            "include_paths": include_paths,
+            "remappings": remappings,
+            "remappings_file": self._slither_relative_from_working_dir(working_root, "remappings.txt"),
+            "solc_args": self._slither_solc_args(include_paths),
+        }
+
+    def _slither_source_root_for_target(
+        self,
+        target_path: str,
+        linked_entries: List[Dict[str, Any]],
+    ) -> str:
+        normalized_target_path = str(target_path or "").lstrip("./")
+        matches: List[str] = []
+        for entry in linked_entries:
+            source_root = str(entry.get("path") or "").strip("/")
+            if not source_root:
+                continue
+            if normalized_target_path == source_root or normalized_target_path.startswith(f"{source_root}/"):
+                matches.append(source_root)
+        if not matches:
+            return ""
+        return max(matches, key=len)
+
+    def _slither_relative_target_path(self, target_path: str, source_root: str) -> str:
+        normalized_target_path = str(target_path or ".").lstrip("./") or "."
+        if not source_root:
+            return normalized_target_path
+        if normalized_target_path == source_root:
+            return "."
+        prefix = f"{source_root}/"
+        if normalized_target_path.startswith(prefix):
+            return normalized_target_path[len(prefix) :] or "."
+        return normalized_target_path
+
+    def _slither_relative_from_working_dir(self, source_root: str, path_in_slither_root: str) -> str:
+        start = source_root or "."
+        return os.path.relpath(path_in_slither_root, start=start)
+
+    def _slither_include_paths(self, source_root: str, has_node_modules: bool) -> List[str]:
         include_paths = ["."]
         if has_node_modules:
-            include_paths.append("node_modules")
-        for entry in linked_entries:
-            path = str(entry.get("path") or "")
-            if path and path not in include_paths:
-                include_paths.append(path)
+            node_modules_path = self._slither_relative_from_working_dir(source_root, "node_modules")
+            if node_modules_path not in include_paths:
+                include_paths.append(node_modules_path)
         return include_paths
 
     def _slither_solc_args(self, include_paths: List[str]) -> str:
@@ -943,7 +1049,7 @@ class AuditPipelineService:
         else:
             recommended_action = (
                 f"`{requested_version}` is not installed in solc-select. Install or select it before Slither, "
-                f"for example with `solc-select use {requested_version} --always-install`."
+                f"for example with `solc-select install {requested_version} && solc-select use {requested_version}`."
             )
 
         return {

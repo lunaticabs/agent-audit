@@ -1,5 +1,5 @@
 ---
-name: audit-echidna
+name: echidna
 description: Use Echidna when a concrete contract property merits fuzzing. Use when static or dependency materials suggest a hypothesis worth validating dynamically.
 ---
 
