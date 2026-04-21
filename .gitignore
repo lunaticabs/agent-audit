@@ -10,6 +10,8 @@ dist/
 *.egg-info/
 runs/*
 !runs/.gitkeep
-archive
+archive/
 unfin_opencode.jsonc
 .claude/
+batch_logs/
+configs/

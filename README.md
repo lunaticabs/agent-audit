@@ -80,6 +80,9 @@ UV_CACHE_DIR=/tmp/uv-cache uv run agent-audit fetch-source --run-id <run_id>
 UV_CACHE_DIR=/tmp/uv-cache uv run agent-audit build-ir --run-id <run_id>
 UV_CACHE_DIR=/tmp/uv-cache uv run agent-audit run-dependency --run-id <run_id>
 UV_CACHE_DIR=/tmp/uv-cache uv run agent-audit aggregate-materials --run-id <run_id>
+
+# 审计完成并写好 final_report.json 后再同步
+UV_CACHE_DIR=/tmp/uv-cache uv run agent-audit sync-run --run-id <run_id>
 ```
 
 `fetch-source` 成功后会自动准备 `slither_project/` 兼容工作区。
@@ -145,6 +148,47 @@ and decide which tools to run next.
 - `artifacts/dependency_findings.json`
 - `reports/materials_manifest.json`
 - `slither_project/build_manifest.json`
+
+## CLI 输出约定（给 agent 机读）
+
+CLI 现在会对每条命令输出统一 JSON envelope，关键字段包括：
+
+- `ok`
+- `status`
+- `retryable`
+- `run_id`
+- `run_persisted`
+- `next_action`
+
+退出码约定：
+
+- `0`: 成功
+- `10`: 可重试错误（例如网络/RPC 抖动）
+- `20`: 不可重试错误（参数或配置问题）
+- `30`: 前置条件缺失（应先执行前置步骤）
+
+这让 agent 能按 `next_action` 重试或执行前置步骤，而不是盲目尝试。
+
+`prepare_run` 现在采用 staging 提交机制：
+
+- 执行阶段写入 `runs/.staging/<run_id>/`
+- 所有步骤成功后才原子移动到 `runs/<run_id>/`
+- 任一步骤失败会清理 staging，因此不会保留失败 run
+
+Mongo 同步会自动确保以下索引存在：
+
+- `runs_meta`: `_id(unique)`, `created_at`, `target.chain+target.address+created_at`, `target.address+created_at`, `status+created_at`, `has_final_report+created_at`
+- `runs_files`: `run_id+rel_path(unique)`, `run_id+kind`, `sha256`
+
+Mongo 同步上传的文件范围默认是白名单目录：
+
+- `input/`
+- `reports/`
+- `artifacts/`
+- `ir/`
+- `sources/`
+
+其他目录（例如 `logs/`、`slither_project/`）不会上传。
 
 ## 当前原则
 

@@ -32,6 +32,8 @@ Finally:
 
 if you think you have identified the real vulnerabilities, or the contract is safe, write a JSON report and save it under `runs/<run_id>/reports/final_report.json`.
 
+After that, run `$done` once to sync the run evidence into database.
+
 **Important:**
 
 Any reported finding must be backed by a concrete artifact in runs/<run_id>/.

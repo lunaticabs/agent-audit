@@ -11,6 +11,7 @@ try:
 except ImportError:  # pragma: no cover - optional during bootstrap
     load_dotenv = None
 
+
 def _env_json_dict(name: str) -> Dict[str, str]:
     raw = os.getenv(name, "").strip()
     if not raw:
@@ -30,6 +31,11 @@ class AppConfig:
     source_api_key: Optional[str]
     source_api_headers: Dict[str, str]
     rpc_url: Optional[str]
+    mongo_uri: Optional[str]
+    mongo_db: str
+    mongo_runs_meta_collection: str
+    mongo_runs_files_collection: str
+    mongo_max_inline_file_bytes: int
 
     @classmethod
     def load(cls, project_root: Optional[Path] = None) -> "AppConfig":
@@ -49,4 +55,17 @@ class AppConfig:
             source_api_key=os.getenv("AGENT_AUDIT_SOURCE_API_KEY") or None,
             source_api_headers=_env_json_dict("AGENT_AUDIT_SOURCE_HEADERS_JSON"),
             rpc_url=os.getenv("AGENT_AUDIT_RPC_URL") or None,
+            mongo_uri=os.getenv("AGENT_AUDIT_MONGO_URI") or None,
+            mongo_db=os.getenv("AGENT_AUDIT_MONGO_DB", "agent_audit"),
+            mongo_runs_meta_collection=os.getenv(
+                "AGENT_AUDIT_MONGO_RUNS_META_COLLECTION", "runs_meta"
+            ),
+            mongo_runs_files_collection=os.getenv(
+                "AGENT_AUDIT_MONGO_RUNS_FILES_COLLECTION", "runs_files"
+            ),
+            mongo_max_inline_file_bytes=int(
+                os.getenv(
+                    "AGENT_AUDIT_MONGO_MAX_INLINE_FILE_BYTES", str(8 * 1024 * 1024)
+                )
+            ),
         )
