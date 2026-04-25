@@ -315,13 +315,13 @@ def bounded_submit(
 
 def main() -> int:
     max_jobs = env_int("MAX_JOBS", 8)
-    task_timeout_sec = env_int("TASK_TIMEOUT_SEC", 600)
+    task_timeout_sec = env_int("TASK_TIMEOUT_SEC", 900)
     kill_grace_sec = env_int("KILL_GRACE_SEC", 5)
 
     address_dir = Path(os.getenv("ADDRESS_DIR", str(DEFAULT_ADDRESS_DIR))).resolve()
     address_file = os.getenv("ADDRESS_FILE")
     log_dir = Path(os.getenv("LOG_DIR", str(DEFAULT_LOG_DIR))).resolve()
-    model = os.getenv("MODEL", "apiapi/gpt-5.3-codex")
+    model = os.getenv("MODEL", "apiapi/gpt-5.4")
     sandbox = os.getenv("CODEX_SANDBOX", "workspace-write")
     prompt_template = os.getenv("PROMPT_TEMPLATE", "Audit {address} on eth.")
 
