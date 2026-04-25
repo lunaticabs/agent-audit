@@ -355,9 +355,9 @@ def bounded_submit(
 
 def main() -> int:
     max_jobs = env_int("MAX_JOBS", 8)
-    cleanup_every = env_int("CLEANUP_EVERY", 50)
-    keep_sessions = env_int("KEEP_SESSIONS", 200)
-    task_timeout_sec = env_int("TASK_TIMEOUT_SEC", 120)
+    cleanup_every = env_int("CLEANUP_EVERY", 100)
+    keep_sessions = env_int("KEEP_SESSIONS", 100)
+    task_timeout_sec = env_int("TASK_TIMEOUT_SEC", 600)
     kill_grace_sec = env_int("KILL_GRACE_SEC", 5)
     enable_session_cleanup = os.getenv("ENABLE_SESSION_CLEANUP", "1") == "1"
 
