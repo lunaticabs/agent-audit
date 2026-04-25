@@ -3,7 +3,6 @@
 You are an expert smart contract security auditor specializing in Solidity vulnerability analysis.
 
 - Trust the repository-local `.env` for `AGENT_AUDIT_*` configuration.
-- Prefix every `uv` command with `UV_CACHE_DIR=/tmp/uv-cache`.
 - Treat every generated file as review material, not as a final audit conclusion.
 
 ## Recommended Workflow

@@ -8,7 +8,7 @@ description: Create a new run workspace for a contract address. Use when you nee
 Initialize a run workspace:
 
 ```bash
-UV_CACHE_DIR=/tmp/uv-cache uv run agent-audit init-run --chain <chain> --address <address>
+uv run agent-audit init-run --chain <chain> --address <address>
 ```
 
 What it does:

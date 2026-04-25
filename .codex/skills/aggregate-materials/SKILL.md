@@ -8,7 +8,7 @@ description: Aggregate prepared findings and write a neutral materials manifest 
 Aggregate prepared materials:
 
 ```bash
-UV_CACHE_DIR=/tmp/uv-cache uv run agent-audit aggregate-materials --run-id <run_id>
+uv run agent-audit aggregate-materials --run-id <run_id>
 ```
 
 Inspect first:

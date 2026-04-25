@@ -23,7 +23,6 @@ ACTIVE_PROCS: set[subprocess.Popen] = set()
 ACTIVE_PROCS_LOCK = threading.Lock()
 STOP_EVENT = threading.Event()
 VALID_SANDBOX_MODES = {"read-only", "workspace-write", "danger-full-access"}
-DISABLED_SANDBOX_VALUES = {"0", "false", "no", "none", "off", "disabled"}
 
 
 def register_proc(proc: subprocess.Popen) -> None:
@@ -154,8 +153,8 @@ def load_addresses(address_dir: Path, address_file: str | None) -> list[str]:
 def run_one(
     addr: str,
     log_dir: Path,
-    model: str,
-    sandbox: str,
+    model: str | None,
+    sandbox: str | None,
     prompt_template: str,
     task_timeout_sec: int,
     kill_grace_sec: int,
@@ -167,17 +166,11 @@ def run_one(
         "--ephemeral",
         "--color",
         "never",
-        "-C",
-        str(PROJECT_ROOT),
-        "-m",
-        model,
     ]
-    normalized_sandbox = sandbox.strip().lower()
-    if normalized_sandbox in DISABLED_SANDBOX_VALUES:
-        cmd.append("--dangerously-bypass-approvals-and-sandbox")
-    else:
-        cmd.append("--full-auto")
-        cmd.extend(["-s", normalized_sandbox])
+    if sandbox:
+        cmd.extend(["-s", sandbox])
+    if model:
+        cmd.extend(["-m", model])
     cmd.append(prompt_template.format(address=addr))
 
     with log_file.open("w", encoding="utf-8", buffering=1) as out:
@@ -225,8 +218,8 @@ def bounded_submit(
     addresses: Iterable[str],
     max_jobs: int,
     log_dir: Path,
-    model: str,
-    sandbox: str,
+    model: str | None,
+    sandbox: str | None,
     prompt_template: str,
     task_timeout_sec: int,
     kill_grace_sec: int,
@@ -326,9 +319,8 @@ def main() -> int:
     address_dir = Path(os.getenv("ADDRESS_DIR", str(DEFAULT_ADDRESS_DIR))).resolve()
     address_file = os.getenv("ADDRESS_FILE")
     log_dir = Path(os.getenv("LOG_DIR", str(DEFAULT_LOG_DIR))).resolve()
-    model = os.getenv("MODEL", "gpt-5.4")
-    raw_sandbox = os.getenv("CODEX_SANDBOX")
-    sandbox = raw_sandbox.strip() if raw_sandbox and raw_sandbox.strip() else "disabled"
+    model = os.getenv("MODEL")
+    sandbox = os.getenv("CODEX_SANDBOX")
     prompt_template = os.getenv("PROMPT_TEMPLATE", "Check AGENTS.md and Audit {address} on eth.")
 
     print(
@@ -338,8 +330,8 @@ def main() -> int:
         f"log_dir={log_dir} "
         f"address_dir={address_dir} "
         f"project_root={PROJECT_ROOT} "
-        f"sandbox={sandbox} "
-        f"model={model}"
+        f"sandbox={sandbox or '<config>'} "
+        f"model={model or '<config>'}"
     )
 
     if max_jobs <= 0:
@@ -351,7 +343,7 @@ def main() -> int:
     if kill_grace_sec < 0:
         print("[ERR  ] KILL_GRACE_SEC must be >= 0", file=sys.stderr)
         return 2
-    if sandbox.lower() not in VALID_SANDBOX_MODES | DISABLED_SANDBOX_VALUES:
+    if sandbox is not None and sandbox.lower() not in VALID_SANDBOX_MODES:
         print(f"[ERR  ] unsupported CODEX_SANDBOX={sandbox!r}", file=sys.stderr)
         return 2
     if "{address}" not in prompt_template:

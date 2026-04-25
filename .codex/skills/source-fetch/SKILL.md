@@ -8,7 +8,7 @@ description: Fetch verified source and dependency source bundles for an existing
 Fetch verified source:
 
 ```bash
-UV_CACHE_DIR=/tmp/uv-cache uv run agent-audit fetch-source --run-id <run_id>
+uv run agent-audit fetch-source --run-id <run_id>
 ```
 
 This step uses an Etherscan V2-compatible API and switches chains by `chainid`.

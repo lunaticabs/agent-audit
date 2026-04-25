@@ -8,7 +8,7 @@ description: Build lightweight source-derived IR for an existing run. Use when s
 Build IR:
 
 ```bash
-UV_CACHE_DIR=/tmp/uv-cache uv run agent-audit build-ir --run-id <run_id>
+uv run agent-audit build-ir --run-id <run_id>
 ```
 
 Inspect first:
