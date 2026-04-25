@@ -5,6 +5,7 @@ from __future__ import annotations
 import glob
 import os
 import signal
+import shutil
 import subprocess
 import sys
 import threading
@@ -14,6 +15,7 @@ from typing import Iterable
 
 
 ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = ROOT.parent
 DEFAULT_ADDRESS_DIR = ROOT / "addresses"
 DEFAULT_LOG_DIR = ROOT / "batch_logs"
 
@@ -150,23 +152,27 @@ def load_addresses(address_dir: Path, address_file: str | None) -> list[str]:
 def run_one(
     addr: str,
     log_dir: Path,
-    attach_url: str,
     model: str,
-    agent: str,
+    sandbox: str,
+    prompt_template: str,
     task_timeout_sec: int,
     kill_grace_sec: int,
 ) -> int:
     log_file = log_dir / f"{addr}.log"
     cmd = [
-        "opencode",
-        "run",
-        "--attach",
-        attach_url,
-        "--agent",
-        agent,
+        "codex",
+        "exec",
+        "--full-auto",
+        "--ephemeral",
+        "--color",
+        "never",
+        "-C",
+        str(PROJECT_ROOT),
+        "-s",
+        sandbox,
         "-m",
         model,
-        f"Audit {addr} on eth.",
+        prompt_template.format(address=addr),
     ]
 
     with log_file.open("w", encoding="utf-8", buffering=1) as out:
@@ -186,6 +192,7 @@ def run_one(
                 stderr=subprocess.STDOUT,
                 text=True,
                 start_new_session=True,
+                cwd=PROJECT_ROOT,
             )
             register_proc(proc)
 
@@ -209,51 +216,13 @@ def run_one(
     return rc
 
 
-def list_session_ids() -> list[str]:
-    proc = subprocess.run(
-        ["opencode", "session", "list"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-        check=False,
-    )
-    ids: list[str] = []
-    for line in proc.stdout.splitlines():
-        line = line.strip()
-        if line.startswith("ses_"):
-            ids.append(line.split()[0])
-    return ids
-
-
-def cleanup_sessions(keep_sessions: int) -> None:
-    ids = list_session_ids()
-    total = len(ids)
-    if total <= keep_sessions:
-        print(f"[CLEAN ] sessions={total} keep={keep_sessions} deleted=0")
-        return
-
-    delete_ids = ids[keep_sessions:]
-    print(f"[CLEAN ] sessions={total} keep={keep_sessions} deleting={len(delete_ids)}")
-    for sid in delete_ids:
-        subprocess.run(
-            ["opencode", "session", "delete", sid],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-    print(f"[CLEAN ] deleted={len(delete_ids)}")
-
-
 def bounded_submit(
     addresses: Iterable[str],
     max_jobs: int,
     log_dir: Path,
-    attach_url: str,
     model: str,
-    agent: str,
-    enable_session_cleanup: bool,
-    cleanup_every: int,
-    keep_sessions: int,
+    sandbox: str,
+    prompt_template: str,
     task_timeout_sec: int,
     kill_grace_sec: int,
 ) -> int:
@@ -265,7 +234,6 @@ def bounded_submit(
     failed = 0
     timed_out = 0
     cancelled = 0
-    lock = threading.Lock()
 
     with ThreadPoolExecutor(max_workers=max_jobs) as ex:
         for addr in addresses:
@@ -303,21 +271,13 @@ def bounded_submit(
                 run_one,
                 addr,
                 log_dir,
-                attach_url,
                 model,
-                agent,
+                sandbox,
+                prompt_template,
                 task_timeout_sec,
                 kill_grace_sec,
             )
             in_flight[fut] = addr
-
-            if (
-                enable_session_cleanup
-                and cleanup_every > 0
-                and started % cleanup_every == 0
-            ):
-                with lock:
-                    cleanup_sessions(keep_sessions)
 
         while in_flight:
             if STOP_EVENT.is_set():
@@ -355,18 +315,15 @@ def bounded_submit(
 
 def main() -> int:
     max_jobs = env_int("MAX_JOBS", 8)
-    cleanup_every = env_int("CLEANUP_EVERY", 100)
-    keep_sessions = env_int("KEEP_SESSIONS", 100)
     task_timeout_sec = env_int("TASK_TIMEOUT_SEC", 600)
     kill_grace_sec = env_int("KILL_GRACE_SEC", 5)
-    enable_session_cleanup = os.getenv("ENABLE_SESSION_CLEANUP", "1") == "1"
 
     address_dir = Path(os.getenv("ADDRESS_DIR", str(DEFAULT_ADDRESS_DIR))).resolve()
     address_file = os.getenv("ADDRESS_FILE")
     log_dir = Path(os.getenv("LOG_DIR", str(DEFAULT_LOG_DIR))).resolve()
-    attach_url = os.getenv("OPENCODE_ATTACH", "http://127.0.0.1:4096")
     model = os.getenv("MODEL", "apiapi/gpt-5.3-codex")
-    agent = os.getenv("AGENT", "audit")
+    sandbox = os.getenv("CODEX_SANDBOX", "workspace-write")
+    prompt_template = os.getenv("PROMPT_TEMPLATE", "Audit {address} on eth.")
 
     print(
         "[CONF ] "
@@ -374,23 +331,25 @@ def main() -> int:
         f"timeout={task_timeout_sec}s "
         f"log_dir={log_dir} "
         f"address_dir={address_dir} "
-        f"attach={attach_url} "
-        f"cleanup={'on' if enable_session_cleanup else 'off'} "
-        f"cleanup_every={cleanup_every} "
-        f"keep_sessions={keep_sessions}"
+        f"project_root={PROJECT_ROOT} "
+        f"sandbox={sandbox} "
+        f"model={model}"
     )
 
     if max_jobs <= 0:
         print("[ERR  ] MAX_JOBS must be > 0", file=sys.stderr)
-        return 2
-    if keep_sessions < 0:
-        print("[ERR  ] KEEP_SESSIONS must be >= 0", file=sys.stderr)
         return 2
     if task_timeout_sec <= 0:
         print("[ERR  ] TASK_TIMEOUT_SEC must be > 0", file=sys.stderr)
         return 2
     if kill_grace_sec < 0:
         print("[ERR  ] KILL_GRACE_SEC must be >= 0", file=sys.stderr)
+        return 2
+    if "{address}" not in prompt_template:
+        print("[ERR  ] PROMPT_TEMPLATE must contain {address}", file=sys.stderr)
+        return 2
+    if shutil.which("codex") is None:
+        print("[ERR  ] codex command not found in PATH", file=sys.stderr)
         return 2
 
     def _handle_signal(signum: int, _frame: object) -> None:
@@ -414,12 +373,9 @@ def main() -> int:
             addresses=addresses,
             max_jobs=max_jobs,
             log_dir=log_dir,
-            attach_url=attach_url,
             model=model,
-            agent=agent,
-            enable_session_cleanup=enable_session_cleanup,
-            cleanup_every=cleanup_every,
-            keep_sessions=keep_sessions,
+            sandbox=sandbox,
+            prompt_template=prompt_template,
             task_timeout_sec=task_timeout_sec,
             kill_grace_sec=kill_grace_sec,
         )
