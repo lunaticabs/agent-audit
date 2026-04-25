@@ -35,12 +35,56 @@ def unregister_proc(proc: subprocess.Popen) -> None:
 def terminate_process(proc: subprocess.Popen, kill_grace_sec: int) -> None:
     if proc.poll() is not None:
         return
+
+    pgid: int | None = None
     try:
-        os.killpg(proc.pid, signal.SIGTERM)
+        pgid = os.getpgid(proc.pid)
+    except Exception:
+        pgid = None
+
+    def _signal_term() -> None:
+        if pgid is not None:
+            try:
+                os.killpg(pgid, signal.SIGTERM)
+            except Exception:
+                pass
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+
+    def _signal_kill() -> None:
+        if pgid is not None:
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except Exception:
+                pass
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+    def _kill_direct_children(sig: str) -> None:
+        if proc.poll() is not None:
+            return
+        pkill_cmd = ["pkill", f"-{sig}", "-P", str(proc.pid)]
+        subprocess.run(
+            pkill_cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+
+    try:
+        _signal_term()
+        _kill_direct_children("TERM")
         proc.wait(timeout=kill_grace_sec)
+        return
     except Exception:
         try:
-            os.killpg(proc.pid, signal.SIGKILL)
+            _signal_kill()
+            _kill_direct_children("KILL")
+            proc.wait(timeout=max(1, kill_grace_sec))
         except Exception:
             pass
 
@@ -125,34 +169,43 @@ def run_one(
         f"Audit {addr} on eth.",
     ]
 
-    if STOP_EVENT.is_set():
-        return 130
-
-    with log_file.open("w", encoding="utf-8") as out:
+    with log_file.open("w", encoding="utf-8", buffering=1) as out:
         out.write(f"[START] {addr}\n")
         out.flush()
 
-        proc = subprocess.Popen(
-            cmd,
-            stdout=out,
-            stderr=subprocess.STDOUT,
-            text=True,
-            start_new_session=True,
-        )
-        register_proc(proc)
-
-        rc: int
-        try:
-            rc = proc.wait(timeout=task_timeout_sec)
-        except subprocess.TimeoutExpired:
-            out.write(f"[TIMEO] {addr} timeout={task_timeout_sec}s\n")
+        if STOP_EVENT.is_set():
+            out.write("[SKIP ] stop event already set\n")
+            out.write(f"[DONE ] {addr} exit=130\n")
             out.flush()
-            terminate_process(proc, kill_grace_sec)
-            rc = 124
-        finally:
-            unregister_proc(proc)
+            return 130
+
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=out,
+                stderr=subprocess.STDOUT,
+                text=True,
+                start_new_session=True,
+            )
+            register_proc(proc)
+
+            rc: int
+            try:
+                rc = proc.wait(timeout=task_timeout_sec)
+            except subprocess.TimeoutExpired:
+                out.write(f"[TIMEO] {addr} timeout={task_timeout_sec}s\n")
+                out.flush()
+                terminate_process(proc, kill_grace_sec)
+                rc = 124
+            finally:
+                unregister_proc(proc)
+        except Exception as exc:
+            out.write(f"[ERROR] launch_failed {type(exc).__name__}: {exc}\n")
+            out.flush()
+            rc = 125
 
         out.write(f"[DONE ] {addr} exit={rc}\n")
+        out.flush()
     return rc
 
 
@@ -204,12 +257,14 @@ def bounded_submit(
     task_timeout_sec: int,
     kill_grace_sec: int,
 ) -> int:
-    in_flight = set()
+    in_flight: dict = {}
     addresses = list(addresses)
     total = len(addresses)
     started = 0
     completed = 0
     failed = 0
+    timed_out = 0
+    cancelled = 0
     lock = threading.Lock()
 
     with ThreadPoolExecutor(max_workers=max_jobs) as ex:
@@ -217,28 +272,44 @@ def bounded_submit(
             if STOP_EVENT.is_set():
                 break
             while len(in_flight) >= max_jobs:
-                done, in_flight = wait(in_flight, return_when=FIRST_COMPLETED)
+                done, _ = wait(in_flight.keys(), return_when=FIRST_COMPLETED)
                 for fut in done:
-                    rc = fut.result()
+                    done_addr = in_flight.pop(fut)
+                    try:
+                        rc = fut.result()
+                    except Exception as exc:
+                        rc = 125
+                        print(
+                            f"[FAIL ] addr={done_addr} rc=125 error={type(exc).__name__}:{exc}"
+                        )
                     completed += 1
-                    if rc != 0:
+                    if rc == 130:
+                        cancelled += 1
+                    elif rc != 0:
                         failed += 1
-                    print(f"[PROG ] done={completed}/{total} failed={failed}")
+                        if rc == 124:
+                            timed_out += 1
+                        print(
+                            f"[FAIL ] addr={done_addr} rc={rc} log={log_dir / f'{done_addr}.log'}"
+                        )
+                    print(
+                        f"[PROG ] done={completed}/{total} failed={failed} "
+                        f"timeout={timed_out} cancelled={cancelled}"
+                    )
 
             started += 1
             print(f"[QUEUE] {started}/{total} {addr}")
-            in_flight.add(
-                ex.submit(
-                    run_one,
-                    addr,
-                    log_dir,
-                    attach_url,
-                    model,
-                    agent,
-                    task_timeout_sec,
-                    kill_grace_sec,
-                )
+            fut = ex.submit(
+                run_one,
+                addr,
+                log_dir,
+                attach_url,
+                model,
+                agent,
+                task_timeout_sec,
+                kill_grace_sec,
             )
+            in_flight[fut] = addr
 
             if (
                 enable_session_cleanup
@@ -251,15 +322,34 @@ def bounded_submit(
         while in_flight:
             if STOP_EVENT.is_set():
                 terminate_all_processes(kill_grace_sec)
-            done, in_flight = wait(in_flight, return_when=FIRST_COMPLETED)
+            done, _ = wait(in_flight.keys(), return_when=FIRST_COMPLETED)
             for fut in done:
-                rc = fut.result()
+                done_addr = in_flight.pop(fut)
+                try:
+                    rc = fut.result()
+                except Exception as exc:
+                    rc = 125
+                    print(
+                        f"[FAIL ] addr={done_addr} rc=125 error={type(exc).__name__}:{exc}"
+                    )
                 completed += 1
-                if rc != 0:
+                if rc == 130:
+                    cancelled += 1
+                elif rc != 0:
                     failed += 1
-                print(f"[PROG ] done={completed}/{total} failed={failed}")
+                    if rc == 124:
+                        timed_out += 1
+                    print(
+                        f"[FAIL ] addr={done_addr} rc={rc} log={log_dir / f'{done_addr}.log'}"
+                    )
+                print(
+                    f"[PROG ] done={completed}/{total} failed={failed} "
+                    f"timeout={timed_out} cancelled={cancelled}"
+                )
 
-    print(f"[FINAL] total={total} failed={failed}")
+    print(
+        f"[FINAL] total={total} failed={failed} timeout={timed_out} cancelled={cancelled}"
+    )
     return 0 if failed == 0 else 1
 
 
@@ -277,6 +367,18 @@ def main() -> int:
     attach_url = os.getenv("OPENCODE_ATTACH", "http://127.0.0.1:4096")
     model = os.getenv("MODEL", "apiapi/gpt-5.3-codex")
     agent = os.getenv("AGENT", "audit")
+
+    print(
+        "[CONF ] "
+        f"max_jobs={max_jobs} "
+        f"timeout={task_timeout_sec}s "
+        f"log_dir={log_dir} "
+        f"address_dir={address_dir} "
+        f"attach={attach_url} "
+        f"cleanup={'on' if enable_session_cleanup else 'off'} "
+        f"cleanup_every={cleanup_every} "
+        f"keep_sessions={keep_sessions}"
+    )
 
     if max_jobs <= 0:
         print("[ERR  ] MAX_JOBS must be > 0", file=sys.stderr)
