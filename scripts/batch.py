@@ -321,7 +321,7 @@ def main() -> int:
     address_dir = Path(os.getenv("ADDRESS_DIR", str(DEFAULT_ADDRESS_DIR))).resolve()
     address_file = os.getenv("ADDRESS_FILE")
     log_dir = Path(os.getenv("LOG_DIR", str(DEFAULT_LOG_DIR))).resolve()
-    model = os.getenv("MODEL", "apiapi/gpt-5.4")
+    model = os.getenv("MODEL", "gpt-5.4")
     sandbox = os.getenv("CODEX_SANDBOX", "workspace-write")
     prompt_template = os.getenv("PROMPT_TEMPLATE", "Audit {address} on eth.")
 
