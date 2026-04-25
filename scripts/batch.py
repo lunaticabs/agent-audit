@@ -323,7 +323,7 @@ def main() -> int:
     log_dir = Path(os.getenv("LOG_DIR", str(DEFAULT_LOG_DIR))).resolve()
     model = os.getenv("MODEL", "gpt-5.4")
     sandbox = os.getenv("CODEX_SANDBOX", "workspace-write")
-    prompt_template = os.getenv("PROMPT_TEMPLATE", "Audit {address} on eth.")
+    prompt_template = os.getenv("PROMPT_TEMPLATE", "Check AGENTS.md and Audit {address} on eth.")
 
     print(
         "[CONF ] "
