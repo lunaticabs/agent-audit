@@ -312,8 +312,8 @@ def bounded_submit(
 
 
 def main() -> int:
-    max_jobs = env_int("MAX_JOBS", 8)
-    task_timeout_sec = env_int("TASK_TIMEOUT_SEC", 900)
+    max_jobs = env_int("MAX_JOBS", 16)
+    task_timeout_sec = env_int("TASK_TIMEOUT_SEC", 1800)
     kill_grace_sec = env_int("KILL_GRACE_SEC", 5)
 
     address_dir = Path(os.getenv("ADDRESS_DIR", str(DEFAULT_ADDRESS_DIR))).resolve()
