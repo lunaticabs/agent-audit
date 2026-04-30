@@ -306,12 +306,12 @@ pub fn extract_semver(compiler_version: &str) -> String {
         .unwrap_or_default()
 }
 
-pub fn merge_unique_lists(groups: &[Vec<String>]) -> Vec<String> {
-    let mut seen = BTreeSet::new();
+pub fn merge_unique_lists(groups: &[&[String]]) -> Vec<String> {
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
     let mut merged = Vec::new();
     for group in groups {
-        for entry in group {
-            if seen.insert(entry.clone()) {
+        for entry in *group {
+            if seen.insert(entry.as_str()) {
                 merged.push(entry.clone());
             }
         }

@@ -13,7 +13,7 @@ use time::OffsetDateTime;
 use crate::error::{AppError, AppResult};
 use crate::models::identity::{ChainAlias, EvmAddress, RunId};
 use crate::models::path::WorkspaceRelPath;
-use crate::models::run::{RunMeta, RunRequest};
+use crate::models::run::{RunMeta, RunRequest, RunTarget};
 use crate::serde_ext::to_pretty_json;
 
 #[derive(Clone, Debug)]
@@ -70,11 +70,7 @@ impl RunWorkspace {
                 run_id: run_id.clone(),
                 id_scheme: "sha256-base64url-v1".to_string(),
                 created_at: OffsetDateTime::now_utc(),
-                target: RunRequest {
-                    address: address.clone(),
-                    chain: chain.clone(),
-                }
-                .target(),
+                target: RunTarget::new(address.clone(), chain.clone()),
             },
         )?;
         Ok(workspace)
@@ -129,7 +125,7 @@ impl RunWorkspace {
         let mut file = File::create(&path)?;
         file.write_all(to_pretty_json(payload)?.as_bytes())?;
         file.write_all(b"\n")?;
-        Ok(self.relative(&path)?)
+        self.relative(&path)
     }
 
     pub fn write_text(
@@ -143,7 +139,7 @@ impl RunWorkspace {
             fs::create_dir_all(parent)?;
         }
         fs::write(&path, content)?;
-        Ok(self.relative(&path)?)
+        self.relative(&path)
     }
 
     pub fn relative(&self, path: &Path) -> AppResult<WorkspaceRelPath> {

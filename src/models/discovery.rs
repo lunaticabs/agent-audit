@@ -33,20 +33,15 @@ pub struct DependencyCandidate {
     pub file: Option<RelativePath>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DependencyCandidateSource {
     Constructor,
     SourceConstant,
     SourceCastConstant,
     ImmutableConstructorAssignment,
+    #[default]
     Unknown,
-}
-
-impl Default for DependencyCandidateSource {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

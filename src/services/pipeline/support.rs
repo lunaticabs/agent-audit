@@ -90,7 +90,7 @@ impl AuditPipelineService {
         relative_paths
             .iter()
             .filter(|path| self.workspace.root.join(path).exists())
-            .map(|path| WorkspaceRelPath::new(path))
+            .map(WorkspaceRelPath::new)
             .collect()
     }
 
@@ -99,12 +99,12 @@ impl AuditPipelineService {
         relative_roots: &[&str],
     ) -> AppResult<Vec<WorkspaceRelPath>> {
         let mut existing = Vec::new();
-        let mut seen = BTreeSet::new();
+        let mut seen = BTreeSet::<String>::new();
         for root in relative_roots {
             let path = self.workspace.root.join(root);
             if path.is_file() {
                 let relative = WorkspaceRelPath::new(root);
-                if seen.insert(relative.clone()) {
+                if seen.insert(relative.as_str().to_string()) {
                     existing.push(relative);
                 }
                 continue;
@@ -118,7 +118,7 @@ impl AuditPipelineService {
                     continue;
                 }
                 let relative = self.workspace.relative(entry.path())?;
-                if seen.insert(relative.clone()) {
+                if seen.insert(relative.as_str().to_string()) {
                     existing.push(relative);
                 }
             }

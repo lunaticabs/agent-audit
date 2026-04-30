@@ -29,8 +29,8 @@ pub struct RunMeta {
 }
 
 impl RunRequest {
-    pub fn target(&self) -> RunTarget {
-        RunTarget::new(self.address.clone(), self.chain.clone())
+    pub fn into_target(self) -> RunTarget {
+        self.into()
     }
 }
 
@@ -41,5 +41,11 @@ impl RunTarget {
             chain,
             chain_id: None,
         }
+    }
+}
+
+impl From<RunRequest> for RunTarget {
+    fn from(value: RunRequest) -> Self {
+        Self::new(value.address, value.chain)
     }
 }

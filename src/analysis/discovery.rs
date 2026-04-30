@@ -19,10 +19,10 @@ pub fn discover_dependencies(
     let cast_constant_candidates = discover_source_cast_constant_dependencies(sources);
     let immutable_candidates = discover_immutable_constructor_dependencies(metadata, sources);
     let merged_candidates = merge_dependency_candidates(&[
-        constructor_candidates.clone(),
-        constant_candidates.clone(),
-        cast_constant_candidates.clone(),
-        immutable_candidates.clone(),
+        &constructor_candidates,
+        &constant_candidates,
+        &cast_constant_candidates,
+        &immutable_candidates,
     ]);
 
     DependencyDiscoveryReport {
@@ -60,10 +60,11 @@ fn discover_constructor_dependencies(
             let name = item.name;
             let internal_type = item.internal_type;
             let solidity_type = item.solidity_type;
+            let role = classify_dependency_role(&name, &internal_type).to_string();
             Some(DependencyCandidate {
                 address,
-                name: name.clone(),
-                role: classify_dependency_role(&name, &internal_type).to_string(),
+                name,
+                role,
                 source: Some(DependencyCandidateSource::Constructor),
                 sources: Vec::new(),
                 internal_type,
@@ -139,10 +140,11 @@ fn discover_source_constant_dependencies(
             let Ok(address) = EvmAddress::new(&address) else {
                 continue;
             };
+            let role = classify_dependency_role(&name, "").to_string();
             candidates.push(DependencyCandidate {
                 address,
-                name: name.clone(),
-                role: classify_dependency_role(&name, "").to_string(),
+                name,
+                role,
                 source: Some(DependencyCandidateSource::SourceConstant),
                 sources: Vec::new(),
                 internal_type: String::new(),
@@ -183,10 +185,11 @@ fn discover_source_cast_constant_dependencies(
             } else {
                 format!("contract {cast_type}")
             };
+            let role = classify_dependency_role(&name, &internal_type).to_string();
             candidates.push(DependencyCandidate {
                 address,
-                name: name.clone(),
-                role: classify_dependency_role(&name, &internal_type).to_string(),
+                name,
+                role,
                 source: Some(DependencyCandidateSource::SourceCastConstant),
                 sources: Vec::new(),
                 internal_type,
@@ -303,12 +306,12 @@ fn decoded_constructor_address_args(
         .collect()
 }
 
-fn merge_dependency_candidates(groups: &[Vec<DependencyCandidate>]) -> Vec<DependencyCandidate> {
+fn merge_dependency_candidates(groups: &[&[DependencyCandidate]]) -> Vec<DependencyCandidate> {
     let mut merged: Vec<DependencyCandidate> = Vec::new();
     let mut by_address: BTreeMap<String, usize> = BTreeMap::new();
 
     for group in groups {
-        for item in group {
+        for item in *group {
             let address = item.address.as_lowercase();
             if let Some(index) = by_address.get(&address).copied() {
                 if let Some(existing) = merged.get_mut(index) {
@@ -318,29 +321,28 @@ fn merge_dependency_candidates(groups: &[Vec<DependencyCandidate>]) -> Vec<Depen
                         existing.sources.push(source);
                     }
                     if existing.name.is_empty() {
-                        existing.name = item.name.clone();
+                        existing.name.clone_from(&item.name);
                     }
                     if matches!(existing.role.as_str(), "dependency" | "unknown") {
-                        existing.role = item.role.clone();
+                        existing.role.clone_from(&item.role);
                     }
                     if existing.internal_type.is_empty() {
-                        existing.internal_type = item.internal_type.clone();
+                        existing.internal_type.clone_from(&item.internal_type);
                     }
                     if existing.solidity_type.is_empty() {
-                        existing.solidity_type = item.solidity_type.clone();
+                        existing.solidity_type.clone_from(&item.solidity_type);
                     }
                     if existing.declared_type.is_empty() {
-                        existing.declared_type = item.declared_type.clone();
+                        existing.declared_type.clone_from(&item.declared_type);
                     }
                     if existing.file.is_none() {
-                        existing.file = item.file.clone();
+                        existing.file.clone_from(&item.file);
                     }
                 }
                 continue;
             }
 
             let mut candidate = item.clone();
-            candidate.address = item.address.clone();
             candidate.sources = item.source.into_iter().collect();
             by_address.insert(address, merged.len());
             merged.push(candidate);

@@ -7,8 +7,20 @@
 - CLI 现在由 Rust 实现，负责把材料准备出来
 - 运行方式是直接调用 `agent-audit`
 - 本地开发时可以用 `cargo run --bin agent-audit -- <subcommand>`
+- 代码修改后统一用 `cargo xtask check` 跑 `fmt`、`clippy`、`test`
 - chain checks、Slither、Echidna、forge、cast、anvil 这类工具由 agent 自己决定是否直接调用
 - 审计结论、深入验证顺序、是否调用这些工具，交给 agent 决定
+
+## 开发检查
+
+- 推荐命令：`cargo xtask check`
+- 等价命令：`cargo run -p xtask -- check`
+- 固定顺序：
+  - `cargo fmt --all --check`
+  - `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+  - `cargo test --workspace --all-features`
+
+agent 在每轮代码修改后都应该先运行这条命令，再汇报结果；如果失败，至少要说明失败的是哪一步。
 
 ## 项目结构
 

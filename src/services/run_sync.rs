@@ -86,21 +86,21 @@ pub fn sync_run_to_mongo(config: &AppConfig, workspace: &RunWorkspace) -> AppRes
 
     create_indexes(&meta_col, &files_col)?;
 
+    let file_count = file_docs.len();
     if !file_docs.is_empty() {
         let namespace = Namespace::new(
             config.mongo_db.clone(),
             config.mongo_runs_files_collection.clone(),
         );
         let models = file_docs
-            .iter()
+            .into_iter()
             .map(|file_doc| {
+                let file_id = file_doc.get_str("_id").unwrap_or_default().to_string();
                 WriteModel::UpdateOne(
                     UpdateOneModel::builder()
                         .namespace(namespace.clone())
-                        .filter(doc! {"_id": file_doc.get_str("_id").unwrap_or_default()})
-                        .update(UpdateModifications::Document(
-                            doc! {"$set": file_doc.clone()},
-                        ))
+                        .filter(doc! {"_id": file_id})
+                        .update(UpdateModifications::Document(doc! {"$set": file_doc}))
                         .upsert(true)
                         .build(),
                 )
@@ -113,7 +113,7 @@ pub fn sync_run_to_mongo(config: &AppConfig, workspace: &RunWorkspace) -> AppRes
     meta_doc.insert("status", "succeeded");
     meta_doc.insert("created_at", BsonDateTime::from_system_time(created_at));
     meta_doc.insert("target", target);
-    meta_doc.insert("file_count", file_docs.len() as i64);
+    meta_doc.insert("file_count", file_count as i64);
     meta_doc.insert("total_size_bytes", total_size_bytes as i64);
     meta_doc.insert(
         "has_final_report",
@@ -136,9 +136,9 @@ pub fn sync_run_to_mongo(config: &AppConfig, workspace: &RunWorkspace) -> AppRes
 
     Ok(RunSyncResult {
         run_id: workspace.run_id.clone(),
-        file_count: file_docs.len(),
+        file_count,
         total_size_bytes,
-        upserted_file_records: file_docs.len(),
+        upserted_file_records: file_count,
     })
 }
 
@@ -205,8 +205,10 @@ fn read_target(workspace: &RunWorkspace) -> AppResult<Bson> {
         return Ok(bson::serialize_to_bson(&RunTarget::default())?);
     }
     let text = fs::read_to_string(request_path)?;
-    let payload = serde_json::from_str::<RunRequest>(&text).unwrap_or_default();
-    Ok(bson::serialize_to_bson(&payload.target())?)
+    let target = serde_json::from_str::<RunRequest>(&text)
+        .map(RunRequest::into_target)
+        .unwrap_or_default();
+    Ok(bson::serialize_to_bson(&target)?)
 }
 
 fn read_created_at(workspace: &RunWorkspace) -> std::time::SystemTime {

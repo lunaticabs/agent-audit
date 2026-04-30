@@ -230,7 +230,6 @@ impl CommandOutput {
 }
 
 struct RunExecutionContext {
-    workspace: RunWorkspace,
     request: RunRequest,
     pipeline: AuditPipelineService,
 }
@@ -238,12 +237,8 @@ struct RunExecutionContext {
 impl RunExecutionContext {
     fn from_workspace(config: &AppConfig, workspace: RunWorkspace) -> AppResult<Self> {
         let request = load_request_context(&workspace)?;
-        let pipeline = AuditPipelineService::new(config.clone(), workspace.clone());
-        Ok(Self {
-            workspace,
-            request,
-            pipeline,
-        })
+        let pipeline = AuditPipelineService::new(config.clone(), workspace);
+        Ok(Self { request, pipeline })
     }
 }
 
@@ -281,7 +276,7 @@ impl LockedRunContext {
     }
 
     fn run_id(&self) -> &RunId {
-        &self.context.workspace.run_id
+        &self.context.pipeline.workspace.run_id
     }
 }
 
@@ -325,11 +320,13 @@ impl WorkspaceStep {
         };
 
         let payload = outcome.into_payload(
-            &run.workspace,
+            &run.pipeline.workspace,
             self.command_name(),
             run.pipeline.write_artifact_index()?,
         );
-        run.workspace.write_json(self.log_path(), &payload)?;
+        run.pipeline
+            .workspace
+            .write_json(self.log_path(), &payload)?;
         Ok(payload)
     }
 
@@ -480,12 +477,14 @@ fn execute_full_prepare(run: &mut RunExecutionContext) -> AppResult<StepPayload>
         }),
     )
     .into_payload(
-        &run.workspace,
+        &run.pipeline.workspace,
         INIT_RUN_COMMAND,
         run.pipeline.write_artifact_index()?,
     );
 
-    run.workspace.write_json(INIT_RUN_LOG_PATH, &payload)?;
+    run.pipeline
+        .workspace
+        .write_json(INIT_RUN_LOG_PATH, &payload)?;
     Ok(payload)
 }
 

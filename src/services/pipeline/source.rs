@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 
+use serde::Serialize;
+
 use crate::analysis::dependencies::analyze_dependencies;
 use crate::analysis::discovery::discover_dependencies;
 use crate::error::AppResult;
@@ -12,8 +14,8 @@ use crate::models::path::RelativePath;
 use crate::models::run::RunTarget;
 use crate::models::source::{
     AnalysisTarget, ArtifactSourceFile, ContractMetadata, DependencyFetchStatus, DependencyRecord,
-    ProxyResolution, ProxyResolutionStatus, SourceBundleArtifact, SourceFetchRequestArtifact,
-    SourceFile, VerifiedSourceMetadata,
+    ProxyResolution, ProxyResolutionStatus, SourceBundleArtifact, SourceFile,
+    VerifiedSourceMetadata,
 };
 use crate::services::source_provider::{fetch_verified_source, sanitize_dependency_name};
 
@@ -25,23 +27,41 @@ impl AuditPipelineService {
         address: &EvmAddress,
         chain: &ChainAlias,
     ) -> AppResult<StepStatus> {
-        let request_payload = SourceFetchRequestArtifact {
-            address: address.clone(),
-            chain: chain.clone(),
-            source_api_base: self.config.source_api_base.clone(),
-            source_api_configured: self.config.source_api_base.is_some(),
-            source_api_header_names: self.config.source_api_headers.keys().cloned().collect(),
-            rpc_url_configured: self.config.rpc_url.is_some(),
-        };
-        let request_path = self
-            .workspace
-            .write_json("input/source_request.json", &request_payload)?;
-        let target = RunTarget::new(address.clone(), chain.clone());
+        #[derive(Serialize)]
+        struct SourceFetchRequestArtifactRef<'a> {
+            address: &'a EvmAddress,
+            chain: &'a ChainAlias,
+            source_api_base: Option<&'a url::Url>,
+            source_api_configured: bool,
+            #[serde(skip_serializing_if = "Vec::is_empty")]
+            source_api_header_names: Vec<&'a str>,
+            rpc_url_configured: bool,
+        }
+        let source_api_header_names = self
+            .config
+            .source_api_headers
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        let request_path = self.workspace.write_json(
+            "input/source_request.json",
+            &SourceFetchRequestArtifactRef {
+                address,
+                chain,
+                source_api_base: self.config.source_api_base.as_ref(),
+                source_api_configured: self.config.source_api_base.is_some(),
+                source_api_header_names,
+                rpc_url_configured: self.config.rpc_url.is_some(),
+            },
+        )?;
 
-        let Some(base_url) = self.config.source_api_base.clone() else {
+        let Some(base_url) = self.config.source_api_base.as_ref() else {
             let bundle_path = self.workspace.write_json(
                 "artifacts/source_bundle.json",
-                &SourceBundleArtifact::not_configured(target),
+                &SourceBundleArtifact::not_configured(RunTarget::new(
+                    address.clone(),
+                    chain.clone(),
+                )),
             )?;
             self.record(
                 "fetch_contract_source",
@@ -61,7 +81,7 @@ impl AuditPipelineService {
         };
 
         let bundle = match fetch_verified_source(
-            &base_url,
+            base_url,
             self.config.source_api_key.as_deref(),
             &self.config.source_api_headers,
             address,
@@ -72,7 +92,7 @@ impl AuditPipelineService {
                 let bundle_path = self.workspace.write_json(
                     "artifacts/source_bundle.json",
                     &SourceBundleArtifact::fetch_failed(
-                        target,
+                        RunTarget::new(address.clone(), chain.clone()),
                         error.to_string(),
                         format!("{error:?}"),
                     ),
@@ -95,8 +115,12 @@ impl AuditPipelineService {
             }
         };
 
-        let proxy_contract = bundle.normalized_payload.contract.clone();
-        let implementation_address = proxy_contract.implementation.clone();
+        let proxy_contract = &bundle.normalized_payload.contract;
+        let provider_proxy = proxy_contract.proxy;
+        let provider_implementation = proxy_contract.implementation.clone();
+        let implementation_address = provider_implementation
+            .as_ref()
+            .filter(|implementation| *implementation != address);
 
         let raw_response_path = self.workspace.write_json(
             "artifacts/source_provider_response.json",
@@ -106,44 +130,31 @@ impl AuditPipelineService {
             self.write_fetched_source_files(&bundle.files, None, "Stored a fetched source file.")?;
 
         let mut related_contracts = Vec::new();
-        if proxy_contract.proxy
-            && implementation_address
-                .as_ref()
-                .is_some_and(|implementation| implementation != address)
-        {
-            related_contracts.push(
-                self.fetch_dependency_bundle_record(
-                    implementation_address
-                        .as_ref()
-                        .expect("checked implementation presence"),
-                    chain,
-                    "implementation",
-                    "implementation",
-                    &RelativePath::new("implementation"),
-                )?,
-            );
+        if provider_proxy && let Some(implementation_address) = implementation_address {
+            related_contracts.push(self.fetch_dependency_bundle_record(
+                implementation_address,
+                chain,
+                "implementation",
+                "implementation",
+                &RelativePath::new("implementation"),
+            )?);
         }
 
         let source_map_for_discovery = self.source_map_for_discovery(&primary_sources)?;
         let dependency_discovery =
             discover_dependencies(&bundle.normalized_payload, &source_map_for_discovery);
         let dependencies = self.fetch_discovered_dependencies(
-            dependency_discovery.merged_candidates.clone(),
+            &dependency_discovery.merged_candidates,
             address,
             chain,
-            if implementation_address.is_none() {
-                BTreeSet::new()
-            } else {
-                BTreeSet::from([implementation_address
-                    .as_ref()
-                    .expect("checked implementation presence")
-                    .as_lowercase()])
-            },
+            implementation_address.map_or_else(BTreeSet::new, |implementation| {
+                BTreeSet::from([implementation.as_lowercase()])
+            }),
         )?;
 
         let analysis_target = analysis_target_from_bundle(
             address,
-            &proxy_contract,
+            proxy_contract,
             &primary_sources,
             &related_contracts,
         );
@@ -152,8 +163,8 @@ impl AuditPipelineService {
             SourceBundleArtifact::from_verified_source(bundle.normalized_payload);
         bundle_payload.proxy_resolution = Some(ProxyResolution {
             status: ProxyResolutionStatus::ProviderFlagOnly,
-            proxy: proxy_contract.proxy,
-            implementation: proxy_contract.implementation,
+            proxy: provider_proxy,
+            implementation: provider_implementation,
         });
         bundle_payload.dependency_discovery = Some(dependency_discovery);
         bundle_payload.dependencies = dependencies;
@@ -266,7 +277,7 @@ impl AuditPipelineService {
             written.push(ArtifactSourceFile {
                 path: final_path,
                 length: source_file.content.len(),
-                original_path: Some(source_file.path.clone()),
+                original_path: prefix.map(|_| source_file.path.clone()),
             });
         }
         Ok(written)
@@ -280,7 +291,7 @@ impl AuditPipelineService {
         name: &str,
         prefix: &RelativePath,
     ) -> AppResult<DependencyRecord> {
-        let Some(base_url) = self.config.source_api_base.clone() else {
+        let Some(base_url) = self.config.source_api_base.as_ref() else {
             return Ok(DependencyRecord {
                 role: role.to_string(),
                 name: name.to_string(),
@@ -292,7 +303,7 @@ impl AuditPipelineService {
         };
 
         let bundle = match fetch_verified_source(
-            &base_url,
+            base_url,
             self.config.source_api_key.as_deref(),
             &self.config.source_api_headers,
             address,
@@ -312,34 +323,12 @@ impl AuditPipelineService {
         };
 
         let response_artifact = self.workspace.write_json(
-            &format!(
+            format!(
                 "artifacts/source_provider_response_{}.json",
                 prefix.as_str().replace('/', "_")
             ),
             &bundle.provider_payload,
         )?;
-        let written_files = self.write_fetched_source_files(
-            &bundle.files,
-            Some(prefix),
-            "Stored a fetched dependency source file.",
-        )?;
-
-        let mut record = DependencyRecord {
-            role: role.to_string(),
-            name: name.to_string(),
-            address: address.clone(),
-            provider: Some(bundle.normalized_payload.provider.clone()),
-            contract: Some(bundle.normalized_payload.contract.clone()),
-            compiler: Some(bundle.normalized_payload.compiler.clone()),
-            abi: bundle.normalized_payload.abi.clone(),
-            source_layout: bundle.normalized_payload.source_layout.clone(),
-            source_meta: Some(bundle.normalized_payload.source_meta.clone()),
-            files: written_files,
-            provider_response_artifact: Some(response_artifact.clone()),
-            status: DependencyFetchStatus::Fetched,
-            related_contracts: Vec::new(),
-            ..DependencyRecord::default()
-        };
         self.record(
             "fetch_contract_source",
             &response_artifact,
@@ -347,18 +336,49 @@ impl AuditPipelineService {
             "executed",
             "Stored the raw dependency provider response.",
         );
+        let written_files = self.write_fetched_source_files(
+            &bundle.files,
+            Some(prefix),
+            "Stored a fetched dependency source file.",
+        )?;
+        let VerifiedSourceMetadata {
+            provider,
+            contract,
+            compiler,
+            abi,
+            source_layout,
+            source_meta,
+            ..
+        } = bundle.normalized_payload;
 
-        let contract = bundle.normalized_payload.contract;
-        let implementation_address = contract.implementation.clone();
-        if contract.proxy
-            && implementation_address
+        let mut record = DependencyRecord {
+            role: role.to_string(),
+            name: name.to_string(),
+            address: address.clone(),
+            provider: Some(provider),
+            contract: Some(contract),
+            compiler: Some(compiler),
+            abi,
+            source_layout,
+            source_meta: Some(source_meta),
+            files: written_files,
+            provider_response_artifact: Some(response_artifact),
+            status: DependencyFetchStatus::Fetched,
+            related_contracts: Vec::new(),
+            ..DependencyRecord::default()
+        };
+        if record
+            .contract
+            .as_ref()
+            .is_some_and(|contract| contract.proxy)
+            && let Some(implementation_address) = record
+                .contract
                 .as_ref()
-                .is_some_and(|implementation| implementation != address)
+                .and_then(|contract| contract.implementation.as_ref())
+                .filter(|implementation| *implementation != address)
         {
             let nested = self.fetch_dependency_bundle_record(
-                implementation_address
-                    .as_ref()
-                    .expect("checked implementation presence"),
+                implementation_address,
                 chain,
                 "implementation",
                 &format!("{name}-implementation"),
@@ -371,7 +391,7 @@ impl AuditPipelineService {
 
     fn fetch_discovered_dependencies(
         &mut self,
-        candidates: Vec<DependencyCandidate>,
+        candidates: &[DependencyCandidate],
         target_address: &EvmAddress,
         chain: &ChainAlias,
         skip_addresses: BTreeSet<String>,
@@ -381,12 +401,11 @@ impl AuditPipelineService {
         seen.insert(target_address.as_lowercase());
         seen.extend(skip_addresses);
         for item in candidates {
-            let address = item.address;
+            let address = &item.address;
             let address_key = address.as_lowercase();
-            if seen.contains(&address_key) {
+            if seen.contains(address_key.as_str()) {
                 continue;
             }
-            seen.insert(address_key.clone());
             let role = if item.role.is_empty() {
                 "dependency"
             } else {
@@ -400,13 +419,14 @@ impl AuditPipelineService {
             let safe_name = sanitize_dependency_name(name);
             let prefix =
                 RelativePath::new(format!("dependencies/{role}/{safe_name}_{address_key}"));
+            seen.insert(address_key);
             let mut record =
-                self.fetch_dependency_bundle_record(&address, chain, role, name, &prefix)?;
+                self.fetch_dependency_bundle_record(address, chain, role, name, &prefix)?;
             record.discovery = Some(DependencyDiscoveryContext {
-                sources: item.sources,
-                internal_type: item.internal_type,
-                solidity_type: item.solidity_type,
-                file: item.file,
+                sources: item.sources.clone(),
+                internal_type: item.internal_type.clone(),
+                solidity_type: item.solidity_type.clone(),
+                file: item.file.clone(),
             });
             records.push(record);
         }
@@ -439,12 +459,12 @@ pub(super) fn analysis_target_from_bundle(
         }
     }
 
-    let preferred_path = primary_contract.file_name.clone();
-    let first_primary_path = if preferred_path
+    let first_primary_path = if let Some(preferred_path) = primary_contract
+        .file_name
         .as_ref()
-        .is_some_and(|preferred| primary_files.iter().any(|item| item.path == *preferred))
+        .filter(|preferred| primary_files.iter().any(|item| item.path == **preferred))
     {
-        preferred_path.unwrap_or_default()
+        preferred_path.clone()
     } else {
         primary_files
             .first()
@@ -461,15 +481,13 @@ pub(super) fn analysis_target_from_bundle(
 }
 
 pub(super) fn analysis_target_for_prepared(bundle: &SourceBundleArtifact) -> AnalysisTarget {
-    let preferred_path = bundle
+    if let Some(preferred_path) = bundle
         .contract
         .as_ref()
-        .and_then(|contract| contract.file_name.clone());
-    if preferred_path
-        .as_ref()
-        .is_some_and(|preferred| record_for_path(bundle, preferred).is_some())
+        .and_then(|contract| contract.file_name.as_ref())
+        .filter(|preferred| record_for_path(bundle, preferred).is_some())
     {
-        let preferred_path = preferred_path.unwrap_or_default();
+        let prepared_path = preferred_path.clone();
         return AnalysisTarget {
             address: bundle.target.address.clone(),
             contract_name: bundle
@@ -477,25 +495,26 @@ pub(super) fn analysis_target_for_prepared(bundle: &SourceBundleArtifact) -> Ana
                 .as_ref()
                 .map(|contract| contract.name.clone())
                 .unwrap_or_default(),
-            path: preferred_path.clone(),
+            path: prepared_path.clone(),
             role: "target".to_string(),
-            prepared_path: Some(preferred_path),
+            prepared_path: Some(prepared_path),
             ..AnalysisTarget::default()
         };
     }
 
     if let Some(analysis_target) = bundle.analysis_target.as_ref() {
+        let prepared_path = analysis_target.path.clone();
         return AnalysisTarget {
             address: analysis_target.address.clone(),
             contract_name: analysis_target.contract_name.clone(),
-            path: analysis_target.path.clone(),
+            path: prepared_path.clone(),
             role: analysis_target.role.clone(),
-            prepared_path: Some(analysis_target.path.clone()),
+            prepared_path: Some(prepared_path),
             ..AnalysisTarget::default()
         };
     }
 
-    let first_path = bundle
+    let prepared_path = bundle
         .files
         .first()
         .map(|item| item.path.clone())
@@ -507,9 +526,9 @@ pub(super) fn analysis_target_for_prepared(bundle: &SourceBundleArtifact) -> Ana
             .as_ref()
             .map(|contract| contract.name.clone())
             .unwrap_or_default(),
-        path: first_path.clone(),
+        path: prepared_path.clone(),
         role: "target".to_string(),
-        prepared_path: Some(first_path),
+        prepared_path: Some(prepared_path),
         ..AnalysisTarget::default()
     }
 }

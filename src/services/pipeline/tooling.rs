@@ -124,27 +124,6 @@ impl AuditPipelineService {
                 prepared_target: preferred_settings.prepared_target.clone(),
             },
         )?;
-        let manifest_path = self.workspace.write_json(
-            "slither_project/build_manifest.json",
-            &SlitherBuildManifest {
-                header: build_header(address, chain, &self.workspace.run_id, StepStatus::Prepared),
-                slither_project_root: Some(WorkspaceRelPath::new("slither_project")),
-                analysis_target: Some(prepared_analysis_target),
-                compiler_version: preferred_settings.compiler_version,
-                solc_version: preferred_settings.solc_version,
-                solc_select: Some(preferred_settings.solc_select),
-                linked_source_entries: linked_entries,
-                node_modules_links,
-                remappings: preferred_settings.remappings,
-                solc_args: preferred_settings.solc_args,
-                config_path: Some(config_path.clone()),
-                preferred_target: Some(preferred_settings.prepared_target),
-                preferred_working_dir: Some(preferred_settings.working_dir),
-                preferred_source_root: preferred_settings.source_root,
-                ..SlitherBuildManifest::default()
-            },
-        )?;
-
         self.record(
             "prepare_slither_project",
             &remappings_path,
@@ -159,6 +138,26 @@ impl AuditPipelineService {
             "executed",
             "Prepared Slither config metadata.",
         );
+        let manifest_path = self.workspace.write_json(
+            "slither_project/build_manifest.json",
+            &SlitherBuildManifest {
+                header: build_header(address, chain, &self.workspace.run_id, StepStatus::Prepared),
+                slither_project_root: Some(WorkspaceRelPath::new("slither_project")),
+                analysis_target: Some(prepared_analysis_target),
+                compiler_version: preferred_settings.compiler_version,
+                solc_version: preferred_settings.solc_version,
+                solc_select: Some(preferred_settings.solc_select),
+                linked_source_entries: linked_entries,
+                node_modules_links,
+                remappings: preferred_settings.remappings,
+                solc_args: preferred_settings.solc_args,
+                config_path: Some(config_path),
+                preferred_target: Some(preferred_settings.prepared_target),
+                preferred_working_dir: Some(preferred_settings.working_dir),
+                preferred_source_root: preferred_settings.source_root,
+                ..SlitherBuildManifest::default()
+            },
+        )?;
         self.record(
             "prepare_slither_project",
             &manifest_path,
@@ -364,9 +363,10 @@ impl AuditPipelineService {
             &sources_root.join("npm"),
             &foundry_root.join("node_modules"),
         )?;
+        let generated_remappings = node_modules_remappings(&node_modules_links);
         let remappings = merge_unique_lists(&[
-            settings.remappings.clone(),
-            node_modules_remappings(&node_modules_links),
+            settings.remappings.as_slice(),
+            generated_remappings.as_slice(),
         ]);
         let remappings_path = self.workspace.write_text(
             "foundry_project/remappings.txt",
@@ -382,30 +382,6 @@ impl AuditPipelineService {
             "foundry_project/foundry.toml",
             &render_foundry_toml(&settings, &remappings),
         )?;
-        let manifest_path = self.workspace.write_json(
-            "foundry_project/build_manifest.json",
-            &FoundryBuildManifest {
-                header: build_header(address, chain, &self.workspace.run_id, StepStatus::Prepared),
-                project_root: Some(WorkspaceRelPath::new("foundry_project")),
-                analysis_target: Some(analysis_target_for_prepared(bundle_payload)),
-                source_links,
-                node_modules_links,
-                compiler_version: settings.compiler_version,
-                solc_version: settings.solc_version,
-                optimizer_enabled: settings.optimizer_enabled,
-                optimizer_runs: settings.optimizer_runs,
-                evm_version: settings.evm_version,
-                remappings,
-                remappings_path: Some(remappings_path.clone()),
-                foundry_toml_path: Some(foundry_toml_path.clone()),
-                preferred_working_dir: Some(WorkspaceRelPath::new("foundry_project")),
-                preferred_target: Some(settings.prepared_target),
-                preferred_source_root: settings.source_root,
-                test_dir: Some(WorkspaceRelPath::new("foundry_project/test")),
-                script_dir: Some(WorkspaceRelPath::new("foundry_project/script")),
-                ..FoundryBuildManifest::default()
-            },
-        )?;
         self.record(
             "prepare_foundry_project",
             &remappings_path,
@@ -420,6 +396,30 @@ impl AuditPipelineService {
             "executed",
             "Prepared a deterministic Foundry config.",
         );
+        let manifest_path = self.workspace.write_json(
+            "foundry_project/build_manifest.json",
+            &FoundryBuildManifest {
+                header: build_header(address, chain, &self.workspace.run_id, StepStatus::Prepared),
+                project_root: Some(WorkspaceRelPath::new("foundry_project")),
+                analysis_target: Some(analysis_target_for_prepared(bundle_payload)),
+                source_links,
+                node_modules_links,
+                compiler_version: settings.compiler_version,
+                solc_version: settings.solc_version,
+                optimizer_enabled: settings.optimizer_enabled,
+                optimizer_runs: settings.optimizer_runs,
+                evm_version: settings.evm_version,
+                remappings,
+                remappings_path: Some(remappings_path),
+                foundry_toml_path: Some(foundry_toml_path),
+                preferred_working_dir: Some(WorkspaceRelPath::new("foundry_project")),
+                preferred_target: Some(settings.prepared_target),
+                preferred_source_root: settings.source_root,
+                test_dir: Some(WorkspaceRelPath::new("foundry_project/test")),
+                script_dir: Some(WorkspaceRelPath::new("foundry_project/script")),
+                ..FoundryBuildManifest::default()
+            },
+        )?;
         self.record(
             "prepare_foundry_project",
             &manifest_path,
@@ -501,9 +501,10 @@ impl AuditPipelineService {
             &sources_root.join("npm"),
             &echidna_root.join("node_modules"),
         )?;
+        let generated_remappings = node_modules_remappings(&node_modules_links);
         let remappings = merge_unique_lists(&[
-            settings.remappings.clone(),
-            node_modules_remappings(&node_modules_links),
+            settings.remappings.as_slice(),
+            generated_remappings.as_slice(),
         ]);
         self.workspace
             .write_text("echidna_project/test/.gitkeep", "")?;
@@ -513,6 +514,13 @@ impl AuditPipelineService {
             "echidna_project/echidna.yaml",
             &render_echidna_yaml(&settings),
         )?;
+        self.record(
+            "prepare_echidna_project",
+            &config_path,
+            "prep",
+            "executed",
+            "Prepared an Echidna config scaffold.",
+        );
         let manifest_path = self.workspace.write_json(
             "echidna_project/build_manifest.json",
             &EchidnaBuildManifest {
@@ -527,7 +535,7 @@ impl AuditPipelineService {
                 optimizer_runs: settings.optimizer_runs,
                 evm_version: settings.evm_version,
                 remappings,
-                config_path: Some(config_path.clone()),
+                config_path: Some(config_path),
                 preferred_working_dir: Some(WorkspaceRelPath::new("echidna_project")),
                 preferred_target: Some(settings.prepared_target),
                 preferred_source_root: settings.source_root,
@@ -535,13 +543,6 @@ impl AuditPipelineService {
                 ..EchidnaBuildManifest::default()
             },
         )?;
-        self.record(
-            "prepare_echidna_project",
-            &config_path,
-            "prep",
-            "executed",
-            "Prepared an Echidna config scaffold.",
-        );
         self.record(
             "prepare_echidna_project",
             &manifest_path,
@@ -699,7 +700,7 @@ fn node_modules_remappings(node_modules_links: &[NodeModuleLink]) -> Vec<String>
 
 fn tool_project_settings(bundle_payload: &SourceBundleArtifact) -> ToolProjectSettings {
     let analysis_target = analysis_target_for_prepared(bundle_payload);
-    let target_path = analysis_target.path.clone();
+    let target_path = analysis_target.path;
     let source_root = path_parent(&target_path);
     let prepared_target = if let Some(source_root) = source_root.as_ref() {
         let prefix = format!("{}/", source_root.as_str());
@@ -745,7 +746,10 @@ fn slither_target_settings(
     let source_meta = source_meta_for_path(bundle_payload, &normalized_target_path);
     let provider_remappings = provider_remappings(source_meta);
     let generated_remappings = node_modules_remappings(node_modules_links);
-    let remappings = merge_unique_lists(&[provider_remappings, generated_remappings]);
+    let remappings = merge_unique_lists(&[
+        provider_remappings.as_slice(),
+        generated_remappings.as_slice(),
+    ]);
     let use_project_root = !remappings.is_empty();
     let working_root = if use_project_root {
         None
@@ -769,24 +773,25 @@ fn slither_target_settings(
     } else {
         WorkspaceRelPath::new("slither_project")
     };
+    let remappings_file =
+        slither_relative_from_working_dir(working_root.as_ref(), "remappings.txt");
+    let solc_args = slither_solc_args(&include_paths);
+    let solc_select = solc_select_status(workspace, &solc_version);
+    let working_dir_token = working_root.unwrap_or_default();
     SlitherSettings {
-        target_path: normalized_target_path.clone(),
-        source_root: source_root.clone(),
+        target_path: normalized_target_path,
+        source_root,
         prepared_root,
-        prepared_target: prepared_target.clone(),
+        prepared_target,
         working_dir,
-        working_dir_token: if let Some(working_root) = working_root.as_ref() {
-            working_root.clone()
-        } else {
-            RelativePath::dot()
-        },
+        working_dir_token,
         compiler_version,
-        solc_version: solc_version.clone(),
-        solc_select: solc_select_status(workspace, &solc_version),
-        include_paths: include_paths.clone(),
-        remappings_file: slither_relative_from_working_dir(working_root.as_ref(), "remappings.txt"),
+        solc_version,
+        solc_select,
+        include_paths,
+        remappings_file,
         remappings,
-        solc_args: slither_solc_args(&include_paths),
+        solc_args,
     }
 }
 

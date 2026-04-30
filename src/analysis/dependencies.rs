@@ -21,7 +21,7 @@ pub fn analyze_dependencies(
     analyze_verifier_group(bundle, &verifier_records, workspace_root)
 }
 
-fn collect_verifier_records<'a>(records: &'a [DependencyRecord]) -> Vec<&'a DependencyRecord> {
+fn collect_verifier_records(records: &[DependencyRecord]) -> Vec<&DependencyRecord> {
     let mut collected = Vec::new();
     for record in records {
         if record.role == "verifier" {

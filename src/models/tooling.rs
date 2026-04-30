@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
-use crate::models::artifact::ArtifactRecord;
 use crate::models::envelope::StepStatus;
 use crate::models::identity::RunId;
 use crate::models::path::{RelativePath, WorkspaceRelPath};
@@ -40,24 +39,6 @@ pub struct ToolWorkspaceManifestSet {
 pub struct ToolWorkspaceManifest {
     pub status: StepStatus,
     pub manifest_path: WorkspaceRelPath,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct MaterialsManifest {
-    pub target: RunTarget,
-    pub run_id: RunId,
-    pub statuses: MaterialStatusSnapshot,
-    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
-    pub inputs: Vec<WorkspaceRelPath>,
-    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
-    pub core_materials: Vec<WorkspaceRelPath>,
-    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
-    pub optional_tool_artifacts: Vec<WorkspaceRelPath>,
-    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
-    pub artifact_records: Vec<ArtifactRecord>,
-    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
-    pub notes: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

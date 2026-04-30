@@ -31,9 +31,10 @@ impl AppConfig {
         let _ = dotenvy::from_path(&env_path);
 
         let runs_dir = env::var("AGENT_AUDIT_RUNS_DIR").unwrap_or_else(|_| "runs".to_string());
+        let runs_dir = project_root.join(runs_dir);
         Ok(Self {
-            project_root: project_root.clone(),
-            runs_dir: project_root.join(runs_dir),
+            project_root,
+            runs_dir,
             default_chain: env_parse_or_default(
                 "AGENT_AUDIT_DEFAULT_CHAIN",
                 ChainAlias::default(),

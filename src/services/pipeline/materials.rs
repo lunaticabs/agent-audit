@@ -1,9 +1,11 @@
+use serde::Serialize;
+
 use crate::error::AppResult;
+use crate::models::artifact::ArtifactRecord;
 use crate::models::finding::DependencyFindingsArtifact;
-use crate::models::identity::{ChainAlias, EvmAddress};
+use crate::models::identity::{ChainAlias, ChainId, EvmAddress, RunId};
 use crate::models::path::WorkspaceRelPath;
-use crate::models::run::RunTarget;
-use crate::models::tooling::{MaterialStatusSnapshot, MaterialsManifest};
+use crate::models::tooling::MaterialStatusSnapshot;
 
 use super::AuditPipelineService;
 
@@ -13,6 +15,31 @@ const MATERIAL_NOTES: &[&str] = &[
     "Repository-side findings, when present, live in artifacts/dependency_findings.json.",
     "Directly-invoked tools may leave optional artifacts under runs/<run_id>/artifacts/ that are not produced by the CLI itself.",
 ];
+
+#[derive(Serialize)]
+struct RunTargetRef<'a> {
+    address: &'a EvmAddress,
+    chain: &'a ChainAlias,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chain_id: Option<ChainId>,
+}
+
+#[derive(Serialize)]
+struct MaterialsManifestRef<'a> {
+    target: RunTargetRef<'a>,
+    run_id: &'a RunId,
+    statuses: MaterialStatusSnapshot,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    inputs: Vec<WorkspaceRelPath>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    core_materials: Vec<WorkspaceRelPath>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    optional_tool_artifacts: Vec<WorkspaceRelPath>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    artifact_records: Vec<&'a ArtifactRecord>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    notes: Vec<&'static str>,
+}
 
 impl AuditPipelineService {
     pub fn aggregate_materials(
@@ -52,11 +79,16 @@ impl AuditPipelineService {
             "echidna_project/lib",
             "echidna_project/node_modules",
         ])?);
+        let artifact_records = self.artifacts.iter().collect::<Vec<_>>();
         let manifest_path = self.workspace.write_json(
             "reports/materials_manifest.json",
-            &MaterialsManifest {
-                target: RunTarget::new(address.clone(), chain.clone()),
-                run_id: self.workspace.run_id.clone(),
+            &MaterialsManifestRef {
+                target: RunTargetRef {
+                    address,
+                    chain,
+                    chain_id: None,
+                },
+                run_id: &self.workspace.run_id,
                 statuses: self.material_status_snapshot()?,
                 inputs: self.existing_paths(&["input/request.json", "input/source_request.json"]),
                 core_materials: self.existing_paths(&[
@@ -64,11 +96,8 @@ impl AuditPipelineService {
                     "artifacts/dependency_findings.json",
                 ]),
                 optional_tool_artifacts,
-                artifact_records: self.artifacts.clone(),
-                notes: MATERIAL_NOTES
-                    .iter()
-                    .map(|item| (*item).to_string())
-                    .collect(),
+                artifact_records,
+                notes: MATERIAL_NOTES.to_vec(),
             },
         )?;
         self.record(

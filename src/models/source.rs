@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_with::skip_serializing_none;
-use url::Url;
 
 use crate::models::discovery::{DependencyDiscoveryContext, DependencyDiscoveryReport};
 use crate::models::envelope::StepStatus;
@@ -63,19 +62,6 @@ pub struct SourceBundleArtifact {
     #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub related_contracts: Vec<DependencyRecord>,
     pub analysis_target: Option<AnalysisTarget>,
-}
-
-#[skip_serializing_none]
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct SourceFetchRequestArtifact {
-    pub address: EvmAddress,
-    pub chain: crate::models::identity::ChainAlias,
-    pub source_api_base: Option<Url>,
-    pub source_api_configured: bool,
-    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
-    pub source_api_header_names: Vec<String>,
-    pub rpc_url_configured: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -217,16 +203,26 @@ impl SourceBundleArtifact {
     }
 
     pub fn from_verified_source(metadata: VerifiedSourceMetadata) -> Self {
+        let VerifiedSourceMetadata {
+            target,
+            provider,
+            contract,
+            compiler,
+            abi,
+            source_layout,
+            source_meta,
+            files,
+        } = metadata;
         Self {
-            target: metadata.target.clone(),
+            target,
             status: StepStatus::SourceFetched,
-            provider: Some(metadata.provider),
-            contract: Some(metadata.contract),
-            compiler: Some(metadata.compiler),
-            abi: metadata.abi,
-            source_layout: metadata.source_layout,
-            source_meta: Some(metadata.source_meta),
-            files: metadata.files,
+            provider: Some(provider),
+            contract: Some(contract),
+            compiler: Some(compiler),
+            abi,
+            source_layout,
+            source_meta: Some(source_meta),
+            files,
             ..Self::default()
         }
     }
