@@ -6,6 +6,8 @@ use serde_json::Value;
 use crate::models::discovery::{
     DependencyCandidate, DependencyCandidateSource, DependencyDiscoveryReport,
 };
+use crate::models::identity::EvmAddress;
+use crate::models::path::RelativePath;
 use crate::models::source::VerifiedSourceMetadata;
 
 pub fn discover_dependencies(
@@ -54,10 +56,7 @@ fn discover_constructor_dependencies(
         .into_iter()
         .filter(|item| item.value_type == DecodedValueType::Address)
         .filter_map(|item| {
-            let address = item.value.to_lowercase();
-            if !is_valid_address(&address) {
-                return None;
-            }
+            let address = EvmAddress::new(&item.value).ok()?;
             let name = item.name;
             let internal_type = item.internal_type;
             let solidity_type = item.solidity_type;
@@ -70,7 +69,7 @@ fn discover_constructor_dependencies(
                 internal_type,
                 solidity_type,
                 declared_type: String::new(),
-                file: String::new(),
+                file: None,
             })
         })
         .collect()
@@ -131,15 +130,15 @@ fn discover_source_constant_dependencies(
         for capture in pattern.captures_iter(source) {
             let address = capture
                 .name("addr")
-                .map(|m| m.as_str().to_lowercase())
+                .map(|m| m.as_str().to_string())
                 .unwrap_or_default();
             let name = capture
                 .name("name")
                 .map(|m| m.as_str().to_string())
                 .unwrap_or_default();
-            if !is_valid_address(&address) {
+            let Ok(address) = EvmAddress::new(&address) else {
                 continue;
-            }
+            };
             candidates.push(DependencyCandidate {
                 address,
                 name: name.clone(),
@@ -149,7 +148,7 @@ fn discover_source_constant_dependencies(
                 internal_type: String::new(),
                 solidity_type: String::new(),
                 declared_type: String::new(),
-                file: path.clone(),
+                file: Some(RelativePath::new(path)),
             });
         }
     }
@@ -168,11 +167,11 @@ fn discover_source_cast_constant_dependencies(
         for capture in pattern.captures_iter(source) {
             let address = capture
                 .name("addr")
-                .map(|m| m.as_str().to_lowercase())
+                .map(|m| m.as_str().to_string())
                 .unwrap_or_default();
-            if !is_valid_address(&address) {
+            let Ok(address) = EvmAddress::new(&address) else {
                 continue;
-            }
+            };
             let name = capture
                 .name("name")
                 .map(|m| m.as_str().to_string())
@@ -193,7 +192,7 @@ fn discover_source_cast_constant_dependencies(
                 internal_type,
                 solidity_type: String::new(),
                 declared_type: declared_type.to_string(),
-                file: path.clone(),
+                file: Some(RelativePath::new(path)),
             });
         }
     }
@@ -257,18 +256,15 @@ fn discover_immutable_constructor_dependencies(
             }
             let rhs = capture.name("rhs").map(|m| m.as_str()).unwrap_or_default();
             let address = if rhs.starts_with("0x") {
-                rhs.to_lowercase()
+                EvmAddress::new(rhs).ok()
             } else if address_params.iter().any(|param| param == rhs) {
-                constructor_address_args
-                    .get(rhs)
-                    .cloned()
-                    .unwrap_or_default()
+                constructor_address_args.get(rhs).cloned()
             } else {
                 continue;
             };
-            if !is_valid_address(&address) {
+            let Some(address) = address else {
                 continue;
-            }
+            };
             candidates.push(DependencyCandidate {
                 address,
                 name: lhs.to_string(),
@@ -278,14 +274,16 @@ fn discover_immutable_constructor_dependencies(
                 internal_type: String::new(),
                 solidity_type: String::new(),
                 declared_type: String::new(),
-                file: path.clone(),
+                file: Some(RelativePath::new(path)),
             });
         }
     }
     candidates
 }
 
-fn decoded_constructor_address_args(metadata: &VerifiedSourceMetadata) -> BTreeMap<String, String> {
+fn decoded_constructor_address_args(
+    metadata: &VerifiedSourceMetadata,
+) -> BTreeMap<String, EvmAddress> {
     let Some(abi) = metadata.abi.as_array() else {
         return BTreeMap::new();
     };
@@ -301,13 +299,7 @@ fn decoded_constructor_address_args(metadata: &VerifiedSourceMetadata) -> BTreeM
     decode_static_constructor_arguments(inputs, &metadata.compiler.constructor_arguments)
         .into_iter()
         .filter(|item| item.value_type == DecodedValueType::Address)
-        .filter_map(|item| {
-            let value = item.value.to_lowercase();
-            if !is_valid_address(&value) {
-                return None;
-            }
-            Some((item.name, value))
-        })
+        .filter_map(|item| Some((item.name, EvmAddress::new(&item.value).ok()?)))
         .collect()
 }
 
@@ -317,10 +309,7 @@ fn merge_dependency_candidates(groups: &[Vec<DependencyCandidate>]) -> Vec<Depen
 
     for group in groups {
         for item in group {
-            let address = item.address.to_lowercase();
-            if !is_valid_address(&address) {
-                continue;
-            }
+            let address = item.address.as_lowercase();
             if let Some(index) = by_address.get(&address).copied() {
                 if let Some(existing) = merged.get_mut(index) {
                     if let Some(source) = item.source
@@ -343,7 +332,7 @@ fn merge_dependency_candidates(groups: &[Vec<DependencyCandidate>]) -> Vec<Depen
                     if existing.declared_type.is_empty() {
                         existing.declared_type = item.declared_type.clone();
                     }
-                    if existing.file.is_empty() {
+                    if existing.file.is_none() {
                         existing.file = item.file.clone();
                     }
                 }
@@ -351,7 +340,7 @@ fn merge_dependency_candidates(groups: &[Vec<DependencyCandidate>]) -> Vec<Depen
             }
 
             let mut candidate = item.clone();
-            candidate.address = address.clone();
+            candidate.address = item.address.clone();
             candidate.sources = item.source.into_iter().collect();
             by_address.insert(address, merged.len());
             merged.push(candidate);
@@ -460,12 +449,6 @@ fn decode_static_word(solidity_type: &str, word_hex: &str) -> String {
     }
 }
 
-pub fn is_valid_address(value: &str) -> bool {
-    Regex::new(r"^0x[a-fA-F0-9]{40}$")
-        .expect("valid address regex")
-        .is_match(value)
-}
-
 #[derive(Clone, Debug)]
 struct DecodedConstructorArgument {
     name: String,
@@ -499,7 +482,7 @@ mod tests {
             r#"
             interface IOracle {}
             contract Main {
-                IOracle public oracle = IOracle(0x1234567890abcdef1234567890ABCDEF12345678);
+                IOracle public oracle = IOracle(0x52908400098527886E0F7030069857D2E4169EE7);
             }
             "#
             .to_string(),
@@ -508,8 +491,8 @@ mod tests {
         let result = discover_source_cast_constant_dependencies(&sources);
         assert_eq!(result.len(), 1);
         assert_eq!(
-            result[0].address,
-            "0x1234567890abcdef1234567890abcdef12345678"
+            result[0].address.as_str(),
+            "0x52908400098527886E0F7030069857D2E4169EE7"
         );
         assert_eq!(result[0].role, "oracle");
     }
@@ -534,7 +517,7 @@ mod tests {
             discover_immutable_constructor_dependencies(&test_metadata(Value::Null, ""), &sources);
         assert_eq!(result.len(), 1);
         assert_eq!(
-            result[0].address,
+            result[0].address.as_str(),
             "0x1111111111111111111111111111111111111111"
         );
         assert_eq!(result[0].name, "gateway");
@@ -572,7 +555,7 @@ mod tests {
         let result = discover_immutable_constructor_dependencies(&metadata, &sources);
         assert_eq!(result.len(), 1);
         assert_eq!(
-            result[0].address,
+            result[0].address.as_str(),
             "0x2222222222222222222222222222222222222222"
         );
         assert_eq!(result[0].name, "oracle");
@@ -587,7 +570,7 @@ mod tests {
 
     fn test_metadata(abi: Value, constructor_arguments: &str) -> VerifiedSourceMetadata {
         VerifiedSourceMetadata {
-            target: RunTarget::new("", ""),
+            target: RunTarget::default(),
             compiler: CompilerMetadata {
                 constructor_arguments: constructor_arguments.to_string(),
                 ..CompilerMetadata::default()

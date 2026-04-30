@@ -4,6 +4,7 @@ use std::path::Path;
 
 use crate::error::AppResult;
 use crate::models::artifact::ArtifactRecord;
+use crate::models::path::{RelativePath, WorkspaceRelPath};
 use crate::models::source::SourceFile;
 use crate::workspace::RunWorkspace;
 
@@ -68,18 +69,8 @@ where
     Ok(serde_json::from_str(&text).unwrap_or_default())
 }
 
-pub(super) fn path_parent_string(path: &str) -> String {
-    Path::new(path)
-        .parent()
-        .map(|parent| {
-            let rendered = parent.to_string_lossy().replace('\\', "/");
-            if rendered == "." {
-                String::new()
-            } else {
-                rendered
-            }
-        })
-        .unwrap_or_default()
+pub(super) fn path_parent(path: &RelativePath) -> Option<RelativePath> {
+    path.parent()
 }
 
 pub(super) fn render_line_list(items: &[String]) -> String {
@@ -90,32 +81,31 @@ pub(super) fn render_line_list(items: &[String]) -> String {
     }
 }
 
-pub(super) fn format_path_for_json(path: &Path) -> String {
-    let rendered = path.to_string_lossy().replace('\\', "/");
-    if rendered.is_empty() || rendered == "." {
-        ".".to_string()
-    } else {
-        rendered
-    }
+pub(super) fn format_path_for_json(path: &Path) -> RelativePath {
+    RelativePath::new(path.to_string_lossy())
 }
 
 impl AuditPipelineService {
-    pub(super) fn existing_paths(&self, relative_paths: &[&str]) -> Vec<String> {
+    pub(super) fn existing_paths(&self, relative_paths: &[&str]) -> Vec<WorkspaceRelPath> {
         relative_paths
             .iter()
             .filter(|path| self.workspace.root.join(path).exists())
-            .map(|path| (*path).to_string())
+            .map(|path| WorkspaceRelPath::new(path))
             .collect()
     }
 
-    pub(super) fn existing_tree(&self, relative_roots: &[&str]) -> AppResult<Vec<String>> {
+    pub(super) fn existing_tree(
+        &self,
+        relative_roots: &[&str],
+    ) -> AppResult<Vec<WorkspaceRelPath>> {
         let mut existing = Vec::new();
         let mut seen = BTreeSet::new();
         for root in relative_roots {
             let path = self.workspace.root.join(root);
             if path.is_file() {
-                if seen.insert((*root).to_string()) {
-                    existing.push((*root).to_string());
+                let relative = WorkspaceRelPath::new(root);
+                if seen.insert(relative.clone()) {
+                    existing.push(relative);
                 }
                 continue;
             }
@@ -139,14 +129,15 @@ impl AuditPipelineService {
     pub(super) fn write_source_text(
         &mut self,
         source_file: &SourceFile,
-        final_path: &str,
+        final_path: &RelativePath,
         summary_prefix: &str,
     ) -> AppResult<()> {
+        let workspace_path = WorkspaceRelPath::new(format!("sources/{final_path}"));
         self.workspace
-            .write_text(&format!("sources/{final_path}"), &source_file.content)?;
+            .write_text(workspace_path.as_str(), &source_file.content)?;
         self.record(
             "fetch_contract_source",
-            &format!("sources/{final_path}"),
+            &workspace_path,
             "source",
             "executed",
             summary_prefix,

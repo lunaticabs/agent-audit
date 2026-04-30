@@ -1,13 +1,17 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_with::skip_serializing_none;
+use url::Url;
 
 use crate::models::discovery::{DependencyDiscoveryContext, DependencyDiscoveryReport};
+use crate::models::envelope::StepStatus;
+use crate::models::identity::EvmAddress;
+use crate::models::path::{RelativePath, WorkspaceRelPath};
 use crate::models::run::RunTarget;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SourceFile {
-    pub path: String,
+    pub path: RelativePath,
     pub content: String,
 }
 
@@ -38,7 +42,7 @@ pub struct VerifiedSourceMetadata {
 #[serde(default)]
 pub struct SourceBundleArtifact {
     pub target: RunTarget,
-    pub status: String,
+    pub status: StepStatus,
     pub note: Option<String>,
     pub error: Option<String>,
     pub error_debug: Option<String>,
@@ -65,9 +69,9 @@ pub struct SourceBundleArtifact {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SourceFetchRequestArtifact {
-    pub address: String,
-    pub chain: String,
-    pub source_api_base: Option<String>,
+    pub address: EvmAddress,
+    pub chain: crate::models::identity::ChainAlias,
+    pub source_api_base: Option<Url>,
     pub source_api_configured: bool,
     #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub source_api_header_names: Vec<String>,
@@ -86,10 +90,10 @@ pub struct SourceProviderMetadata {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ContractMetadata {
     pub name: String,
-    pub file_name: String,
+    pub file_name: Option<RelativePath>,
     pub proxy: bool,
-    pub implementation: String,
-    pub similar_match: String,
+    pub implementation: Option<EvmAddress>,
+    pub similar_match: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -117,30 +121,27 @@ pub struct SourceMetadata {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ArtifactSourceFile {
-    pub path: String,
+    pub path: RelativePath,
     pub length: usize,
-    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
-    pub original_path: String,
+    pub original_path: Option<RelativePath>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ProxyResolution {
-    pub status: String,
+    pub status: ProxyResolutionStatus,
     pub proxy: bool,
-    pub implementation: String,
+    pub implementation: Option<EvmAddress>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AnalysisTarget {
-    pub address: String,
+    pub address: EvmAddress,
     pub contract_name: String,
-    pub path: String,
+    pub path: RelativePath,
     pub role: String,
-    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
-    pub prepared_path: String,
-    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
-    pub prepared_root: String,
+    pub prepared_path: Option<RelativePath>,
+    pub prepared_root: Option<RelativePath>,
 }
 
 #[skip_serializing_none]
@@ -149,7 +150,7 @@ pub struct AnalysisTarget {
 pub struct DependencyRecord {
     pub role: String,
     pub name: String,
-    pub address: String,
+    pub address: EvmAddress,
     pub provider: Option<SourceProviderMetadata>,
     pub contract: Option<ContractMetadata>,
     pub compiler: Option<CompilerMetadata>,
@@ -160,26 +161,41 @@ pub struct DependencyRecord {
     pub source_meta: Option<SourceMetadata>,
     #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub files: Vec<ArtifactSourceFile>,
-    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
-    pub provider_response_artifact: String,
-    pub status: String,
+    pub provider_response_artifact: Option<WorkspaceRelPath>,
+    pub status: DependencyFetchStatus,
     #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub related_contracts: Vec<DependencyRecord>,
     pub discovery: Option<DependencyDiscoveryContext>,
     pub error: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProxyResolutionStatus {
+    #[default]
+    NotAttempted,
+    ProviderFlagOnly,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DependencyFetchStatus {
+    #[default]
+    FetchFailed,
+    Fetched,
+}
+
 impl SourceBundleArtifact {
     pub fn not_configured(target: RunTarget) -> Self {
         Self {
             target,
-            status: "source_api_not_configured".to_string(),
+            status: StepStatus::SourceApiNotConfigured,
             note: Some(
                 "Configure AGENT_AUDIT_SOURCE_API_BASE to enable verified source fetching."
                     .to_string(),
             ),
             proxy_resolution: Some(ProxyResolution {
-                status: "not_attempted".to_string(),
+                status: ProxyResolutionStatus::NotAttempted,
                 ..ProxyResolution::default()
             }),
             ..Self::default()
@@ -189,11 +205,11 @@ impl SourceBundleArtifact {
     pub fn fetch_failed(target: RunTarget, error: String, error_debug: String) -> Self {
         Self {
             target,
-            status: "source_fetch_failed".to_string(),
+            status: StepStatus::SourceFetchFailed,
             error: Some(error),
             error_debug: Some(error_debug),
             proxy_resolution: Some(ProxyResolution {
-                status: "not_attempted".to_string(),
+                status: ProxyResolutionStatus::NotAttempted,
                 ..ProxyResolution::default()
             }),
             ..Self::default()
@@ -203,7 +219,7 @@ impl SourceBundleArtifact {
     pub fn from_verified_source(metadata: VerifiedSourceMetadata) -> Self {
         Self {
             target: metadata.target.clone(),
-            status: "fetched".to_string(),
+            status: StepStatus::SourceFetched,
             provider: Some(metadata.provider),
             contract: Some(metadata.contract),
             compiler: Some(metadata.compiler),
@@ -216,24 +232,41 @@ impl SourceBundleArtifact {
     }
 
     pub fn is_fetched(&self) -> bool {
-        self.status == "fetched"
+        self.status == StepStatus::SourceFetched
     }
 }
 
 impl AnalysisTarget {
     pub fn with_prepared(
         mut self,
-        prepared_path: impl Into<String>,
-        prepared_root: impl Into<String>,
+        prepared_path: impl Into<RelativePath>,
+        prepared_root: impl Into<RelativePath>,
     ) -> Self {
-        self.prepared_path = prepared_path.into();
-        self.prepared_root = prepared_root.into();
+        self.prepared_path = Some(prepared_path.into());
+        self.prepared_root = Some(prepared_root.into());
         self
     }
 }
 
 impl DependencyRecord {
     pub fn is_fetched(&self) -> bool {
-        self.status == "fetched"
+        self.status == DependencyFetchStatus::Fetched
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_bundle_defaults_to_not_prepared_status() {
+        let payload = SourceBundleArtifact::default();
+        assert_eq!(payload.status, StepStatus::NotPrepared);
+    }
+
+    #[test]
+    fn dependency_record_defaults_to_fetch_failed_status() {
+        let payload = DependencyRecord::default();
+        assert_eq!(payload.status, DependencyFetchStatus::FetchFailed);
     }
 }

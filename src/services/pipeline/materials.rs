@@ -1,5 +1,7 @@
 use crate::error::AppResult;
 use crate::models::finding::DependencyFindingsArtifact;
+use crate::models::identity::{ChainAlias, EvmAddress};
+use crate::models::path::WorkspaceRelPath;
 use crate::models::run::RunTarget;
 use crate::models::tooling::{MaterialStatusSnapshot, MaterialsManifest};
 
@@ -13,7 +15,11 @@ const MATERIAL_NOTES: &[&str] = &[
 ];
 
 impl AuditPipelineService {
-    pub fn aggregate_materials(&mut self, address: &str, chain: &str) -> AppResult<String> {
+    pub fn aggregate_materials(
+        &mut self,
+        address: &EvmAddress,
+        chain: &ChainAlias,
+    ) -> AppResult<WorkspaceRelPath> {
         let mut optional_tool_artifacts = self.existing_paths(&[
             "artifacts/chain_checks_plan.json",
             "artifacts/chain_checks_output.txt",
@@ -49,7 +55,7 @@ impl AuditPipelineService {
         let manifest_path = self.workspace.write_json(
             "reports/materials_manifest.json",
             &MaterialsManifest {
-                target: RunTarget::new(address, chain),
+                target: RunTarget::new(address.clone(), chain.clone()),
                 run_id: self.workspace.run_id.clone(),
                 statuses: self.material_status_snapshot()?,
                 inputs: self.existing_paths(&["input/request.json", "input/source_request.json"]),
@@ -83,21 +89,9 @@ impl AuditPipelineService {
                 .root
                 .join("artifacts/dependency_findings.json"),
         )?;
-        let mut source_status = if source_payload.status.is_empty() {
-            "not_prepared".to_string()
-        } else {
-            source_payload.status
-        };
-        if source_status == "fetched" {
-            source_status = "source_fetched".to_string();
-        }
         Ok(MaterialStatusSnapshot {
-            source_fetch_status: source_status,
-            dependency_analysis_status: if dependency_payload.status.is_empty() {
-                "not_prepared".to_string()
-            } else {
-                dependency_payload.status
-            },
+            source_fetch_status: source_payload.status,
+            dependency_analysis_status: dependency_payload.status,
         })
     }
 }

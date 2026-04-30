@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
+use crate::models::identity::EvmAddress;
+use crate::models::path::RelativePath;
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DependencyDiscoveryReport {
@@ -15,7 +18,7 @@ pub struct DependencyDiscoveryReport {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DependencyCandidate {
-    pub address: String,
+    pub address: EvmAddress,
     pub name: String,
     pub role: String,
     pub source: Option<DependencyCandidateSource>,
@@ -27,8 +30,7 @@ pub struct DependencyCandidate {
     pub solidity_type: String,
     #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub declared_type: String,
-    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
-    pub file: String,
+    pub file: Option<RelativePath>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,6 +58,5 @@ pub struct DependencyDiscoveryContext {
     pub internal_type: String,
     #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub solidity_type: String,
-    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
-    pub file: String,
+    pub file: Option<RelativePath>,
 }

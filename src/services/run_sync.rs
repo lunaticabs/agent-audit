@@ -10,13 +10,14 @@ use sha2::{Digest, Sha256};
 
 use crate::config::AppConfig;
 use crate::error::{AppResult, msg};
+use crate::models::identity::RunId;
 use crate::models::run::{RunMeta, RunRequest, RunTarget};
 use crate::workspace::RunWorkspace;
 
 const INCLUDED_TOP_LEVEL_DIRS: &[&str] = &["input", "reports", "artifacts", "sources"];
 
 pub struct RunSyncResult {
-    pub run_id: String,
+    pub run_id: RunId,
     pub file_count: usize,
     pub total_size_bytes: usize,
     pub upserted_file_records: usize,
@@ -37,10 +38,10 @@ pub fn sync_run_to_mongo(config: &AppConfig, workspace: &RunWorkspace) -> AppRes
             continue;
         }
         let rel_path = workspace.relative(entry.path())?;
-        if rel_path == ".run.lock" {
+        if rel_path.as_str() == ".run.lock" {
             continue;
         }
-        let Some(first_segment) = rel_path.split('/').next() else {
+        let Some(first_segment) = rel_path.as_str().split('/').next() else {
             continue;
         };
         if !INCLUDED_TOP_LEVEL_DIRS.contains(&first_segment) {
@@ -57,8 +58,8 @@ pub fn sync_run_to_mongo(config: &AppConfig, workspace: &RunWorkspace) -> AppRes
         let is_json = entry.path().extension().and_then(|ext| ext.to_str()) == Some("json");
         let mut doc = Document::new();
         doc.insert("_id", format!("{}:{rel_path}", workspace.run_id));
-        doc.insert("run_id", workspace.run_id.clone());
-        doc.insert("rel_path", rel_path.clone());
+        doc.insert("run_id", workspace.run_id.to_string());
+        doc.insert("rel_path", rel_path.as_str());
         doc.insert("size_bytes", size_bytes as i64);
         doc.insert("sha256", sha256_hex(&raw));
         doc.insert("kind", if is_json { "json" } else { "text" });
@@ -120,7 +121,7 @@ pub fn sync_run_to_mongo(config: &AppConfig, workspace: &RunWorkspace) -> AppRes
     );
     meta_col
         .update_one(
-            doc! {"_id": workspace.run_id.clone()},
+            doc! {"_id": workspace.run_id.to_string()},
             doc! {
                 "$set": meta_doc,
                 "$unset": {
@@ -201,7 +202,7 @@ fn create_indexes(
 fn read_target(workspace: &RunWorkspace) -> AppResult<Bson> {
     let request_path = workspace.root.join("input/request.json");
     if !request_path.exists() {
-        return Ok(bson::serialize_to_bson(&RunTarget::new("", ""))?);
+        return Ok(bson::serialize_to_bson(&RunTarget::default())?);
     }
     let text = fs::read_to_string(request_path)?;
     let payload = serde_json::from_str::<RunRequest>(&text).unwrap_or_default();
@@ -216,13 +217,11 @@ fn read_created_at(workspace: &RunWorkspace) -> std::time::SystemTime {
     let Ok(payload) = serde_json::from_str::<RunMeta>(&text) else {
         return std::time::SystemTime::now();
     };
-    time::OffsetDateTime::parse(
-        &payload.created_at,
-        &time::format_description::well_known::Rfc3339,
-    )
-    .ok()
-    .map(|ts| std::time::UNIX_EPOCH + std::time::Duration::from_secs(ts.unix_timestamp() as u64))
-    .unwrap_or_else(std::time::SystemTime::now)
+    let timestamp = payload.created_at.unix_timestamp();
+    if timestamp.is_negative() {
+        return std::time::SystemTime::now();
+    }
+    std::time::UNIX_EPOCH + std::time::Duration::from_secs(timestamp as u64)
 }
 
 fn sha256_hex(raw: &[u8]) -> String {

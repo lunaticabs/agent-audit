@@ -9,9 +9,10 @@ use rand::Rng;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
-use time::format_description::well_known::Rfc3339;
 
 use crate::error::{AppError, AppResult};
+use crate::models::identity::{ChainAlias, EvmAddress, RunId};
+use crate::models::path::WorkspaceRelPath;
 use crate::models::run::{RunMeta, RunRequest};
 use crate::serde_ext::to_pretty_json;
 
@@ -19,7 +20,7 @@ use crate::serde_ext::to_pretty_json;
 pub struct RunWorkspace {
     pub project_root: PathBuf,
     pub root: PathBuf,
-    pub run_id: String,
+    pub run_id: RunId,
     pub input_dir: PathBuf,
     pub artifacts_dir: PathBuf,
     pub reports_dir: PathBuf,
@@ -40,13 +41,13 @@ impl RunWorkspace {
     pub fn create(
         project_root: &Path,
         runs_dir: &Path,
-        address: &str,
-        chain: &str,
+        address: &EvmAddress,
+        chain: &ChainAlias,
     ) -> AppResult<Self> {
         fs::create_dir_all(runs_dir)?;
         loop {
             let run_id = generate_run_id(address, chain);
-            let root = runs_dir.join(&run_id);
+            let root = runs_dir.join(run_id.as_str());
             if root.exists() {
                 continue;
             }
@@ -57,21 +58,21 @@ impl RunWorkspace {
     pub fn create_at_root(
         project_root: &Path,
         root: &Path,
-        run_id: &str,
-        address: &str,
-        chain: &str,
+        run_id: &RunId,
+        address: &EvmAddress,
+        chain: &ChainAlias,
     ) -> AppResult<Self> {
         let workspace = Self::from_root(project_root, root, run_id);
         workspace.ensure_dirs()?;
         workspace.write_json(
             "input/run_meta.json",
             &RunMeta {
-                run_id: run_id.to_string(),
+                run_id: run_id.clone(),
                 id_scheme: "sha256-base64url-v1".to_string(),
-                created_at: now_utc_rfc3339_z()?,
+                created_at: OffsetDateTime::now_utc(),
                 target: RunRequest {
-                    address: address.to_string(),
-                    chain: chain.to_string(),
+                    address: address.clone(),
+                    chain: chain.clone(),
                 }
                 .target(),
             },
@@ -79,8 +80,8 @@ impl RunWorkspace {
         Ok(workspace)
     }
 
-    pub fn load(project_root: &Path, runs_dir: &Path, run_id: &str) -> AppResult<Self> {
-        let root = runs_dir.join(run_id);
+    pub fn load(project_root: &Path, runs_dir: &Path, run_id: &RunId) -> AppResult<Self> {
+        let root = runs_dir.join(run_id.as_str());
         if !root.exists() {
             return Err(AppError::RunNotFound(format!(
                 "run_id does not exist: {run_id}"
@@ -91,11 +92,11 @@ impl RunWorkspace {
         Ok(workspace)
     }
 
-    fn from_root(project_root: &Path, root: &Path, run_id: &str) -> Self {
+    fn from_root(project_root: &Path, root: &Path, run_id: &RunId) -> Self {
         Self {
             project_root: project_root.to_path_buf(),
             root: root.to_path_buf(),
-            run_id: run_id.to_string(),
+            run_id: run_id.clone(),
             input_dir: root.join("input"),
             artifacts_dir: root.join("artifacts"),
             reports_dir: root.join("reports"),
@@ -115,8 +116,13 @@ impl RunWorkspace {
         Ok(())
     }
 
-    pub fn write_json<T: Serialize>(&self, relative_path: &str, payload: &T) -> AppResult<String> {
-        let path = self.root.join(relative_path);
+    pub fn write_json<T: Serialize>(
+        &self,
+        relative_path: impl AsRef<str>,
+        payload: &T,
+    ) -> AppResult<WorkspaceRelPath> {
+        let relative_path = WorkspaceRelPath::new(relative_path);
+        let path = self.root.join(relative_path.as_str());
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -126,8 +132,13 @@ impl RunWorkspace {
         Ok(self.relative(&path)?)
     }
 
-    pub fn write_text(&self, relative_path: &str, content: &str) -> AppResult<String> {
-        let path = self.root.join(relative_path);
+    pub fn write_text(
+        &self,
+        relative_path: impl AsRef<str>,
+        content: &str,
+    ) -> AppResult<WorkspaceRelPath> {
+        let relative_path = WorkspaceRelPath::new(relative_path);
+        let path = self.root.join(relative_path.as_str());
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -135,11 +146,11 @@ impl RunWorkspace {
         Ok(self.relative(&path)?)
     }
 
-    pub fn relative(&self, path: &Path) -> AppResult<String> {
+    pub fn relative(&self, path: &Path) -> AppResult<WorkspaceRelPath> {
         let rel = path.strip_prefix(&self.root).map_err(|_| {
             AppError::Message(format!("path is outside workspace: {}", path.display()))
         })?;
-        Ok(rel.to_string_lossy().replace('\\', "/"))
+        Ok(WorkspaceRelPath::new(rel.to_string_lossy()))
     }
 
     pub fn lock(&self) -> AppResult<RunGuard> {
@@ -170,7 +181,7 @@ pub fn load_request_context(workspace: &RunWorkspace) -> AppResult<RunRequest> {
     Ok(serde_json::from_str(&fs::read_to_string(path)?)?)
 }
 
-pub fn generate_run_id(address: &str, chain: &str) -> String {
+pub fn generate_run_id(address: &EvmAddress, chain: &ChainAlias) -> RunId {
     let created_at_ns = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos().to_string())
@@ -182,14 +193,14 @@ pub fn generate_run_id(address: &str, chain: &str) -> String {
     };
     let payload = format!(
         "v1|{}|{}|{}|{}",
-        sanitize_token(chain),
-        sanitize_token(address),
+        sanitize_token(chain.as_str()),
+        sanitize_token(address.as_str()),
         created_at_ns,
         nonce
     );
     let digest = Sha256::digest(payload.as_bytes());
     let token = URL_SAFE_NO_PAD.encode(digest);
-    format!("v1_{token}")
+    RunId::new_unchecked(format!("v1_{token}"))
 }
 
 fn sanitize_token(value: &str) -> String {
@@ -202,17 +213,47 @@ fn sanitize_token(value: &str) -> String {
         .to_string()
 }
 
-fn now_utc_rfc3339_z() -> AppResult<String> {
-    let ts = OffsetDateTime::now_utc().format(&Rfc3339).map_err(|err| {
-        AppError::Message(format!("failed to format current UTC timestamp: {err}"))
-    })?;
-    Ok(ts.replace("+00:00", "Z"))
-}
-
 fn hex_lower(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
         out.push_str(&format!("{byte:02x}"));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn write_json_persists_pretty_json_with_trailing_newline() {
+        let project = TempDir::new().expect("create temp dir");
+        let runs_dir = project.path().join("runs");
+        let workspace = RunWorkspace::create_at_root(
+            project.path(),
+            &runs_dir.join("run-1"),
+            &RunId::new("run-1").expect("valid run id"),
+            &EvmAddress::new("0x1234567890abcdef1234567890abcdef12345678").expect("valid address"),
+            &ChainAlias::new("eth").expect("valid chain"),
+        )
+        .expect("create workspace");
+
+        let relative = workspace
+            .write_json(
+                "input/request.json",
+                &RunRequest {
+                    address: EvmAddress::new("0x1234567890abcdef1234567890abcdef12345678")
+                        .expect("valid address"),
+                    chain: ChainAlias::new("eth").expect("valid chain"),
+                },
+            )
+            .expect("write request");
+
+        assert_eq!(relative.as_str(), "input/request.json");
+        let written =
+            fs::read_to_string(workspace.root.join("input/request.json")).expect("read request");
+        assert!(written.ends_with('\n'));
+        assert!(written.contains("\n  \"address\": "));
+    }
 }

@@ -1,12 +1,14 @@
 use serde::{Deserialize, Serialize};
 
+use crate::models::envelope::StepStatus;
+use crate::models::path::WorkspaceRelPath;
 use crate::models::run::RunTarget;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DependencyFindingsArtifact {
     pub target: RunTarget,
-    pub status: String,
+    pub status: StepStatus,
     #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub findings: Vec<DependencyFinding>,
 }
@@ -21,7 +23,7 @@ pub struct DependencyFinding {
     pub source: String,
     pub location: String,
     #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
-    pub evidence_artifacts: Vec<String>,
+    pub evidence_artifacts: Vec<WorkspaceRelPath>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -44,14 +46,10 @@ pub enum FindingConfidence {
 }
 
 impl DependencyFindingsArtifact {
-    pub fn new(
-        target: RunTarget,
-        status: impl Into<String>,
-        findings: Vec<DependencyFinding>,
-    ) -> Self {
+    pub fn new(target: RunTarget, status: StepStatus, findings: Vec<DependencyFinding>) -> Self {
         Self {
             target,
-            status: status.into(),
+            status,
             findings,
         }
     }
@@ -77,8 +75,19 @@ impl DependencyFinding {
         }
     }
 
-    pub fn with_evidence(mut self, evidence_artifacts: Vec<String>) -> Self {
+    pub fn with_evidence(mut self, evidence_artifacts: Vec<WorkspaceRelPath>) -> Self {
         self.evidence_artifacts = evidence_artifacts;
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dependency_findings_default_to_not_prepared() {
+        let payload = DependencyFindingsArtifact::default();
+        assert_eq!(payload.status, StepStatus::NotPrepared);
     }
 }

@@ -1,7 +1,9 @@
 use serde::Serialize;
-use serde_json::Value;
 
-use crate::models::envelope::{CommandEnvelope, EnvelopeError, NextAction};
+use crate::models::envelope::{
+    CommandEnvelope, CommandStatus, EnvelopeError, NextAction, StepPayload, StepStatus,
+};
+use crate::models::identity::RunId;
 use crate::serde_ext::to_pretty_json;
 
 pub const EXIT_OK: i32 = 0;
@@ -16,24 +18,24 @@ pub fn print_json<T: Serialize>(value: &T) {
     );
 }
 
-pub fn step_envelope(command: &str, run_id: &str, payload: Value) -> (CommandEnvelope<Value>, i32) {
-    let status = payload
-        .get("status")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-
-    if matches!(status, "source_fetch_failed") {
+pub fn step_envelope(
+    command: &str,
+    run_id: &RunId,
+    payload: StepPayload,
+) -> (CommandEnvelope<StepPayload>, i32) {
+    let run_id_text = run_id.as_str();
+    if matches!(payload.status, StepStatus::SourceFetchFailed) {
         let retry_command = if command == "init-run" {
-            format!("agent-audit fetch-source --run-id {run_id}")
+            format!("agent-audit fetch-source --run-id {run_id_text}")
         } else {
-            format!("agent-audit {command} --run-id {run_id}")
+            format!("agent-audit {command} --run-id {run_id_text}")
         };
         return (
             CommandEnvelope {
                 ok: false,
-                status: "retryable_error".to_string(),
+                status: CommandStatus::RetryableError,
                 retryable: true,
-                run_id: run_id.to_string(),
+                run_id: Some(run_id.clone()),
                 run_persisted: true,
                 payload: Some(payload),
                 error: None,
@@ -47,7 +49,10 @@ pub fn step_envelope(command: &str, run_id: &str, payload: Value) -> (CommandEnv
         );
     }
 
-    if matches!(status, "source_not_fetched" | "source_files_missing") {
+    if matches!(
+        payload.status,
+        StepStatus::SourceNotFetched | StepStatus::SourceFilesMissing
+    ) {
         let prerequisite = match command {
             "run-dependency" | "prepare-slither" | "prepare-tooling" => "fetch-source",
             _ => "init-run",
@@ -55,14 +60,14 @@ pub fn step_envelope(command: &str, run_id: &str, payload: Value) -> (CommandEnv
         let next_command = if prerequisite == "init-run" {
             "agent-audit init-run --chain <chain> --address <address>".to_string()
         } else {
-            format!("agent-audit {prerequisite} --run-id {run_id}")
+            format!("agent-audit {prerequisite} --run-id {run_id_text}")
         };
         return (
             CommandEnvelope {
                 ok: false,
-                status: "precondition_missing".to_string(),
+                status: CommandStatus::PreconditionMissing,
                 retryable: false,
-                run_id: run_id.to_string(),
+                run_id: Some(run_id.clone()),
                 run_persisted: true,
                 payload: Some(payload),
                 error: None,
@@ -74,13 +79,13 @@ pub fn step_envelope(command: &str, run_id: &str, payload: Value) -> (CommandEnv
         );
     }
 
-    if status == "source_api_not_configured" {
+    if matches!(payload.status, StepStatus::SourceApiNotConfigured) {
         return (
             CommandEnvelope {
                 ok: false,
-                status: "fatal_error".to_string(),
+                status: CommandStatus::FatalError,
                 retryable: false,
-                run_id: run_id.to_string(),
+                run_id: Some(run_id.clone()),
                 run_persisted: true,
                 payload: Some(payload),
                 error: Some(EnvelopeError {
@@ -99,9 +104,9 @@ pub fn step_envelope(command: &str, run_id: &str, payload: Value) -> (CommandEnv
     (
         CommandEnvelope {
             ok: true,
-            status: "completed".to_string(),
+            status: CommandStatus::Completed,
             retryable: false,
-            run_id: run_id.to_string(),
+            run_id: Some(run_id.clone()),
             run_persisted: true,
             payload: Some(payload),
             error: None,
@@ -113,18 +118,21 @@ pub fn step_envelope(command: &str, run_id: &str, payload: Value) -> (CommandEnv
 
 pub fn error_envelope(
     command: Option<&str>,
-    run_id: &str,
+    run_id: Option<&RunId>,
     error: &crate::error::AppError,
-) -> (CommandEnvelope<Value>, i32) {
+) -> (CommandEnvelope<()>, i32) {
     use crate::error::AppError;
+    let run_id_text = run_id.map(RunId::as_str).unwrap_or_default();
+    let run_id_value = run_id.cloned();
+    let run_persisted = run_id.is_some();
 
     match error {
         AppError::RunNotFound(message) => (
             CommandEnvelope {
                 ok: false,
-                status: "precondition_missing".to_string(),
+                status: CommandStatus::PreconditionMissing,
                 retryable: false,
-                run_id: run_id.to_string(),
+                run_id: run_id_value,
                 run_persisted: false,
                 payload: None,
                 error: Some(EnvelopeError {
@@ -140,10 +148,10 @@ pub fn error_envelope(
         AppError::InvalidAddress(message) => (
             CommandEnvelope {
                 ok: false,
-                status: "fatal_error".to_string(),
+                status: CommandStatus::FatalError,
                 retryable: false,
-                run_id: run_id.to_string(),
-                run_persisted: !run_id.is_empty(),
+                run_id: run_id_value,
+                run_persisted,
                 payload: None,
                 error: Some(EnvelopeError {
                     code: "INVALID_ARGUMENT".to_string(),
@@ -156,10 +164,10 @@ pub fn error_envelope(
         AppError::Message(message) => (
             CommandEnvelope {
                 ok: false,
-                status: "fatal_error".to_string(),
+                status: CommandStatus::FatalError,
                 retryable: false,
-                run_id: run_id.to_string(),
-                run_persisted: !run_id.is_empty(),
+                run_id: run_id_value,
+                run_persisted,
                 payload: None,
                 error: Some(EnvelopeError {
                     code: "INVALID_ARGUMENT".to_string(),
@@ -170,19 +178,19 @@ pub fn error_envelope(
             EXIT_FATAL,
         ),
         _ => {
-            let same_command = match (command, run_id.is_empty()) {
+            let same_command = match (command, run_id_text.is_empty()) {
                 (Some(cmd), false) => {
-                    format!("agent-audit {cmd} --run-id {run_id}")
+                    format!("agent-audit {cmd} --run-id {run_id_text}")
                 }
                 _ => "agent-audit <same-command>".to_string(),
             };
             (
                 CommandEnvelope {
                     ok: false,
-                    status: "retryable_error".to_string(),
+                    status: CommandStatus::RetryableError,
                     retryable: true,
-                    run_id: run_id.to_string(),
-                    run_persisted: !run_id.is_empty(),
+                    run_id: run_id_value,
+                    run_persisted,
                     payload: None,
                     error: Some(EnvelopeError {
                         code: "UNHANDLED_EXCEPTION".to_string(),
@@ -197,5 +205,56 @@ pub fn error_envelope(
                 EXIT_RETRYABLE,
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::envelope::AggregateMaterialsDetails;
+    use crate::models::identity::RunId;
+    use crate::models::path::WorkspaceRelPath;
+    use std::path::PathBuf;
+
+    fn sample_payload(status: StepStatus) -> StepPayload {
+        StepPayload {
+            run_id: RunId::new("run-1").expect("valid run id"),
+            run_dir: PathBuf::from("/tmp/run-1"),
+            step: "aggregate-materials".to_string(),
+            status,
+            artifact_index: WorkspaceRelPath::new("artifacts/artifact_index.json"),
+            init_run: None,
+            fetch_source: None,
+            prepare_slither: None,
+            aggregate_materials: Some(AggregateMaterialsDetails {
+                materials_manifest_path: WorkspaceRelPath::new("reports/materials_manifest.json"),
+            }),
+        }
+    }
+
+    #[test]
+    fn step_envelope_marks_missing_prerequisite_as_precondition() {
+        let (envelope, exit_code) = step_envelope(
+            "prepare-tooling",
+            &RunId::new("run-1").expect("valid run id"),
+            sample_payload(StepStatus::SourceNotFetched),
+        );
+
+        assert_eq!(exit_code, EXIT_PRECONDITION);
+        assert_eq!(envelope.status, CommandStatus::PreconditionMissing);
+        assert!(!envelope.ok);
+    }
+
+    #[test]
+    fn step_envelope_marks_successful_payload_as_completed() {
+        let (envelope, exit_code) = step_envelope(
+            "aggregate-materials",
+            &RunId::new("run-1").expect("valid run id"),
+            sample_payload(StepStatus::Executed),
+        );
+
+        assert_eq!(exit_code, EXIT_OK);
+        assert_eq!(envelope.status, CommandStatus::Completed);
+        assert!(envelope.ok);
     }
 }

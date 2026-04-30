@@ -3,18 +3,20 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
+use url::Url;
 
 use crate::error::{AppResult, msg};
+use crate::models::identity::ChainAlias;
 
 #[derive(Clone, Debug)]
 pub struct AppConfig {
     pub project_root: PathBuf,
     pub runs_dir: PathBuf,
-    pub default_chain: String,
-    pub source_api_base: Option<String>,
+    pub default_chain: ChainAlias,
+    pub source_api_base: Option<Url>,
     pub source_api_key: Option<String>,
     pub source_api_headers: BTreeMap<String, String>,
-    pub rpc_url: Option<String>,
+    pub rpc_url: Option<Url>,
     pub mongo_uri: Option<String>,
     pub mongo_db: String,
     pub mongo_runs_meta_collection: String,
@@ -32,12 +34,14 @@ impl AppConfig {
         Ok(Self {
             project_root: project_root.clone(),
             runs_dir: project_root.join(runs_dir),
-            default_chain: env::var("AGENT_AUDIT_DEFAULT_CHAIN")
-                .unwrap_or_else(|_| "eth".to_string()),
-            source_api_base: env_optional("AGENT_AUDIT_SOURCE_API_BASE"),
+            default_chain: env_parse_or_default(
+                "AGENT_AUDIT_DEFAULT_CHAIN",
+                ChainAlias::default(),
+            )?,
+            source_api_base: env_optional_url("AGENT_AUDIT_SOURCE_API_BASE")?,
             source_api_key: env_optional("AGENT_AUDIT_SOURCE_API_KEY"),
             source_api_headers: env_json_dict("AGENT_AUDIT_SOURCE_HEADERS_JSON")?,
-            rpc_url: env_optional("AGENT_AUDIT_RPC_URL"),
+            rpc_url: env_optional_url("AGENT_AUDIT_RPC_URL")?,
             mongo_uri: env_optional("AGENT_AUDIT_MONGO_URI"),
             mongo_db: env::var("AGENT_AUDIT_MONGO_DB")
                 .unwrap_or_else(|_| "agent_audit".to_string()),
@@ -68,6 +72,26 @@ fn env_optional(name: &str) -> Option<String> {
     })
 }
 
+fn env_optional_url(name: &str) -> AppResult<Option<Url>> {
+    let Some(value) = env_optional(name) else {
+        return Ok(None);
+    };
+    Ok(Some(Url::parse(&value)?))
+}
+
+fn env_parse_or_default<T>(name: &str, default: T) -> AppResult<T>
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    match env_optional(name) {
+        Some(value) => value
+            .parse::<T>()
+            .map_err(|err| msg(format!("invalid {name}: {err}"))),
+        None => Ok(default),
+    }
+}
+
 fn env_json_dict(name: &str) -> AppResult<BTreeMap<String, String>> {
     let Some(raw) = env_optional(name) else {
         return Ok(BTreeMap::new());
@@ -87,4 +111,34 @@ fn env_json_dict(name: &str) -> AppResult<BTreeMap<String, String>> {
         );
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn env_optional_url_rejects_invalid_url() {
+        unsafe {
+            env::set_var("AGENT_AUDIT_SOURCE_API_BASE", "not a url");
+        }
+        let error = env_optional_url("AGENT_AUDIT_SOURCE_API_BASE").expect_err("invalid url");
+        assert!(error.to_string().contains("relative URL without a base"));
+        unsafe {
+            env::remove_var("AGENT_AUDIT_SOURCE_API_BASE");
+        }
+    }
+
+    #[test]
+    fn env_parse_or_default_normalizes_chain_alias() {
+        unsafe {
+            env::set_var("AGENT_AUDIT_DEFAULT_CHAIN", " Arbitrum-One ");
+        }
+        let parsed = env_parse_or_default("AGENT_AUDIT_DEFAULT_CHAIN", ChainAlias::default())
+            .expect("parse chain alias");
+        assert_eq!(parsed.as_str(), "arbitrumone");
+        unsafe {
+            env::remove_var("AGENT_AUDIT_DEFAULT_CHAIN");
+        }
+    }
 }

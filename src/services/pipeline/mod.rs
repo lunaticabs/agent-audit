@@ -6,6 +6,7 @@ mod tooling;
 use crate::config::AppConfig;
 use crate::error::AppResult;
 use crate::models::artifact::{ArtifactIndex, ArtifactRecord};
+use crate::models::path::WorkspaceRelPath;
 use crate::models::source::SourceBundleArtifact;
 use crate::workspace::RunWorkspace;
 
@@ -29,7 +30,7 @@ impl AuditPipelineService {
         support::read_json_if_exists(&self.workspace.root.join("artifacts/source_bundle.json"))
     }
 
-    pub fn write_artifact_index(&self) -> AppResult<String> {
+    pub fn write_artifact_index(&self) -> AppResult<WorkspaceRelPath> {
         self.workspace.write_json(
             "artifacts/artifact_index.json",
             &ArtifactIndex {
@@ -39,12 +40,19 @@ impl AuditPipelineService {
         )
     }
 
-    fn record(&mut self, step: &str, path: &str, kind: &str, status: &str, summary: &str) {
+    fn record(
+        &mut self,
+        step: &str,
+        path: &WorkspaceRelPath,
+        kind: &str,
+        status: &str,
+        summary: &str,
+    ) {
         self.artifacts
-            .retain(|item| !(item.path == path && item.step == step && item.kind == kind));
+            .retain(|item| !(item.path == *path && item.step == step && item.kind == kind));
         self.artifacts.push(ArtifactRecord {
             step: step.to_string(),
-            path: path.to_string(),
+            path: path.clone(),
             kind: kind.to_string(),
             status: status.to_string(),
             summary: summary.to_string(),

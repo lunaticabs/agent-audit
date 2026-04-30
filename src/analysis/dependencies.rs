@@ -6,6 +6,7 @@ use regex::Regex;
 use serde_json::Value;
 
 use crate::models::finding::{DependencyFinding, FindingConfidence, FindingSeverity};
+use crate::models::path::WorkspaceRelPath;
 use crate::models::source::{DependencyRecord, SourceBundleArtifact};
 
 pub fn analyze_dependencies(
@@ -138,7 +139,9 @@ fn analyze_verifier_source_file(
                 "dependency-verifier",
                 format!("{relative_path}:{location_line}"),
             )
-            .with_evidence(vec![format!("sources/{relative_path}")]),
+            .with_evidence(vec![WorkspaceRelPath::new(format!(
+                "sources/{relative_path}"
+            ))]),
         );
     }
     findings
@@ -277,11 +280,11 @@ fn expected_verifier_arity(
     expected.get(capture.get(1)?.as_str()).copied()
 }
 
-fn verifier_evidence_artifacts(record: &DependencyRecord) -> Vec<String> {
+fn verifier_evidence_artifacts(record: &DependencyRecord) -> Vec<WorkspaceRelPath> {
     record
         .files
         .iter()
-        .map(|file_entry| format!("sources/{}", file_entry.path))
+        .map(|file_entry| WorkspaceRelPath::new(format!("sources/{}", file_entry.path)))
         .collect()
 }
 

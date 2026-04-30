@@ -6,6 +6,8 @@ use serde_json::{Map, Value};
 use url::Url;
 
 use crate::error::{AppResult, msg};
+use crate::models::identity::{ChainAlias, EvmAddress, chain_id_for_alias};
+use crate::models::path::RelativePath;
 use crate::models::run::RunTarget;
 use crate::models::source::{
     ArtifactSourceFile, CompilerMetadata, ContractMetadata, SourceBundle, SourceFile,
@@ -13,21 +15,21 @@ use crate::models::source::{
 };
 
 pub fn fetch_verified_source(
-    base_url: &str,
+    base_url: &Url,
     api_key: Option<&str>,
     headers: &BTreeMap<String, String>,
-    address: &str,
-    chain: &str,
+    address: &EvmAddress,
+    chain: &ChainAlias,
 ) -> AppResult<SourceBundle> {
-    let chain_id = chain_to_chain_id(chain);
+    let chain_id = chain_id_for_alias(chain)?;
     let endpoint = normalize_api_endpoint(base_url)?;
-    let mut url = Url::parse(&endpoint)?;
+    let mut url = endpoint.clone();
     {
         let mut pairs = url.query_pairs_mut();
         pairs.append_pair("module", "contract");
         pairs.append_pair("action", "getsourcecode");
-        pairs.append_pair("address", address);
-        pairs.append_pair("chainid", &chain_id);
+        pairs.append_pair("address", address.as_str());
+        pairs.append_pair("chainid", &chain_id.to_string());
         if let Some(key) = api_key.filter(|key| !key.trim().is_empty()) {
             pairs.append_pair("apikey", key);
         }
@@ -79,22 +81,22 @@ pub fn fetch_verified_source(
     let (files, source_layout, source_meta) = parse_source_code_result(primary)?;
     let normalized = VerifiedSourceMetadata {
         target: RunTarget {
-            address: address.to_string(),
-            chain: chain.to_string(),
+            address: address.clone(),
+            chain: chain.clone(),
             chain_id: Some(chain_id),
         },
         provider: SourceProviderMetadata {
             kind: "etherscan-compatible".to_string(),
-            endpoint,
+            endpoint: endpoint.to_string(),
             message: message.to_string(),
             result_count: result.len(),
         },
         contract: ContractMetadata {
             name: string_field(primary, "ContractName"),
-            file_name: string_field(primary, "ContractFileName"),
+            file_name: non_empty_string_field(primary, "ContractFileName").map(RelativePath::new),
             proxy: string_field(primary, "Proxy") == "1",
-            implementation: string_field(primary, "Implementation"),
-            similar_match: string_field(primary, "SimilarMatch"),
+            implementation: parse_optional_address_field(primary, "Implementation"),
+            similar_match: non_empty_string_field(primary, "SimilarMatch"),
         },
         compiler: CompilerMetadata {
             version: string_field(primary, "CompilerVersion"),
@@ -115,7 +117,7 @@ pub fn fetch_verified_source(
             .map(|item| ArtifactSourceFile {
                 path: item.path.clone(),
                 length: item.content.len(),
-                original_path: String::new(),
+                original_path: None,
             })
             .collect(),
     };
@@ -138,30 +140,11 @@ pub fn parse_json_string(raw: Option<&str>) -> Value {
     serde_json::from_str(text).unwrap_or(Value::Null)
 }
 
-pub fn chain_to_chain_id(chain: &str) -> String {
-    let normalized = normalize_chain_alias(chain);
-    chain_aliases()
-        .get(normalized.as_str())
-        .copied()
-        .unwrap_or(normalized.as_str())
-        .to_string()
-}
-
-pub fn normalize_chain_alias(chain: &str) -> String {
-    chain
-        .trim()
-        .to_lowercase()
-        .chars()
-        .filter(|ch| ch.is_ascii_alphanumeric())
-        .collect()
-}
-
-fn normalize_api_endpoint(base_url: &str) -> AppResult<String> {
-    let trimmed = base_url.trim().trim_end_matches('/');
-    let mut url = Url::parse(trimmed)?;
+fn normalize_api_endpoint(base_url: &Url) -> AppResult<Url> {
+    let mut url = base_url.clone();
     let path = url.path().trim_end_matches('/');
     if path.ends_with("/v2/api") || path.ends_with("/api") {
-        return Ok(trimmed.to_string());
+        return Ok(url);
     }
     let next_path = if path.is_empty() {
         "/v2/api".to_string()
@@ -169,7 +152,7 @@ fn normalize_api_endpoint(base_url: &str) -> AppResult<String> {
         format!("{path}/v2/api")
     };
     url.set_path(&next_path);
-    Ok(url.to_string().trim_end_matches('/').to_string())
+    Ok(url)
 }
 
 fn parse_source_code_result(
@@ -197,7 +180,7 @@ fn parse_source_code_result(
         for (raw_path, source_entry) in sources {
             if let Some(content) = extract_source_content(source_entry) {
                 files.push(SourceFile {
-                    path: sanitize_source_path(raw_path),
+                    path: RelativePath::new(sanitize_source_path(raw_path)),
                     content,
                 });
             }
@@ -229,7 +212,7 @@ fn parse_source_code_result(
     }
     Ok((
         vec![SourceFile {
-            path: sanitize_source_path(&filename),
+            path: RelativePath::new(sanitize_source_path(&filename)),
             content: raw_source,
         }],
         "flattened".to_string(),
@@ -279,6 +262,15 @@ fn sanitize_source_path(raw_path: &str) -> String {
     }
 }
 
+fn non_empty_string_field(object: &Map<String, Value>, key: &str) -> Option<String> {
+    let value = string_field(object, key);
+    if value.is_empty() { None } else { Some(value) }
+}
+
+fn parse_optional_address_field(object: &Map<String, Value>, key: &str) -> Option<EvmAddress> {
+    non_empty_string_field(object, key).and_then(|value| EvmAddress::new(value).ok())
+}
+
 fn string_field(object: &Map<String, Value>, key: &str) -> String {
     object
         .get(key)
@@ -289,151 +281,6 @@ fn string_field(object: &Map<String, Value>, key: &str) -> String {
 
 fn truncate_chars(text: &str, limit: usize) -> String {
     text.chars().take(limit).collect()
-}
-
-fn chain_aliases() -> &'static BTreeMap<&'static str, &'static str> {
-    use std::sync::OnceLock;
-
-    static CELL: OnceLock<BTreeMap<&'static str, &'static str>> = OnceLock::new();
-    CELL.get_or_init(|| {
-        let mut map = BTreeMap::new();
-        for (k, v) in [
-            ("1", "1"),
-            ("eth", "1"),
-            ("ethereum", "1"),
-            ("mainnet", "1"),
-            ("holesky", "17000"),
-            ("17000", "17000"),
-            ("hoodi", "560048"),
-            ("560048", "560048"),
-            ("sepolia", "11155111"),
-            ("11155111", "11155111"),
-            ("bsc", "56"),
-            ("bnb", "56"),
-            ("bnbsmartchain", "56"),
-            ("binancesmartchain", "56"),
-            ("56", "56"),
-            ("bsctestnet", "97"),
-            ("bnbtestnet", "97"),
-            ("97", "97"),
-            ("polygon", "137"),
-            ("matic", "137"),
-            ("polygonmainnet", "137"),
-            ("137", "137"),
-            ("amoy", "80002"),
-            ("polygonamoy", "80002"),
-            ("80002", "80002"),
-            ("base", "8453"),
-            ("basemainnet", "8453"),
-            ("8453", "8453"),
-            ("basesepolia", "84532"),
-            ("84532", "84532"),
-            ("arb", "42161"),
-            ("arbone", "42161"),
-            ("arbitrum", "42161"),
-            ("arbitrumone", "42161"),
-            ("42161", "42161"),
-            ("arbnova", "42170"),
-            ("arbitrumnova", "42170"),
-            ("42170", "42170"),
-            ("arbsepolia", "421614"),
-            ("arbitrumsepolia", "421614"),
-            ("421614", "421614"),
-            ("op", "10"),
-            ("optimism", "10"),
-            ("opmainnet", "10"),
-            ("10", "10"),
-            ("opsepolia", "11155420"),
-            ("optimismsepolia", "11155420"),
-            ("11155420", "11155420"),
-            ("avalanche", "43114"),
-            ("avax", "43114"),
-            ("avalanchecchain", "43114"),
-            ("43114", "43114"),
-            ("fuji", "43113"),
-            ("avalanchefuji", "43113"),
-            ("43113", "43113"),
-            ("linea", "59144"),
-            ("59144", "59144"),
-            ("lineasepolia", "59141"),
-            ("59141", "59141"),
-            ("blast", "81457"),
-            ("81457", "81457"),
-            ("blastsepolia", "168587773"),
-            ("168587773", "168587773"),
-            ("scroll", "534352"),
-            ("534352", "534352"),
-            ("scrollsepolia", "534351"),
-            ("534351", "534351"),
-            ("mantle", "5000"),
-            ("5000", "5000"),
-            ("mantlesepolia", "5003"),
-            ("5003", "5003"),
-            ("gnosis", "100"),
-            ("xdai", "100"),
-            ("100", "100"),
-            ("celo", "42220"),
-            ("42220", "42220"),
-            ("celosepolia", "11142220"),
-            ("11142220", "11142220"),
-            ("zksync", "324"),
-            ("zksyncmainnet", "324"),
-            ("324", "324"),
-            ("zksyncsepolia", "300"),
-            ("300", "300"),
-            ("opbnb", "204"),
-            ("204", "204"),
-            ("opbnbtestnet", "5611"),
-            ("5611", "5611"),
-            ("moonbeam", "1284"),
-            ("1284", "1284"),
-            ("moonriver", "1285"),
-            ("1285", "1285"),
-            ("moonbasealpha", "1287"),
-            ("1287", "1287"),
-            ("bittorrent", "199"),
-            ("btt", "199"),
-            ("199", "199"),
-            ("btttestnet", "1029"),
-            ("1029", "1029"),
-            ("fraxtal", "252"),
-            ("252", "252"),
-            ("fraxtalhoodi", "2523"),
-            ("2523", "2523"),
-            ("sonic", "146"),
-            ("146", "146"),
-            ("sonictestnet", "14601"),
-            ("14601", "14601"),
-            ("sei", "1329"),
-            ("1329", "1329"),
-            ("seitestnet", "1328"),
-            ("1328", "1328"),
-            ("taiko", "167000"),
-            ("167000", "167000"),
-            ("taikohoodi", "167013"),
-            ("167013", "167013"),
-            ("unichain", "130"),
-            ("130", "130"),
-            ("unichainsepolia", "1301"),
-            ("1301", "1301"),
-            ("world", "480"),
-            ("worldchain", "480"),
-            ("480", "480"),
-            ("worldsepolia", "4801"),
-            ("4801", "4801"),
-            ("xdc", "50"),
-            ("50", "50"),
-            ("xdcapothem", "51"),
-            ("51", "51"),
-            ("abstract", "2741"),
-            ("2741", "2741"),
-            ("abstractsepolia", "11124"),
-            ("11124", "11124"),
-        ] {
-            map.insert(k, v);
-        }
-        map
-    })
 }
 
 pub fn sanitize_dependency_name(name: &str) -> String {
@@ -470,4 +317,34 @@ pub fn merge_unique_lists(groups: &[Vec<String>]) -> Vec<String> {
         }
     }
     merged
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_optional_address_field_accepts_valid_implementation() {
+        let object = Map::from_iter([(
+            "Implementation".to_string(),
+            Value::String("0x52908400098527886E0F7030069857D2E4169EE7".to_string()),
+        )]);
+
+        let parsed =
+            parse_optional_address_field(&object, "Implementation").expect("valid address");
+        assert_eq!(
+            parsed.as_str(),
+            "0x52908400098527886E0F7030069857D2E4169EE7"
+        );
+    }
+
+    #[test]
+    fn parse_optional_address_field_drops_invalid_implementation() {
+        let object = Map::from_iter([(
+            "Implementation".to_string(),
+            Value::String("0x1234567890abcdef1234567890ABCDEF12345678".to_string()),
+        )]);
+
+        assert!(parse_optional_address_field(&object, "Implementation").is_none());
+    }
 }

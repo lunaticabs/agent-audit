@@ -1,13 +1,74 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
+use std::path::PathBuf;
+use std::str::FromStr;
+
+use crate::models::identity::{ChainAlias, EvmAddress, RunId};
+use crate::models::path::WorkspaceRelPath;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandStatus {
+    Completed,
+    RetryableError,
+    FatalError,
+    PreconditionMissing,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StepStatus {
+    #[default]
+    NotPrepared,
+    Prepared,
+    Executed,
+    SourceFetched,
+    SourceFetchFailed,
+    SourceNotFetched,
+    SourceFilesMissing,
+    SourceApiNotConfigured,
+}
+
+impl StepStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NotPrepared => "not_prepared",
+            Self::Prepared => "prepared",
+            Self::Executed => "executed",
+            Self::SourceFetched => "source_fetched",
+            Self::SourceFetchFailed => "source_fetch_failed",
+            Self::SourceNotFetched => "source_not_fetched",
+            Self::SourceFilesMissing => "source_files_missing",
+            Self::SourceApiNotConfigured => "source_api_not_configured",
+        }
+    }
+}
+
+impl FromStr for StepStatus {
+    type Err = &'static str;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "not_prepared" => Ok(Self::NotPrepared),
+            "prepared" => Ok(Self::Prepared),
+            "executed" => Ok(Self::Executed),
+            "source_fetched" => Ok(Self::SourceFetched),
+            "source_fetch_failed" => Ok(Self::SourceFetchFailed),
+            "source_not_fetched" => Ok(Self::SourceNotFetched),
+            "source_files_missing" => Ok(Self::SourceFilesMissing),
+            "source_api_not_configured" => Ok(Self::SourceApiNotConfigured),
+            _ => Err("unknown step status"),
+        }
+    }
+}
 
 #[skip_serializing_none]
 #[derive(Clone, Debug, Serialize)]
 pub struct CommandEnvelope<T> {
     pub ok: bool,
-    pub status: String,
+    pub status: CommandStatus,
     pub retryable: bool,
-    pub run_id: String,
+    pub run_id: Option<RunId>,
     pub run_persisted: bool,
     pub payload: Option<T>,
     pub error: Option<EnvelopeError>,
@@ -37,58 +98,69 @@ pub enum NextAction {
     },
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct SyncRunPayload {
-    pub status: String,
+    pub status: CommandStatus,
     pub file_count: usize,
     pub total_size_bytes: usize,
     pub upserted_file_records: usize,
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
-#[serde(default)]
+#[derive(Clone, Debug, Serialize)]
 pub struct StepPayload {
-    pub run_id: String,
-    pub run_dir: String,
+    pub run_id: RunId,
+    pub run_dir: PathBuf,
     pub step: String,
-    pub status: String,
-    pub artifact_index: String,
+    pub status: StepStatus,
+    pub artifact_index: WorkspaceRelPath,
     pub init_run: Option<InitRunDetails>,
     pub fetch_source: Option<FetchSourceDetails>,
     pub prepare_slither: Option<PrepareSlitherDetails>,
     pub aggregate_materials: Option<AggregateMaterialsDetails>,
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct InitRunDetails {
-    pub address: String,
-    pub chain: String,
-    pub source_fetch_status: String,
-    pub dependency_analysis_status: String,
-    pub tooling_status: String,
-    pub tooling_manifest_path: String,
-    pub materials_manifest_path: String,
-    pub slither_build_manifest_path: String,
-    pub foundry_build_manifest_path: String,
-    pub echidna_build_manifest_path: String,
+    pub address: EvmAddress,
+    pub chain: ChainAlias,
+    pub source_fetch_status: StepStatus,
+    pub dependency_analysis_status: StepStatus,
+    pub tooling_status: StepStatus,
+    pub tooling_manifest_path: WorkspaceRelPath,
+    pub materials_manifest_path: WorkspaceRelPath,
+    pub slither_build_manifest_path: WorkspaceRelPath,
+    pub foundry_build_manifest_path: WorkspaceRelPath,
+    pub echidna_build_manifest_path: WorkspaceRelPath,
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct FetchSourceDetails {
-    pub tooling_status: String,
-    pub tooling_manifest_path: String,
-    pub slither_build_manifest_path: String,
-    pub foundry_build_manifest_path: String,
-    pub echidna_build_manifest_path: String,
+    pub tooling_status: StepStatus,
+    pub tooling_manifest_path: WorkspaceRelPath,
+    pub slither_build_manifest_path: WorkspaceRelPath,
+    pub foundry_build_manifest_path: WorkspaceRelPath,
+    pub echidna_build_manifest_path: WorkspaceRelPath,
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct PrepareSlitherDetails {
-    pub slither_build_manifest_path: String,
-    pub slither_project_root: String,
+    pub slither_build_manifest_path: WorkspaceRelPath,
+    pub slither_project_root: WorkspaceRelPath,
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct AggregateMaterialsDetails {
-    pub materials_manifest_path: String,
+    pub materials_manifest_path: WorkspaceRelPath,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn step_status_serializes_as_snake_case() {
+        let json = serde_json::to_string(&StepStatus::SourceApiNotConfigured)
+            .expect("serialize step status");
+        assert_eq!(json, "\"source_api_not_configured\"");
+    }
 }
