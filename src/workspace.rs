@@ -13,6 +13,7 @@ use time::format_description::well_known::Rfc3339;
 
 use crate::error::{AppError, AppResult};
 use crate::models::run::{RunMeta, RunRequest};
+use crate::serde_ext::to_pretty_json;
 
 #[derive(Clone, Debug)]
 pub struct RunWorkspace {
@@ -120,7 +121,7 @@ impl RunWorkspace {
             fs::create_dir_all(parent)?;
         }
         let mut file = File::create(&path)?;
-        file.write_all(serde_json::to_string_pretty(payload)?.as_bytes())?;
+        file.write_all(to_pretty_json(payload)?.as_bytes())?;
         file.write_all(b"\n")?;
         Ok(self.relative(&path)?)
     }

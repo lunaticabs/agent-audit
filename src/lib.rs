@@ -5,5 +5,6 @@ pub(crate) mod config;
 pub(crate) mod error;
 pub(crate) mod models;
 pub(crate) mod output;
+pub(crate) mod serde_ext;
 pub(crate) mod services;
 pub(crate) mod workspace;

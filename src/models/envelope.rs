@@ -1,5 +1,7 @@
 use serde::Serialize;
+use serde_with::skip_serializing_none;
 
+#[skip_serializing_none]
 #[derive(Clone, Debug, Serialize)]
 pub struct CommandEnvelope<T> {
     pub ok: bool,
@@ -7,9 +9,7 @@ pub struct CommandEnvelope<T> {
     pub retryable: bool,
     pub run_id: String,
     pub run_persisted: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub payload: Option<T>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<EnvelopeError>,
     pub next_action: NextAction,
 }
@@ -26,10 +26,7 @@ pub enum NextAction {
     #[serde(rename = "continue")]
     Continue,
     #[serde(rename = "stop")]
-    Stop {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        command: Option<String>,
-    },
+    Stop { command: Option<String> },
     #[serde(rename = "run_prerequisite")]
     RunPrerequisite { command: String },
     #[serde(rename = "retry_same_command")]
@@ -49,19 +46,16 @@ pub struct SyncRunPayload {
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
+#[serde(default)]
 pub struct StepPayload {
     pub run_id: String,
     pub run_dir: String,
     pub step: String,
     pub status: String,
     pub artifact_index: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub init_run: Option<InitRunDetails>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub fetch_source: Option<FetchSourceDetails>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub prepare_slither: Option<PrepareSlitherDetails>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub aggregate_materials: Option<AggregateMaterialsDetails>,
 }
 

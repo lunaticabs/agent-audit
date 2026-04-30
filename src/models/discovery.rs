@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DependencyDiscoveryReport {
     pub constructor_candidates: Vec<DependencyCandidate>,
     pub constant_candidates: Vec<DependencyCandidate>,
@@ -9,22 +11,23 @@ pub struct DependencyDiscoveryReport {
     pub merged_candidates: Vec<DependencyCandidate>,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DependencyCandidate {
     pub address: String,
     pub name: String,
     pub role: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<DependencyCandidateSource>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub sources: Vec<DependencyCandidateSource>,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub internal_type: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub solidity_type: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub declared_type: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub file: String,
 }
 
@@ -45,13 +48,14 @@ impl Default for DependencyCandidateSource {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DependencyDiscoveryContext {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub sources: Vec<DependencyCandidateSource>,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub internal_type: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub solidity_type: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub file: String,
 }

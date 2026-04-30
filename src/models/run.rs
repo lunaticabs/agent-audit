@@ -1,10 +1,12 @@
 use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
 
+#[skip_serializing_none]
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct RunTarget {
     pub address: String,
     pub chain: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub chain_id: Option<String>,
 }
 

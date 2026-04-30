@@ -10,8 +10,9 @@ pub struct ArtifactRecord {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ArtifactIndex {
     pub run_id: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub artifacts: Vec<ArtifactRecord>,
 }

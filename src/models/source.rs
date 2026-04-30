@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use serde_with::skip_serializing_none;
 
 use crate::models::discovery::{DependencyDiscoveryContext, DependencyDiscoveryReport};
 use crate::models::run::RunTarget;
@@ -18,63 +19,57 @@ pub struct SourceBundle {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct VerifiedSourceMetadata {
     pub target: RunTarget,
     pub provider: SourceProviderMetadata,
     pub contract: ContractMetadata,
     pub compiler: CompilerMetadata,
-    #[serde(default, skip_serializing_if = "crate::models::source::is_json_null")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_json_null")]
     pub abi: Value,
     pub source_layout: String,
     pub source_meta: SourceMetadata,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub files: Vec<ArtifactSourceFile>,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SourceBundleArtifact {
     pub target: RunTarget,
     pub status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub error_debug: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<SourceProviderMetadata>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub contract: Option<ContractMetadata>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub compiler: Option<CompilerMetadata>,
-    #[serde(default, skip_serializing_if = "crate::models::source::is_json_null")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_json_null")]
     pub abi: Value,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub source_layout: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_meta: Option<SourceMetadata>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub files: Vec<ArtifactSourceFile>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub proxy_resolution: Option<ProxyResolution>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub dependency_discovery: Option<DependencyDiscoveryReport>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub dependencies: Vec<DependencyRecord>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub related_contracts: Vec<DependencyRecord>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub analysis_target: Option<AnalysisTarget>,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SourceFetchRequestArtifact {
     pub address: String,
     pub chain: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_api_base: Option<String>,
     pub source_api_configured: bool,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub source_api_header_names: Vec<String>,
     pub rpc_url_configured: bool,
 }
@@ -112,17 +107,19 @@ pub struct CompilerMetadata {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SourceMetadata {
     pub language: String,
-    #[serde(default, skip_serializing_if = "crate::models::source::is_json_null")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_json_null")]
     pub settings: Value,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ArtifactSourceFile {
     pub path: String,
     pub length: usize,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub original_path: String,
 }
 
@@ -134,44 +131,41 @@ pub struct ProxyResolution {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AnalysisTarget {
     pub address: String,
     pub contract_name: String,
     pub path: String,
     pub role: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub prepared_path: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub prepared_root: String,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DependencyRecord {
     pub role: String,
     pub name: String,
     pub address: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<SourceProviderMetadata>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub contract: Option<ContractMetadata>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub compiler: Option<CompilerMetadata>,
-    #[serde(default, skip_serializing_if = "crate::models::source::is_json_null")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_json_null")]
     pub abi: Value,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub source_layout: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_meta: Option<SourceMetadata>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub files: Vec<ArtifactSourceFile>,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub provider_response_artifact: String,
     pub status: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub related_contracts: Vec<DependencyRecord>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub discovery: Option<DependencyDiscoveryContext>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
@@ -242,8 +236,4 @@ impl DependencyRecord {
     pub fn is_fetched(&self) -> bool {
         self.status == "fetched"
     }
-}
-
-pub fn is_json_null(value: &Value) -> bool {
-    value.is_null()
 }

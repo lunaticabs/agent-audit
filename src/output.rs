@@ -2,6 +2,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::models::envelope::{CommandEnvelope, EnvelopeError, NextAction};
+use crate::serde_ext::to_pretty_json;
 
 pub const EXIT_OK: i32 = 0;
 pub const EXIT_RETRYABLE: i32 = 10;
@@ -11,7 +12,7 @@ pub const EXIT_PRECONDITION: i32 = 30;
 pub fn print_json<T: Serialize>(value: &T) {
     println!(
         "{}",
-        serde_json::to_string_pretty(value).expect("serialize json envelope")
+        to_pretty_json(value).expect("serialize json envelope")
     );
 }
 

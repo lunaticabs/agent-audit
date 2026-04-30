@@ -3,14 +3,16 @@ use serde::{Deserialize, Serialize};
 use crate::models::run::RunTarget;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DependencyFindingsArtifact {
     pub target: RunTarget,
     pub status: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub findings: Vec<DependencyFinding>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DependencyFinding {
     pub title: String,
     pub severity: FindingSeverity,
@@ -18,7 +20,7 @@ pub struct DependencyFinding {
     pub summary: String,
     pub source: String,
     pub location: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
     pub evidence_artifacts: Vec<String>,
 }
 

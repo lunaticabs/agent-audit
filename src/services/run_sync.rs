@@ -63,12 +63,9 @@ pub fn sync_run_to_mongo(config: &AppConfig, workspace: &RunWorkspace) -> AppRes
         doc.insert("sha256", sha256_hex(&raw));
         doc.insert("kind", if is_json { "json" } else { "text" });
         if is_json {
-            match serde_json::from_slice::<Value>(&raw) {
+            match parse_json_bson(&raw) {
                 Ok(value) => {
-                    doc.insert(
-                        "content_json",
-                        bson::serialize_to_bson(&value).unwrap_or(Bson::Null),
-                    );
+                    doc.insert("content_json", value);
                 }
                 Err(_) => {
                     doc.insert("kind", "text");
@@ -237,4 +234,9 @@ fn sha256_hex(raw: &[u8]) -> String {
         out.push_str(&format!("{byte:02x}"));
     }
     out
+}
+
+fn parse_json_bson(raw: &[u8]) -> AppResult<Bson> {
+    let value: Value = serde_json::from_slice(raw)?;
+    Ok(bson::serialize_to_bson(&value).unwrap_or(Bson::Null))
 }
