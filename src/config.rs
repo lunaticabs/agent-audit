@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use super::errors::{AppResult, msg};
+use crate::error::{AppResult, msg};
 
 #[derive(Clone, Debug)]
 pub struct AppConfig {

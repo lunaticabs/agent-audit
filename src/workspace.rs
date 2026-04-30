@@ -6,19 +6,13 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use fs4::fs_std::FileExt;
 use rand::Rng;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
-use super::errors::{AppError, AppResult};
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct RunRequestContext {
-    pub address: String,
-    pub chain: String,
-}
+use crate::error::{AppError, AppResult};
+use crate::models::run::{RunMeta, RunRequest};
 
 #[derive(Clone, Debug)]
 pub struct RunWorkspace {
@@ -70,15 +64,16 @@ impl RunWorkspace {
         workspace.ensure_dirs()?;
         workspace.write_json(
             "input/run_meta.json",
-            &serde_json::json!({
-                "run_id": run_id,
-                "id_scheme": "sha256-base64url-v1",
-                "created_at": now_utc_rfc3339_z()?,
-                "target": {
-                    "address": address,
-                    "chain": chain,
-                },
-            }),
+            &RunMeta {
+                run_id: run_id.to_string(),
+                id_scheme: "sha256-base64url-v1".to_string(),
+                created_at: now_utc_rfc3339_z()?,
+                target: RunRequest {
+                    address: address.to_string(),
+                    chain: chain.to_string(),
+                }
+                .target(),
+            },
         )?;
         Ok(workspace)
     }
@@ -119,7 +114,7 @@ impl RunWorkspace {
         Ok(())
     }
 
-    pub fn write_json(&self, relative_path: &str, payload: &Value) -> AppResult<String> {
+    pub fn write_json<T: Serialize>(&self, relative_path: &str, payload: &T) -> AppResult<String> {
         let path = self.root.join(relative_path);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
@@ -162,7 +157,7 @@ impl RunWorkspace {
     }
 }
 
-pub fn load_request_context(workspace: &RunWorkspace) -> AppResult<RunRequestContext> {
+pub fn load_request_context(workspace: &RunWorkspace) -> AppResult<RunRequest> {
     let path = workspace.root.join("input/request.json");
     if !path.exists() {
         return Err(AppError::RunNotFound(format!(

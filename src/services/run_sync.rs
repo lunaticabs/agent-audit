@@ -8,9 +8,10 @@ use mongodb::sync::{Client, Collection};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use super::config::AppConfig;
-use super::errors::{AppResult, msg};
-use super::workspace::RunWorkspace;
+use crate::config::AppConfig;
+use crate::error::{AppResult, msg};
+use crate::models::run::{RunMeta, RunRequest, RunTarget};
+use crate::workspace::RunWorkspace;
 
 const INCLUDED_TOP_LEVEL_DIRS: &[&str] = &["input", "reports", "artifacts", "sources"];
 
@@ -203,16 +204,11 @@ fn create_indexes(
 fn read_target(workspace: &RunWorkspace) -> AppResult<Bson> {
     let request_path = workspace.root.join("input/request.json");
     if !request_path.exists() {
-        return Ok(bson::serialize_to_bson(
-            &serde_json::json!({"address": "", "chain": ""}),
-        )?);
+        return Ok(bson::serialize_to_bson(&RunTarget::new("", ""))?);
     }
     let text = fs::read_to_string(request_path)?;
-    let payload: Value = serde_json::from_str(&text).unwrap_or_else(|_| serde_json::json!({}));
-    Ok(bson::serialize_to_bson(&serde_json::json!({
-        "address": payload.get("address").and_then(Value::as_str).unwrap_or_default(),
-        "chain": payload.get("chain").and_then(Value::as_str).unwrap_or_default(),
-    }))?)
+    let payload = serde_json::from_str::<RunRequest>(&text).unwrap_or_default();
+    Ok(bson::serialize_to_bson(&payload.target())?)
 }
 
 fn read_created_at(workspace: &RunWorkspace) -> std::time::SystemTime {
@@ -220,18 +216,16 @@ fn read_created_at(workspace: &RunWorkspace) -> std::time::SystemTime {
     let Ok(text) = fs::read_to_string(path) else {
         return std::time::SystemTime::now();
     };
-    let Ok(payload) = serde_json::from_str::<Value>(&text) else {
+    let Ok(payload) = serde_json::from_str::<RunMeta>(&text) else {
         return std::time::SystemTime::now();
     };
-    let Some(raw) = payload.get("created_at").and_then(Value::as_str) else {
-        return std::time::SystemTime::now();
-    };
-    time::OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc3339)
-        .ok()
-        .map(|ts| {
-            std::time::UNIX_EPOCH + std::time::Duration::from_secs(ts.unix_timestamp() as u64)
-        })
-        .unwrap_or_else(std::time::SystemTime::now)
+    time::OffsetDateTime::parse(
+        &payload.created_at,
+        &time::format_description::well_known::Rfc3339,
+    )
+    .ok()
+    .map(|ts| std::time::UNIX_EPOCH + std::time::Duration::from_secs(ts.unix_timestamp() as u64))
+    .unwrap_or_else(std::time::SystemTime::now)
 }
 
 fn sha256_hex(raw: &[u8]) -> String {

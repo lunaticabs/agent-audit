@@ -9,3 +9,15 @@
 - 本地开发时可以用 `cargo run --bin agent-audit -- <subcommand>`
 - chain checks、Slither、Echidna、forge、cast、anvil 这类工具由 agent 自己决定是否直接调用
 - 审计结论、深入验证顺序、是否调用这些工具，交给 agent 决定
+
+## 项目结构
+
+- `src/main.rs`: 二进制入口，只负责启动 CLI
+- `src/lib.rs`: crate 模块树
+- `src/cli/`: clap 参数定义和命令执行入口
+- `src/services/`: 核心业务服务，如 pipeline、source provider、Mongo 同步
+- `src/analysis/`: 依赖发现和依赖分析逻辑
+- `src/models/`: 共享数据结构
+- `src/output.rs`: CLI JSON 输出和退出码约定
+- `src/config.rs`: `.env` 和运行时配置加载
+- `src/workspace.rs`: run workspace 与锁管理

@@ -2,24 +2,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use regex::Regex;
 use reqwest::blocking::Client;
-use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 use url::Url;
 
-use super::errors::{AppResult, msg};
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SourceFile {
-    pub path: String,
-    pub content: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct SourceBundle {
-    pub provider_payload: Value,
-    pub normalized_payload: Value,
-    pub files: Vec<SourceFile>,
-}
+use crate::error::{AppResult, msg};
+use crate::models::run::RunTarget;
+use crate::models::source::{
+    ArtifactSourceFile, CompilerMetadata, ContractMetadata, SourceBundle, SourceFile,
+    SourceMetadata, SourceProviderMetadata, VerifiedSourceMetadata,
+};
 
 pub fn fetch_verified_source(
     base_url: &str,
@@ -86,41 +77,48 @@ pub fn fetch_verified_source(
         .ok_or_else(|| msg("source API returned an unexpected result shape"))?;
 
     let (files, source_layout, source_meta) = parse_source_code_result(primary)?;
-    let normalized = json!({
-        "target": {
-            "address": address,
-            "chain": chain,
-            "chain_id": chain_id,
+    let normalized = VerifiedSourceMetadata {
+        target: RunTarget {
+            address: address.to_string(),
+            chain: chain.to_string(),
+            chain_id: Some(chain_id),
         },
-        "provider": {
-            "type": "etherscan-compatible",
-            "endpoint": endpoint,
-            "message": message,
-            "result_count": result.len(),
+        provider: SourceProviderMetadata {
+            kind: "etherscan-compatible".to_string(),
+            endpoint,
+            message: message.to_string(),
+            result_count: result.len(),
         },
-        "contract": {
-            "name": string_field(primary, "ContractName"),
-            "file_name": string_field(primary, "ContractFileName"),
-            "proxy": string_field(primary, "Proxy") == "1",
-            "implementation": string_field(primary, "Implementation"),
-            "similar_match": string_field(primary, "SimilarMatch"),
+        contract: ContractMetadata {
+            name: string_field(primary, "ContractName"),
+            file_name: string_field(primary, "ContractFileName"),
+            proxy: string_field(primary, "Proxy") == "1",
+            implementation: string_field(primary, "Implementation"),
+            similar_match: string_field(primary, "SimilarMatch"),
         },
-        "compiler": {
-            "version": string_field(primary, "CompilerVersion"),
-            "type": string_field(primary, "CompilerType"),
-            "optimization_used": string_field(primary, "OptimizationUsed"),
-            "runs": string_field(primary, "Runs"),
-            "evm_version": string_field(primary, "EVMVersion"),
-            "constructor_arguments": string_field(primary, "ConstructorArguments"),
-            "license_type": string_field(primary, "LicenseType"),
-            "library": string_field(primary, "Library"),
-            "swarm_source": string_field(primary, "SwarmSource"),
+        compiler: CompilerMetadata {
+            version: string_field(primary, "CompilerVersion"),
+            kind: string_field(primary, "CompilerType"),
+            optimization_used: string_field(primary, "OptimizationUsed"),
+            runs: string_field(primary, "Runs"),
+            evm_version: string_field(primary, "EVMVersion"),
+            constructor_arguments: string_field(primary, "ConstructorArguments"),
+            license_type: string_field(primary, "LicenseType"),
+            library: string_field(primary, "Library"),
+            swarm_source: string_field(primary, "SwarmSource"),
         },
-        "abi": parse_json_string(primary.get("ABI").and_then(Value::as_str)),
-        "source_layout": source_layout,
-        "source_meta": source_meta,
-        "files": files.iter().map(|item| json!({"path": item.path, "length": item.content.len()})).collect::<Vec<_>>(),
-    });
+        abi: parse_json_string(primary.get("ABI").and_then(Value::as_str)),
+        source_layout,
+        source_meta,
+        files: files
+            .iter()
+            .map(|item| ArtifactSourceFile {
+                path: item.path.clone(),
+                length: item.content.len(),
+                original_path: String::new(),
+            })
+            .collect(),
+    };
 
     Ok(SourceBundle {
         provider_payload: payload,
@@ -176,7 +174,7 @@ fn normalize_api_endpoint(base_url: &str) -> AppResult<String> {
 
 fn parse_source_code_result(
     result: &Map<String, Value>,
-) -> AppResult<(Vec<SourceFile>, String, Value)> {
+) -> AppResult<(Vec<SourceFile>, String, SourceMetadata)> {
     let raw_source = string_field(result, "SourceCode");
     let contract_name = {
         let name = string_field(result, "ContractName");
@@ -205,10 +203,17 @@ fn parse_source_code_result(
             }
         }
         if !files.is_empty() {
-            let meta = json!({
-                "language": parsed_json.get("language").and_then(Value::as_str).unwrap_or_default(),
-                "settings": parsed_json.get("settings").cloned().unwrap_or(Value::Object(Map::new())),
-            });
+            let meta = SourceMetadata {
+                language: parsed_json
+                    .get("language")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                settings: parsed_json
+                    .get("settings")
+                    .cloned()
+                    .unwrap_or(Value::Object(Map::new())),
+            };
             return Ok((files, "standard-json".to_string(), meta));
         }
     }
@@ -228,7 +233,10 @@ fn parse_source_code_result(
             content: raw_source,
         }],
         "flattened".to_string(),
-        Value::Object(Map::new()),
+        SourceMetadata {
+            language: String::new(),
+            settings: Value::Object(Map::new()),
+        },
     ))
 }
 
