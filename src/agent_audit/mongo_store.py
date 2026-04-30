@@ -16,7 +16,6 @@ INCLUDED_TOP_LEVEL_DIRS = {
     "input",
     "reports",
     "artifacts",
-    "ir",
     "sources",
 }
 

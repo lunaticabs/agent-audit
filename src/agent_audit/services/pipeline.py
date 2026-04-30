@@ -14,7 +14,7 @@ from agent_audit.dependency_analyzers import analyze_dependencies
 from agent_audit.dependency_discovery import discover_dependencies
 from agent_audit.schemas import ArtifactRecord
 from agent_audit.source_fetch import fetch_verified_source
-from agent_audit.source_ir import build_lightweight_ir, load_bundle_payload
+from agent_audit.source_fetch import parse_json_string
 from agent_audit.workspace import RunWorkspace
 
 
@@ -194,220 +194,6 @@ class AuditPipelineService:
         )
         return "source_fetched"
 
-    def build_ir(self, address: str, chain: str) -> str:
-        bundle_path = self.workspace.root / "artifacts" / "source_bundle.json"
-        if not bundle_path.exists():
-            contracts_path = self.workspace.write_json(
-                "ir/contracts.json",
-                {
-                    "target": {"address": address, "chain": chain},
-                    "contracts": [],
-                    "status": "source_bundle_missing",
-                },
-            )
-            functions_path = self.workspace.write_json(
-                "ir/functions.json",
-                {"functions": [], "status": "source_bundle_missing"},
-            )
-            privilege_path = self.workspace.write_json(
-                "ir/privilege_matrix.json",
-                {
-                    "roles": [],
-                    "privileged_functions": [],
-                    "status": "source_bundle_missing",
-                },
-            )
-            self._record(
-                step="build_ir",
-                path=contracts_path,
-                kind="ir",
-                status="configured_not_executed",
-                summary="Skipped contract inventory because source bundle is missing.",
-            )
-            self._record(
-                step="build_ir",
-                path=functions_path,
-                kind="ir",
-                status="configured_not_executed",
-                summary="Skipped function inventory because source bundle is missing.",
-            )
-            self._record(
-                step="build_ir",
-                path=privilege_path,
-                kind="ir",
-                status="configured_not_executed",
-                summary="Skipped privilege matrix because source bundle is missing.",
-            )
-            return "source_bundle_missing"
-
-        bundle_payload = load_bundle_payload(bundle_path.read_text())
-        if bundle_payload.get("status") != "fetched":
-            contracts_path = self.workspace.write_json(
-                "ir/contracts.json",
-                {
-                    "target": {"address": address, "chain": chain},
-                    "contracts": [],
-                    "status": "source_not_fetched",
-                    "note": "Source fetching did not complete successfully.",
-                },
-            )
-            functions_path = self.workspace.write_json(
-                "ir/functions.json",
-                {"functions": [], "status": "source_not_fetched"},
-            )
-            privilege_path = self.workspace.write_json(
-                "ir/privilege_matrix.json",
-                {
-                    "roles": [],
-                    "privileged_functions": [],
-                    "status": "source_not_fetched",
-                },
-            )
-            self._record(
-                step="build_ir",
-                path=contracts_path,
-                kind="ir",
-                status="configured_not_executed",
-                summary="Skipped contract inventory because source fetch did not succeed.",
-            )
-            self._record(
-                step="build_ir",
-                path=functions_path,
-                kind="ir",
-                status="configured_not_executed",
-                summary="Skipped function inventory because source fetch did not succeed.",
-            )
-            self._record(
-                step="build_ir",
-                path=privilege_path,
-                kind="ir",
-                status="configured_not_executed",
-                summary="Skipped privilege matrix because source fetch did not succeed.",
-            )
-            return "source_not_fetched"
-
-        source_map: Dict[str, str] = {}
-        for source_file in self._all_bundle_files(bundle_payload):
-            relative_path = source_file.get("path")
-            if not isinstance(relative_path, str) or not relative_path:
-                continue
-            file_path = self.workspace.root / "sources" / relative_path
-            if file_path.exists():
-                source_map[relative_path] = file_path.read_text()
-
-        if not source_map:
-            contracts_path = self.workspace.write_json(
-                "ir/contracts.json",
-                {
-                    "target": {"address": address, "chain": chain},
-                    "contracts": [],
-                    "status": "source_files_missing",
-                },
-            )
-            functions_path = self.workspace.write_json(
-                "ir/functions.json",
-                {"functions": [], "status": "source_files_missing"},
-            )
-            privilege_path = self.workspace.write_json(
-                "ir/privilege_matrix.json",
-                {
-                    "roles": [],
-                    "privileged_functions": [],
-                    "status": "source_files_missing",
-                },
-            )
-            self._record(
-                step="build_ir",
-                path=contracts_path,
-                kind="ir",
-                status="executed_with_error",
-                summary="Source bundle exists but no local source files were found.",
-            )
-            self._record(
-                step="build_ir",
-                path=functions_path,
-                kind="ir",
-                status="executed_with_error",
-                summary="Source bundle exists but no local source files were found.",
-            )
-            self._record(
-                step="build_ir",
-                path=privilege_path,
-                kind="ir",
-                status="executed_with_error",
-                summary="Source bundle exists but no local source files were found.",
-            )
-            return "source_files_missing"
-
-        try:
-            contracts_payload, functions_payload, privilege_payload = build_lightweight_ir(
-                bundle_payload=bundle_payload,
-                sources=source_map,
-            )
-        except Exception as exc:
-            error_payload = {
-                "target": {"address": address, "chain": chain},
-                "status": "ir_generation_failed",
-                "error": str(exc),
-            }
-            contracts_path = self.workspace.write_json("ir/contracts.json", error_payload)
-            functions_path = self.workspace.write_json("ir/functions.json", error_payload)
-            privilege_path = self.workspace.write_json("ir/privilege_matrix.json", error_payload)
-            self._record(
-                step="build_ir",
-                path=contracts_path,
-                kind="ir",
-                status="executed_with_error",
-                summary="Failed to generate contract inventory from source.",
-            )
-            self._record(
-                step="build_ir",
-                path=functions_path,
-                kind="ir",
-                status="executed_with_error",
-                summary="Failed to generate function inventory from source.",
-            )
-            self._record(
-                step="build_ir",
-                path=privilege_path,
-                kind="ir",
-                status="executed_with_error",
-                summary="Failed to generate privilege matrix from source.",
-            )
-            return "ir_generation_failed"
-
-        contracts_path = self.workspace.write_json(
-            "ir/contracts.json", contracts_payload
-        )
-        functions_path = self.workspace.write_json(
-            "ir/functions.json", functions_payload
-        )
-        privilege_path = self.workspace.write_json(
-            "ir/privilege_matrix.json", privilege_payload
-        )
-        self._record(
-            step="build_ir",
-            path=contracts_path,
-            kind="ir",
-            status="executed",
-            summary="Generated a lightweight contract inventory from source text.",
-        )
-        self._record(
-            step="build_ir",
-            path=functions_path,
-            kind="ir",
-            status="executed",
-            summary="Generated a lightweight function inventory from source text.",
-        )
-        self._record(
-            step="build_ir",
-            path=privilege_path,
-            kind="ir",
-            status="executed",
-            summary="Generated a lightweight privilege matrix from source text.",
-        )
-        return "ir_generated"
-
     def run_dependency_analysis(self, address: str, chain: str) -> str:
         bundle_payload = self._load_source_bundle_payload()
         if not bundle_payload or bundle_payload.get("status") != "fetched":
@@ -579,9 +365,6 @@ class AuditPipelineService:
                     [
                         "artifacts/source_bundle.json",
                         "artifacts/dependency_findings.json",
-                        "ir/contracts.json",
-                        "ir/functions.json",
-                        "ir/privilege_matrix.json",
                     ]
                 ),
                 "optional_tool_artifacts": self._existing_paths(
@@ -660,20 +443,14 @@ class AuditPipelineService:
 
     def material_status_snapshot(self) -> Dict[str, str]:
         source_payload = self._read_json_if_exists("artifacts/source_bundle.json")
-        contracts_payload = self._read_json_if_exists("ir/contracts.json")
         dependency_payload = self._read_json_if_exists("artifacts/dependency_findings.json")
 
         source_status = str(source_payload.get("status") or "not_prepared")
         if source_status == "fetched":
             source_status = "source_fetched"
 
-        ir_status = str(contracts_payload.get("status") or "")
-        if not ir_status and contracts_payload.get("contracts") is not None:
-            ir_status = "ir_generated"
-
         return {
             "source_fetch_status": source_status,
-            "ir_status": ir_status or "not_prepared",
             "dependency_analysis_status": str(dependency_payload.get("status") or "not_prepared"),
         }
 
@@ -681,7 +458,10 @@ class AuditPipelineService:
         path = self.workspace.root / "artifacts" / "source_bundle.json"
         if not path.exists():
             return {}
-        return load_bundle_payload(path.read_text())
+        payload = parse_json_string(path.read_text())
+        if not isinstance(payload, dict):
+            raise ValueError("bundle payload must be a JSON object")
+        return payload
 
     def _read_json_if_exists(self, relative_path: str) -> Dict[str, Any]:
         path = self.workspace.root / relative_path

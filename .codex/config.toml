@@ -6,5 +6,5 @@ approval_policy = "never"
 network_access = true
 
 [shell_environment_policy]
-inherit = "core"
+inherit = "all"
 set = { UV_CACHE_DIR = "/tmp/uv-cache" }

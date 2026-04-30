@@ -9,16 +9,12 @@ description = "Codex-first smart contract audit workspace for EVM/Solidity."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "mcp[cli]>=1,<2",
   "pymongo>=4.8",
   "python-dotenv>=1.0.0",
 ]
 
 [project.scripts]
 agent-audit = "agent_audit.cli:main"
-agent-audit-mcp-pipeline = "agent_audit.mcp.pipeline:main"
-agent-audit-mcp-analyzer = "agent_audit.mcp.analyzer:main"
-agent-audit-mcp-chain = "agent_audit.mcp.chain:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_audit"]

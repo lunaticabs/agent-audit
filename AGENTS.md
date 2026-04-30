@@ -13,9 +13,8 @@ Suggested order:
 
 1. `$workspace`
 2. `$source-fetch`
-3. `$ir-builder`
-4. `$dependency-scan`
-5. `$aggregate-materials`
+3. `$dependency-scan`
+4. `$aggregate-materials`
 
 After that:
 

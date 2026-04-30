@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+from contextlib import contextmanager
+import fcntl
 import hashlib
 import json
 import secrets
@@ -8,7 +10,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 
 def _sanitize_token(value: str) -> str:
@@ -43,13 +45,18 @@ def generate_run_id(address: str, chain: str) -> str:
     return _run_id(address=address, chain=chain)
 
 
+@dataclass(frozen=True)
+class RunRequestContext:
+    address: str
+    chain: str
+
+
 @dataclass
 class RunWorkspace:
     project_root: Path
     root: Path
     run_id: str
     input_dir: Path
-    ir_dir: Path
     artifacts_dir: Path
     reports_dir: Path
     logs_dir: Path
@@ -65,12 +72,11 @@ class RunWorkspace:
         chain: str,
     ) -> "RunWorkspace":
         input_dir = root / "input"
-        ir_dir = root / "ir"
         artifacts_dir = root / "artifacts"
         reports_dir = root / "reports"
         logs_dir = root / "logs"
 
-        for directory in (input_dir, ir_dir, artifacts_dir, reports_dir, logs_dir):
+        for directory in (input_dir, artifacts_dir, reports_dir, logs_dir):
             directory.mkdir(parents=True, exist_ok=True)
 
         meta_path = root / "input" / "run_meta.json"
@@ -98,7 +104,6 @@ class RunWorkspace:
             root=root,
             run_id=run_id,
             input_dir=input_dir,
-            ir_dir=ir_dir,
             artifacts_dir=artifacts_dir,
             reports_dir=reports_dir,
             logs_dir=logs_dir,
@@ -130,12 +135,11 @@ class RunWorkspace:
             raise FileNotFoundError(f"run_id does not exist: {run_id}")
 
         input_dir = root / "input"
-        ir_dir = root / "ir"
         artifacts_dir = root / "artifacts"
         reports_dir = root / "reports"
         logs_dir = root / "logs"
 
-        for directory in (input_dir, ir_dir, artifacts_dir, reports_dir, logs_dir):
+        for directory in (input_dir, artifacts_dir, reports_dir, logs_dir):
             directory.mkdir(parents=True, exist_ok=True)
 
         return cls(
@@ -143,7 +147,6 @@ class RunWorkspace:
             root=root,
             run_id=run_id,
             input_dir=input_dir,
-            ir_dir=ir_dir,
             artifacts_dir=artifacts_dir,
             reports_dir=reports_dir,
             logs_dir=logs_dir,
@@ -167,3 +170,28 @@ class RunWorkspace:
 
     def relative(self, path: Path) -> str:
         return str(path.relative_to(self.root))
+
+
+def load_request_context(workspace: RunWorkspace) -> RunRequestContext:
+    request_path = workspace.root / "input" / "request.json"
+    if not request_path.exists():
+        raise FileNotFoundError(
+            f"missing request context for run_id {workspace.run_id}: {request_path}"
+        )
+    payload = json.loads(request_path.read_text())
+    return RunRequestContext(
+        address=str(payload.get("address") or ""),
+        chain=str(payload.get("chain") or ""),
+    )
+
+
+@contextmanager
+def run_lock(workspace: RunWorkspace) -> Iterator[None]:
+    lock_path = workspace.root / ".run.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
