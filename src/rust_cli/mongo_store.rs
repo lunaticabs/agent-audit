@@ -1,9 +1,9 @@
 use std::fs;
 
-use mongodb::Namespace;
 use mongodb::IndexModel;
+use mongodb::Namespace;
 use mongodb::bson::{self, Bson, DateTime as BsonDateTime, Document, doc};
-use mongodb::options::{UpdateModifications, UpdateOneModel, WriteModel, IndexOptions};
+use mongodb::options::{IndexOptions, UpdateModifications, UpdateOneModel, WriteModel};
 use mongodb::sync::{Client, Collection};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -64,7 +64,10 @@ pub fn sync_run_to_mongo(config: &AppConfig, workspace: &RunWorkspace) -> AppRes
         if is_json {
             match serde_json::from_slice::<Value>(&raw) {
                 Ok(value) => {
-                    doc.insert("content_json", bson::serialize_to_bson(&value).unwrap_or(Bson::Null));
+                    doc.insert(
+                        "content_json",
+                        bson::serialize_to_bson(&value).unwrap_or(Bson::Null),
+                    );
                 }
                 Err(_) => {
                     doc.insert("kind", "text");
@@ -96,7 +99,9 @@ pub fn sync_run_to_mongo(config: &AppConfig, workspace: &RunWorkspace) -> AppRes
                     UpdateOneModel::builder()
                         .namespace(namespace.clone())
                         .filter(doc! {"_id": file_doc.get_str("_id").unwrap_or_default()})
-                        .update(UpdateModifications::Document(doc! {"$set": file_doc.clone()}))
+                        .update(UpdateModifications::Document(
+                            doc! {"$set": file_doc.clone()},
+                        ))
                         .upsert(true)
                         .build(),
                 )
@@ -138,28 +143,56 @@ pub fn sync_run_to_mongo(config: &AppConfig, workspace: &RunWorkspace) -> AppRes
     })
 }
 
-fn create_indexes(meta_col: &Collection<Document>, files_col: &Collection<Document>) -> AppResult<()> {
+fn create_indexes(
+    meta_col: &Collection<Document>,
+    files_col: &Collection<Document>,
+) -> AppResult<()> {
     meta_col
         .create_index(IndexModel::builder().keys(doc! {"created_at": -1}).build())
         .run()?;
     meta_col
-        .create_index(IndexModel::builder().keys(doc! {"target.chain": 1, "target.address": 1, "created_at": -1}).build())
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! {"target.chain": 1, "target.address": 1, "created_at": -1})
+                .build(),
+        )
         .run()?;
     meta_col
-        .create_index(IndexModel::builder().keys(doc! {"target.address": 1, "created_at": -1}).build())
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! {"target.address": 1, "created_at": -1})
+                .build(),
+        )
         .run()?;
     meta_col
-        .create_index(IndexModel::builder().keys(doc! {"status": 1, "created_at": -1}).build())
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! {"status": 1, "created_at": -1})
+                .build(),
+        )
         .run()?;
     meta_col
-        .create_index(IndexModel::builder().keys(doc! {"has_final_report": 1, "created_at": -1}).build())
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! {"has_final_report": 1, "created_at": -1})
+                .build(),
+        )
         .run()?;
 
     files_col
-        .create_index(IndexModel::builder().keys(doc! {"run_id": 1, "rel_path": 1}).options(IndexOptions::builder().unique(Some(true)).build()).build())
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! {"run_id": 1, "rel_path": 1})
+                .options(IndexOptions::builder().unique(Some(true)).build())
+                .build(),
+        )
         .run()?;
     files_col
-        .create_index(IndexModel::builder().keys(doc! {"run_id": 1, "kind": 1}).build())
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! {"run_id": 1, "kind": 1})
+                .build(),
+        )
         .run()?;
     files_col
         .create_index(IndexModel::builder().keys(doc! {"sha256": 1}).build())
@@ -170,7 +203,9 @@ fn create_indexes(meta_col: &Collection<Document>, files_col: &Collection<Docume
 fn read_target(workspace: &RunWorkspace) -> AppResult<Bson> {
     let request_path = workspace.root.join("input/request.json");
     if !request_path.exists() {
-        return Ok(bson::serialize_to_bson(&serde_json::json!({"address": "", "chain": ""}))?);
+        return Ok(bson::serialize_to_bson(
+            &serde_json::json!({"address": "", "chain": ""}),
+        )?);
     }
     let text = fs::read_to_string(request_path)?;
     let payload: Value = serde_json::from_str(&text).unwrap_or_else(|_| serde_json::json!({}));
@@ -193,7 +228,9 @@ fn read_created_at(workspace: &RunWorkspace) -> std::time::SystemTime {
     };
     time::OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc3339)
         .ok()
-        .map(|ts| std::time::UNIX_EPOCH + std::time::Duration::from_secs(ts.unix_timestamp() as u64))
+        .map(|ts| {
+            std::time::UNIX_EPOCH + std::time::Duration::from_secs(ts.unix_timestamp() as u64)
+        })
         .unwrap_or_else(std::time::SystemTime::now)
 }
 

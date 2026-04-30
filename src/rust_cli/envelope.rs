@@ -20,6 +20,11 @@ pub fn step_envelope(command: &str, run_id: &str, payload: &Value) -> (Value, i3
         .unwrap_or_default();
 
     if matches!(status, "source_fetch_failed") {
+        let retry_command = if command == "init-run" {
+            format!("agent-audit fetch-source --run-id {run_id}")
+        } else {
+            format!("agent-audit {command} --run-id {run_id}")
+        };
         return (
             json!({
                 "ok": false,
@@ -30,7 +35,7 @@ pub fn step_envelope(command: &str, run_id: &str, payload: &Value) -> (Value, i3
                 "payload": payload,
                 "next_action": {
                     "type": "retry_same_command",
-                    "command": format!("agent-audit {command} --run-id {run_id}"),
+                    "command": retry_command,
                     "retry_after_sec": 5,
                     "max_retries": 3,
                 },
@@ -41,7 +46,7 @@ pub fn step_envelope(command: &str, run_id: &str, payload: &Value) -> (Value, i3
 
     if matches!(status, "source_not_fetched" | "source_files_missing") {
         let prerequisite = match command {
-            "run-dependency" | "prepare-slither" => "fetch-source",
+            "run-dependency" | "prepare-slither" | "prepare-tooling" => "fetch-source",
             _ => "init-run",
         };
         let next_command = if prerequisite == "init-run" {
@@ -104,7 +109,11 @@ pub fn step_envelope(command: &str, run_id: &str, payload: &Value) -> (Value, i3
     )
 }
 
-pub fn error_envelope(command: Option<&str>, run_id: &str, error: &super::errors::AppError) -> (Value, i32) {
+pub fn error_envelope(
+    command: Option<&str>,
+    run_id: &str,
+    error: &super::errors::AppError,
+) -> (Value, i32) {
     use super::errors::AppError;
 
     match error {

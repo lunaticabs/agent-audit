@@ -42,7 +42,9 @@ pub fn fetch_verified_source(
         }
     }
 
-    let client = Client::builder().timeout(std::time::Duration::from_secs(30)).build()?;
+    let client = Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()?;
     let mut request = client.get(url).header("Accept", "application/json");
     for (key, value) in headers {
         request = request.header(key, value);
@@ -59,8 +61,14 @@ pub fn fetch_verified_source(
     }
 
     let payload: Value = serde_json::from_str(&text)?;
-    let status = payload.get("status").and_then(Value::as_str).unwrap_or_default();
-    let message = payload.get("message").and_then(Value::as_str).unwrap_or_default();
+    let status = payload
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let message = payload
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     let result = payload.get("result").and_then(Value::as_array);
     let Some(result) = result else {
         return Err(msg(format!(
@@ -166,7 +174,9 @@ fn normalize_api_endpoint(base_url: &str) -> AppResult<String> {
     Ok(url.to_string().trim_end_matches('/').to_string())
 }
 
-fn parse_source_code_result(result: &Map<String, Value>) -> AppResult<(Vec<SourceFile>, String, Value)> {
+fn parse_source_code_result(
+    result: &Map<String, Value>,
+) -> AppResult<(Vec<SourceFile>, String, Value)> {
     let raw_source = string_field(result, "SourceCode");
     let contract_name = {
         let name = string_field(result, "ContractName");
@@ -262,7 +272,11 @@ fn sanitize_source_path(raw_path: &str) -> String {
 }
 
 fn string_field(object: &Map<String, Value>, key: &str) -> String {
-    object.get(key).and_then(Value::as_str).unwrap_or_default().to_string()
+    object
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
 }
 
 fn truncate_chars(text: &str, limit: usize) -> String {

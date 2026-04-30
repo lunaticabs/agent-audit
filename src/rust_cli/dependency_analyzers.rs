@@ -20,7 +20,11 @@ pub fn analyze_dependencies(bundle_payload: &Value, workspace_root: &Path) -> Ve
         }
     }
     if !verifier_records.is_empty() {
-        findings.extend(analyze_verifier_group(bundle_payload, &verifier_records, workspace_root));
+        findings.extend(analyze_verifier_group(
+            bundle_payload,
+            &verifier_records,
+            workspace_root,
+        ));
     }
     findings
 }
@@ -35,7 +39,11 @@ fn analyze_dependency_record(record: &Value, workspace_root: &Path) -> Vec<Value
     findings
 }
 
-fn analyze_verifier_group(bundle_payload: &Value, records: &[Value], workspace_root: &Path) -> Vec<Value> {
+fn analyze_verifier_group(
+    bundle_payload: &Value,
+    records: &[Value],
+    workspace_root: &Path,
+) -> Vec<Value> {
     let mut findings = Vec::new();
     let expected_arities = extract_expected_verifier_arities(bundle_payload, workspace_root);
     let mut gamma_delta_hits = Vec::new();
@@ -99,27 +107,31 @@ fn analyze_single_verifier_record(
     findings
 }
 
-fn analyze_verifier_source_file(record: &Value, relative_path: &str, source_text: &str) -> Vec<Value> {
+fn analyze_verifier_source_file(
+    record: &Value,
+    relative_path: &str,
+    source_text: &str,
+) -> Vec<Value> {
     let mut findings = Vec::new();
     let constants = extract_uint_constants(source_text);
-    let gamma = [
-        "gammax1",
-        "gammax2",
-        "gammay1",
-        "gammay2",
-    ]
-    .iter()
-    .map(|name| constants.get(*name).map(|(value, _)| value.clone()).unwrap_or_default())
-    .collect::<Vec<_>>();
-    let delta = [
-        "deltax1",
-        "deltax2",
-        "deltay1",
-        "deltay2",
-    ]
-    .iter()
-    .map(|name| constants.get(*name).map(|(value, _)| value.clone()).unwrap_or_default())
-    .collect::<Vec<_>>();
+    let gamma = ["gammax1", "gammax2", "gammay1", "gammay2"]
+        .iter()
+        .map(|name| {
+            constants
+                .get(*name)
+                .map(|(value, _)| value.clone())
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>();
+    let delta = ["deltax1", "deltax2", "deltay1", "deltay2"]
+        .iter()
+        .map(|name| {
+            constants
+                .get(*name)
+                .map(|(value, _)| value.clone())
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>();
     if gamma.iter().all(|value| !value.is_empty()) && gamma == delta {
         let location_line = constants.get("gammax1").map(|(_, line)| *line).unwrap_or(1);
         findings.push(json!({
@@ -141,7 +153,11 @@ fn analyze_verifier_source_file(record: &Value, relative_path: &str, source_text
 fn group_gamma_delta_findings(findings: &[Value]) -> Value {
     let affected = findings
         .iter()
-        .filter_map(|item| item.get("location").and_then(Value::as_str).map(ToOwned::to_owned))
+        .filter_map(|item| {
+            item.get("location")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
         .collect::<Vec<_>>();
     let mut evidence = Vec::new();
     for item in findings {
@@ -155,7 +171,12 @@ fn group_gamma_delta_findings(findings: &[Value]) -> Value {
             }
         }
     }
-    let mut preview = affected.iter().take(4).cloned().collect::<Vec<_>>().join("; ");
+    let mut preview = affected
+        .iter()
+        .take(4)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("; ");
     if affected.len() > 4 {
         preview.push_str(&format!("; and {} more", affected.len() - 4));
     }
@@ -179,9 +200,15 @@ fn extract_uint_constants(source_text: &str) -> BTreeMap<String, (String, usize)
     for (index, line) in source_text.lines().enumerate() {
         if let Some(capture) = pattern.captures(line) {
             constants.insert(
-                capture.get(1).map(|m| m.as_str().to_lowercase()).unwrap_or_default(),
+                capture
+                    .get(1)
+                    .map(|m| m.as_str().to_lowercase())
+                    .unwrap_or_default(),
                 (
-                    capture.get(2).map(|m| m.as_str().to_lowercase()).unwrap_or_default(),
+                    capture
+                        .get(2)
+                        .map(|m| m.as_str().to_lowercase())
+                        .unwrap_or_default(),
                     index + 1,
                 ),
             );
@@ -190,7 +217,10 @@ fn extract_uint_constants(source_text: &str) -> BTreeMap<String, (String, usize)
     constants
 }
 
-fn extract_expected_verifier_arities(bundle_payload: &Value, workspace_root: &Path) -> BTreeMap<String, usize> {
+fn extract_expected_verifier_arities(
+    bundle_payload: &Value,
+    workspace_root: &Path,
+) -> BTreeMap<String, usize> {
     let pattern = Regex::new(
         r"interface\s+([A-Za-z_]\w*)\s*\{[^}]*?function\s+verifyProof\s*\([^)]*uint\[(\d+)\]\s+calldata\s+_pubSignals",
     )
@@ -212,7 +242,10 @@ fn extract_expected_verifier_arities(bundle_payload: &Value, workspace_root: &Pa
                 let Some(name) = capture.get(1).map(|m| m.as_str().to_string()) else {
                     continue;
                 };
-                let Some(arity) = capture.get(2).and_then(|m| m.as_str().parse::<usize>().ok()) else {
+                let Some(arity) = capture
+                    .get(2)
+                    .and_then(|m| m.as_str().parse::<usize>().ok())
+                else {
                     continue;
                 };
                 expected.insert(name, arity);
@@ -232,12 +265,17 @@ fn verifier_abi_pubsignal_arity(record: &Value) -> Option<usize> {
         let inputs = item.get("inputs")?.as_array()?;
         for arg in inputs {
             let name = arg.get("name").and_then(Value::as_str).unwrap_or_default();
-            let internal_type = arg.get("internalType").and_then(Value::as_str).unwrap_or_default();
+            let internal_type = arg
+                .get("internalType")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             if name != "_pubSignals" && !internal_type.contains("pubSignals") {
                 continue;
             }
             if let Some(capture) = pattern.captures(internal_type) {
-                return capture.get(1).and_then(|m| m.as_str().parse::<usize>().ok());
+                return capture
+                    .get(1)
+                    .and_then(|m| m.as_str().parse::<usize>().ok());
             }
         }
     }

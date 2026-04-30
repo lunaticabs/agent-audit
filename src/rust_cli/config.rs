@@ -32,13 +32,15 @@ impl AppConfig {
         Ok(Self {
             project_root: project_root.clone(),
             runs_dir: project_root.join(runs_dir),
-            default_chain: env::var("AGENT_AUDIT_DEFAULT_CHAIN").unwrap_or_else(|_| "eth".to_string()),
+            default_chain: env::var("AGENT_AUDIT_DEFAULT_CHAIN")
+                .unwrap_or_else(|_| "eth".to_string()),
             source_api_base: env_optional("AGENT_AUDIT_SOURCE_API_BASE"),
             source_api_key: env_optional("AGENT_AUDIT_SOURCE_API_KEY"),
             source_api_headers: env_json_dict("AGENT_AUDIT_SOURCE_HEADERS_JSON")?,
             rpc_url: env_optional("AGENT_AUDIT_RPC_URL"),
             mongo_uri: env_optional("AGENT_AUDIT_MONGO_URI"),
-            mongo_db: env::var("AGENT_AUDIT_MONGO_DB").unwrap_or_else(|_| "agent_audit".to_string()),
+            mongo_db: env::var("AGENT_AUDIT_MONGO_DB")
+                .unwrap_or_else(|_| "agent_audit".to_string()),
             mongo_runs_meta_collection: env::var("AGENT_AUDIT_MONGO_RUNS_META_COLLECTION")
                 .unwrap_or_else(|_| "runs_meta".to_string()),
             mongo_runs_files_collection: env::var("AGENT_AUDIT_MONGO_RUNS_FILES_COLLECTION")
@@ -78,7 +80,10 @@ fn env_json_dict(name: &str) -> AppResult<BTreeMap<String, String>> {
     for (key, value) in object {
         result.insert(
             key.clone(),
-            value.as_str().map(ToOwned::to_owned).unwrap_or_else(|| value.to_string()),
+            value
+                .as_str()
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| value.to_string()),
         );
     }
     Ok(result)

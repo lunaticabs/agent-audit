@@ -11,7 +11,9 @@ use super::dependency_analyzers::analyze_dependencies;
 use super::dependency_discovery::discover_dependencies;
 use super::errors::AppResult;
 use super::schemas::ArtifactRecord;
-use super::source_fetch::{extract_semver, fetch_verified_source, merge_unique_lists, sanitize_dependency_name};
+use super::source_fetch::{
+    extract_semver, fetch_verified_source, merge_unique_lists, sanitize_dependency_name,
+};
 use super::workspace::RunWorkspace;
 
 pub struct AuditPipelineService {
@@ -39,7 +41,9 @@ impl AuditPipelineService {
             "source_api_header_names": self.config.source_api_headers.keys().cloned().collect::<Vec<_>>(),
             "rpc_url_configured": self.config.rpc_url.is_some(),
         });
-        let request_path = self.workspace.write_json("input/source_request.json", &request_payload)?;
+        let request_path = self
+            .workspace
+            .write_json("input/source_request.json", &request_payload)?;
 
         let Some(base_url) = self.config.source_api_base.clone() else {
             let bundle_path = self.workspace.write_json(
@@ -52,8 +56,20 @@ impl AuditPipelineService {
                     "note": "Configure AGENT_AUDIT_SOURCE_API_BASE to enable verified source fetching.",
                 }),
             )?;
-            self.record("fetch_contract_source", &request_path, "request", "configured_not_executed", "Persisted source fetch request metadata.");
-            self.record("fetch_contract_source", &bundle_path, "artifact", "configured_not_executed", "Skipped source fetch because the source API is not configured.");
+            self.record(
+                "fetch_contract_source",
+                &request_path,
+                "request",
+                "configured_not_executed",
+                "Persisted source fetch request metadata.",
+            );
+            self.record(
+                "fetch_contract_source",
+                &bundle_path,
+                "artifact",
+                "configured_not_executed",
+                "Skipped source fetch because the source API is not configured.",
+            );
             return Ok("source_api_not_configured".to_string());
         };
 
@@ -77,8 +93,20 @@ impl AuditPipelineService {
                         "error_debug": format!("{error:?}"),
                     }),
                 )?;
-                self.record("fetch_contract_source", &request_path, "request", "executed_with_error", "Persisted source fetch request metadata.");
-                self.record("fetch_contract_source", &bundle_path, "artifact", "executed_with_error", "Source fetch failed; inspect the stored error payload.");
+                self.record(
+                    "fetch_contract_source",
+                    &request_path,
+                    "request",
+                    "executed_with_error",
+                    "Persisted source fetch request metadata.",
+                );
+                self.record(
+                    "fetch_contract_source",
+                    &bundle_path,
+                    "artifact",
+                    "executed_with_error",
+                    "Source fetch failed; inspect the stored error payload.",
+                );
                 return Ok("source_fetch_failed".to_string());
             }
         };
@@ -100,7 +128,8 @@ impl AuditPipelineService {
             "artifacts/source_provider_response.json",
             &bundle.provider_payload,
         )?;
-        let primary_sources = self.write_fetched_source_files(&bundle.files, "", "Stored a fetched source file.")?;
+        let primary_sources =
+            self.write_fetched_source_files(&bundle.files, "", "Stored a fetched source file.")?;
 
         let mut related_contracts = Vec::new();
         if proxy_contract.get("proxy").and_then(Value::as_bool) == Some(true)
@@ -121,12 +150,14 @@ impl AuditPipelineService {
             if let Some(relative_path) = item.get("path").and_then(Value::as_str) {
                 let file_path = self.workspace.root.join("sources").join(relative_path);
                 if file_path.exists() {
-                    source_map_for_discovery.insert(relative_path.to_string(), fs::read_to_string(file_path)?);
+                    source_map_for_discovery
+                        .insert(relative_path.to_string(), fs::read_to_string(file_path)?);
                 }
             }
         }
 
-        let dependency_discovery = discover_dependencies(&bundle.normalized_payload, &source_map_for_discovery);
+        let dependency_discovery =
+            discover_dependencies(&bundle.normalized_payload, &source_map_for_discovery);
         let dependencies = self.fetch_discovered_dependencies(
             dependency_discovery
                 .get("merged_candidates")
@@ -149,7 +180,11 @@ impl AuditPipelineService {
             &related_contracts,
         );
 
-        let mut bundle_payload = bundle.normalized_payload.as_object().cloned().unwrap_or_default();
+        let mut bundle_payload = bundle
+            .normalized_payload
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
         bundle_payload.insert("status".to_string(), Value::String("fetched".to_string()));
         bundle_payload.insert(
             "proxy_resolution".to_string(),
@@ -161,7 +196,10 @@ impl AuditPipelineService {
         );
         bundle_payload.insert("dependency_discovery".to_string(), dependency_discovery);
         bundle_payload.insert("dependencies".to_string(), Value::Array(dependencies));
-        bundle_payload.insert("related_contracts".to_string(), Value::Array(related_contracts));
+        bundle_payload.insert(
+            "related_contracts".to_string(),
+            Value::Array(related_contracts),
+        );
         bundle_payload.insert("analysis_target".to_string(), analysis_target);
 
         let bundle_path = self.workspace.write_json(
@@ -169,9 +207,27 @@ impl AuditPipelineService {
             &Value::Object(bundle_payload),
         )?;
 
-        self.record("fetch_contract_source", &request_path, "request", "executed", "Persisted source fetch request metadata.");
-        self.record("fetch_contract_source", &raw_response_path, "artifact", "executed", "Stored the raw source provider response.");
-        self.record("fetch_contract_source", &bundle_path, "artifact", "executed", "Fetched and normalized verified source metadata.");
+        self.record(
+            "fetch_contract_source",
+            &request_path,
+            "request",
+            "executed",
+            "Persisted source fetch request metadata.",
+        );
+        self.record(
+            "fetch_contract_source",
+            &raw_response_path,
+            "artifact",
+            "executed",
+            "Stored the raw source provider response.",
+        );
+        self.record(
+            "fetch_contract_source",
+            &bundle_path,
+            "artifact",
+            "executed",
+            "Fetched and normalized verified source metadata.",
+        );
         Ok("source_fetched".to_string())
     }
 
@@ -186,7 +242,13 @@ impl AuditPipelineService {
                     "findings": [],
                 }),
             )?;
-            self.record("run_dependency_analysis", &findings_path, "artifact", "configured_not_executed", "Skipped dependency analysis because source fetching did not complete.");
+            self.record(
+                "run_dependency_analysis",
+                &findings_path,
+                "artifact",
+                "configured_not_executed",
+                "Skipped dependency analysis because source fetching did not complete.",
+            );
             return Ok("source_not_fetched".to_string());
         }
 
@@ -200,7 +262,13 @@ impl AuditPipelineService {
                 "findings": findings,
             }),
         )?;
-        self.record("run_dependency_analysis", &findings_path, "artifact", status, "Analyzed fetched dependencies for high-signal role-specific findings.");
+        self.record(
+            "run_dependency_analysis",
+            &findings_path,
+            "artifact",
+            status,
+            "Analyzed fetched dependencies for high-signal role-specific findings.",
+        );
         Ok(status.to_string())
     }
 
@@ -218,7 +286,13 @@ impl AuditPipelineService {
                     "note": "Fetch verified source before preparing a Slither project.",
                 }),
             )?;
-            self.record("prepare_slither_project", &manifest_path, "prep", "configured_not_executed", "Skipped Slither project preparation because source fetching did not complete.");
+            self.record(
+                "prepare_slither_project",
+                &manifest_path,
+                "prep",
+                "configured_not_executed",
+                "Skipped Slither project preparation because source fetching did not complete.",
+            );
             return Ok("source_not_fetched".to_string());
         }
 
@@ -234,30 +308,52 @@ impl AuditPipelineService {
                     "note": "Source bundle exists but sources/ is missing.",
                 }),
             )?;
-            self.record("prepare_slither_project", &manifest_path, "prep", "executed_with_error", "Failed Slither project preparation because source files are missing.");
+            self.record(
+                "prepare_slither_project",
+                &manifest_path,
+                "prep",
+                "executed_with_error",
+                "Failed Slither project preparation because source files are missing.",
+            );
             return Ok("source_files_missing".to_string());
         }
 
         recreate_dir(&slither_root)?;
         let linked_entries = self.link_slither_source_entries(&sources_root, &slither_root)?;
-        let node_modules_links = self.create_slither_node_modules(&sources_root.join("npm"), &slither_root.join("node_modules"))?;
+        let node_modules_links = self.create_slither_node_modules(
+            &sources_root.join("npm"),
+            &slither_root.join("node_modules"),
+        )?;
         let mut analysis_target = analysis_target_payload(&bundle_payload);
         let preferred_settings = slither_target_settings(
             &self.workspace,
             &bundle_payload,
             &linked_entries,
             &node_modules_links,
-            analysis_target.get("path").and_then(Value::as_str).unwrap_or_default(),
+            analysis_target
+                .get("path")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
         );
 
         if let Some(object) = analysis_target.as_object_mut() {
-            object.insert("prepared_path".to_string(), Value::String(preferred_settings.prepared_target.clone()));
-            object.insert("prepared_root".to_string(), Value::String(preferred_settings.prepared_root.clone()));
+            object.insert(
+                "prepared_path".to_string(),
+                Value::String(preferred_settings.prepared_target.clone()),
+            );
+            object.insert(
+                "prepared_root".to_string(),
+                Value::String(preferred_settings.prepared_root.clone()),
+            );
         }
 
         let remappings_path = self.workspace.write_text(
             "slither_project/remappings.txt",
-            &preferred_settings.remappings.iter().map(|entry| format!("{entry}\n")).collect::<String>(),
+            &preferred_settings
+                .remappings
+                .iter()
+                .map(|entry| format!("{entry}\n"))
+                .collect::<String>(),
         )?;
         let config_path = self.workspace.write_json(
             "slither_project/slither_inputs.json",
@@ -295,10 +391,80 @@ impl AuditPipelineService {
             }),
         )?;
 
-        self.record("prepare_slither_project", &remappings_path, "prep", "executed", "Prepared Slither remappings.");
-        self.record("prepare_slither_project", &config_path, "prep", "executed", "Prepared Slither config metadata.");
-        self.record("prepare_slither_project", &manifest_path, "prep", "executed", "Prepared a deterministic Slither project manifest.");
+        self.record(
+            "prepare_slither_project",
+            &remappings_path,
+            "prep",
+            "executed",
+            "Prepared Slither remappings.",
+        );
+        self.record(
+            "prepare_slither_project",
+            &config_path,
+            "prep",
+            "executed",
+            "Prepared Slither config metadata.",
+        );
+        self.record(
+            "prepare_slither_project",
+            &manifest_path,
+            "prep",
+            "executed",
+            "Prepared a deterministic Slither project manifest.",
+        );
         Ok("prepared".to_string())
+    }
+
+    pub fn prepare_tooling_workspaces(&mut self, address: &str, chain: &str) -> AppResult<String> {
+        let bundle_payload = self.load_source_bundle_payload()?;
+        let source_status = bundle_payload
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("source_not_fetched")
+            .to_string();
+        let slither_status = self.prepare_slither_project(address, chain)?;
+        let foundry_status = self.prepare_foundry_project(address, chain, &bundle_payload)?;
+        let echidna_status = self.prepare_echidna_project(address, chain, &bundle_payload)?;
+        let status = if source_status == "fetched"
+            && slither_status == "prepared"
+            && foundry_status == "prepared"
+            && echidna_status == "prepared"
+        {
+            "prepared".to_string()
+        } else {
+            source_status.clone()
+        };
+        let manifest_path = self.workspace.write_json(
+            "artifacts/tooling_manifest.json",
+            &json!({
+                "target": {"address": address, "chain": chain},
+                "run_id": self.workspace.run_id,
+                "status": status,
+                "source_fetch_status": source_status,
+                "workspaces": {
+                    "slither": {
+                        "status": slither_status,
+                        "manifest_path": "slither_project/build_manifest.json",
+                    },
+                    "foundry": {
+                        "status": foundry_status,
+                        "manifest_path": "foundry_project/build_manifest.json",
+                    },
+                    "echidna": {
+                        "status": echidna_status,
+                        "manifest_path": "echidna_project/build_manifest.json",
+                    }
+                }
+            }),
+        )?;
+        self.record(
+            "prepare_tooling_workspaces",
+            &manifest_path,
+            "prep",
+            &status,
+            "Prepared standard working directories for supported analysis tools.",
+        );
+        Ok(status)
     }
 
     pub fn aggregate_materials(&mut self, address: &str, chain: &str) -> AppResult<String> {
@@ -311,11 +477,29 @@ impl AuditPipelineService {
             "artifacts/slither_raw.json",
             "artifacts/static_findings.json",
             "artifacts/analyzer_index.json",
+            "artifacts/tooling_manifest.json",
             "slither_project/build_manifest.json",
             "slither_project/remappings.txt",
             "slither_project/slither_inputs.json",
+            "foundry_project/build_manifest.json",
+            "foundry_project/foundry.toml",
+            "foundry_project/remappings.txt",
+            "echidna_project/build_manifest.json",
+            "echidna_project/echidna.yaml",
         ]);
-        optional_tool_artifacts.extend(self.existing_tree(&["artifacts/analyzer", "artifacts/chain"])?);
+        optional_tool_artifacts.extend(self.existing_tree(&[
+            "artifacts/analyzer",
+            "artifacts/chain",
+            "foundry_project/src",
+            "foundry_project/test",
+            "foundry_project/script",
+            "foundry_project/lib",
+            "foundry_project/node_modules",
+            "echidna_project/src",
+            "echidna_project/test",
+            "echidna_project/lib",
+            "echidna_project/node_modules",
+        ])?);
         let manifest_path = self.workspace.write_json(
             "reports/materials_manifest.json",
             &json!({
@@ -334,13 +518,25 @@ impl AuditPipelineService {
                 ],
             }),
         )?;
-        self.record("aggregate_materials", &manifest_path, "report", "executed", "Stored a neutral manifest of prepared review materials.");
+        self.record(
+            "aggregate_materials",
+            &manifest_path,
+            "report",
+            "executed",
+            "Stored a neutral manifest of prepared review materials.",
+        );
         Ok(manifest_path)
     }
 
     pub fn material_status_snapshot(&self) -> AppResult<Value> {
-        let source_payload = read_json_if_exists(&self.workspace.root.join("artifacts/source_bundle.json"))?;
-        let dependency_payload = read_json_if_exists(&self.workspace.root.join("artifacts/dependency_findings.json"))?;
+        let source_payload =
+            read_json_if_exists(&self.workspace.root.join("artifacts/source_bundle.json"))?;
+        let dependency_payload = read_json_if_exists(
+            &self
+                .workspace
+                .root
+                .join("artifacts/dependency_findings.json"),
+        )?;
         let mut source_status = source_payload
             .get("status")
             .and_then(Value::as_str)
@@ -369,10 +565,13 @@ impl AuditPipelineService {
     }
 
     pub fn write_artifact_index(&self) -> AppResult<String> {
-        self.workspace.write_json("artifacts/artifact_index.json", &json!({
-            "run_id": self.workspace.run_id,
-            "artifacts": self.artifacts,
-        }))
+        self.workspace.write_json(
+            "artifacts/artifact_index.json",
+            &json!({
+                "run_id": self.workspace.run_id,
+                "artifacts": self.artifacts,
+            }),
+        )
     }
 
     fn record(&mut self, step: &str, path: &str, kind: &str, status: &str, summary: &str) {
@@ -400,13 +599,20 @@ impl AuditPipelineService {
             } else {
                 format!("{prefix}/{}", source_file.path)
             };
-            self.workspace.write_text(&format!("sources/{final_path}"), &source_file.content)?;
+            self.workspace
+                .write_text(&format!("sources/{final_path}"), &source_file.content)?;
             written.push(json!({
                 "path": final_path,
                 "length": source_file.content.len(),
                 "original_path": source_file.path,
             }));
-            self.record("fetch_contract_source", &format!("sources/{final_path}"), "source", "executed", summary_prefix);
+            self.record(
+                "fetch_contract_source",
+                &format!("sources/{final_path}"),
+                "source",
+                "executed",
+                summary_prefix,
+            );
         }
         Ok(written)
     }
@@ -449,10 +655,17 @@ impl AuditPipelineService {
         };
 
         let response_artifact = self.workspace.write_json(
-            &format!("artifacts/source_provider_response_{}.json", prefix.replace('/', "_")),
+            &format!(
+                "artifacts/source_provider_response_{}.json",
+                prefix.replace('/', "_")
+            ),
             &bundle.provider_payload,
         )?;
-        let written_files = self.write_fetched_source_files(&bundle.files, prefix, "Stored a fetched dependency source file.")?;
+        let written_files = self.write_fetched_source_files(
+            &bundle.files,
+            prefix,
+            "Stored a fetched dependency source file.",
+        )?;
 
         let mut record = json!({
             "role": role,
@@ -469,9 +682,20 @@ impl AuditPipelineService {
             "status": "fetched",
             "related_contracts": [],
         });
-        self.record("fetch_contract_source", &response_artifact, "artifact", "executed", "Stored the raw dependency provider response.");
+        self.record(
+            "fetch_contract_source",
+            &response_artifact,
+            "artifact",
+            "executed",
+            "Stored the raw dependency provider response.",
+        );
 
-        let contract = bundle.normalized_payload.get("contract").and_then(Value::as_object).cloned().unwrap_or_default();
+        let contract = bundle
+            .normalized_payload
+            .get("contract")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
         let implementation_address = contract
             .get("implementation")
             .and_then(Value::as_str)
@@ -489,7 +713,10 @@ impl AuditPipelineService {
                 &format!("{name}-implementation"),
                 &format!("{prefix}/implementation"),
             )?;
-            if let Some(array) = record.get_mut("related_contracts").and_then(Value::as_array_mut) {
+            if let Some(array) = record
+                .get_mut("related_contracts")
+                .and_then(Value::as_array_mut)
+            {
                 array.push(nested);
             }
         }
@@ -508,18 +735,30 @@ impl AuditPipelineService {
         seen.insert(target_address.to_lowercase());
         seen.extend(skip_addresses);
         for item in candidates {
-            let Some(address) = item.get("address").and_then(Value::as_str).map(|s| s.to_lowercase()) else {
+            let Some(address) = item
+                .get("address")
+                .and_then(Value::as_str)
+                .map(|s| s.to_lowercase())
+            else {
                 continue;
             };
             if address.is_empty() || seen.contains(&address) {
                 continue;
             }
             seen.insert(address.clone());
-            let role = item.get("role").and_then(Value::as_str).unwrap_or("dependency");
-            let name = item.get("name").and_then(Value::as_str).filter(|s| !s.is_empty()).unwrap_or(role);
+            let role = item
+                .get("role")
+                .and_then(Value::as_str)
+                .unwrap_or("dependency");
+            let name = item
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(role);
             let safe_name = sanitize_dependency_name(name);
             let prefix = format!("dependencies/{role}/{safe_name}_{address}");
-            let mut record = self.fetch_dependency_bundle_record(&address, chain, role, name, &prefix)?;
+            let mut record =
+                self.fetch_dependency_bundle_record(&address, chain, role, name, &prefix)?;
             if let Some(object) = record.as_object_mut() {
                 object.insert(
                     "discovery".to_string(),
@@ -536,7 +775,11 @@ impl AuditPipelineService {
         Ok(records)
     }
 
-    fn link_slither_source_entries(&self, sources_root: &Path, slither_root: &Path) -> AppResult<Vec<Value>> {
+    fn link_slither_source_entries(
+        &self,
+        sources_root: &Path,
+        slither_root: &Path,
+    ) -> AppResult<Vec<Value>> {
         let mut linked = Vec::new();
         let mut entries = fs::read_dir(sources_root)?.collect::<Result<Vec<_>, _>>()?;
         entries.sort_by_key(|entry| entry.file_name());
@@ -554,7 +797,11 @@ impl AuditPipelineService {
         Ok(linked)
     }
 
-    fn create_slither_node_modules(&self, npm_root: &Path, node_modules_root: &Path) -> AppResult<Vec<Value>> {
+    fn create_slither_node_modules(
+        &self,
+        npm_root: &Path,
+        node_modules_root: &Path,
+    ) -> AppResult<Vec<Value>> {
         let mut links = Vec::new();
         if !npm_root.exists() {
             return Ok(links);
@@ -599,6 +846,298 @@ impl AuditPipelineService {
             }
         }
         Ok(links)
+    }
+
+    fn prepare_foundry_project(
+        &mut self,
+        address: &str,
+        chain: &str,
+        bundle_payload: &Value,
+    ) -> AppResult<String> {
+        let foundry_root = self.workspace.root.join("foundry_project");
+        if bundle_payload.get("status").and_then(Value::as_str) != Some("fetched") {
+            recreate_dir(&foundry_root)?;
+            let manifest_path = self.workspace.write_json(
+                "foundry_project/build_manifest.json",
+                &json!({
+                    "target": {"address": address, "chain": chain},
+                    "run_id": self.workspace.run_id,
+                    "status": "source_not_fetched",
+                    "note": "Fetch verified source before preparing a Foundry project.",
+                }),
+            )?;
+            self.record(
+                "prepare_foundry_project",
+                &manifest_path,
+                "prep",
+                "configured_not_executed",
+                "Skipped Foundry project preparation because source fetching did not complete.",
+            );
+            return Ok("source_not_fetched".to_string());
+        }
+
+        let sources_root = self.workspace.root.join("sources");
+        if !sources_root.exists() {
+            recreate_dir(&foundry_root)?;
+            let manifest_path = self.workspace.write_json(
+                "foundry_project/build_manifest.json",
+                &json!({
+                    "target": {"address": address, "chain": chain},
+                    "run_id": self.workspace.run_id,
+                    "status": "source_files_missing",
+                    "note": "Source bundle exists but sources/ is missing.",
+                }),
+            )?;
+            self.record(
+                "prepare_foundry_project",
+                &manifest_path,
+                "prep",
+                "executed_with_error",
+                "Failed Foundry project preparation because source files are missing.",
+            );
+            return Ok("source_files_missing".to_string());
+        }
+
+        let settings = tool_project_settings(bundle_payload);
+        recreate_dir(&foundry_root)?;
+        let source_links = self.link_tool_project_sources(
+            &sources_root,
+            &foundry_root.join("src"),
+            Some(&settings.source_root),
+        )?;
+        let node_modules_links = self.create_slither_node_modules(
+            &sources_root.join("npm"),
+            &foundry_root.join("node_modules"),
+        )?;
+        let remappings = merge_unique_lists(&[
+            settings.remappings.clone(),
+            node_modules_remappings(&node_modules_links),
+        ]);
+        let remappings_path = self.workspace.write_text(
+            "foundry_project/remappings.txt",
+            &render_line_list(&remappings),
+        )?;
+        self.workspace
+            .write_text("foundry_project/test/.gitkeep", "")?;
+        self.workspace
+            .write_text("foundry_project/script/.gitkeep", "")?;
+        self.workspace
+            .write_text("foundry_project/lib/.gitkeep", "")?;
+        let foundry_toml_path = self.workspace.write_text(
+            "foundry_project/foundry.toml",
+            &render_foundry_toml(&settings, &remappings),
+        )?;
+        let manifest_path = self.workspace.write_json(
+            "foundry_project/build_manifest.json",
+            &json!({
+                "target": {"address": address, "chain": chain},
+                "run_id": self.workspace.run_id,
+                "status": "prepared",
+                "project_root": "foundry_project",
+                "analysis_target": analysis_target_payload(bundle_payload),
+                "source_links": source_links,
+                "node_modules_links": node_modules_links,
+                "compiler_version": settings.compiler_version,
+                "solc_version": settings.solc_version,
+                "optimizer_enabled": settings.optimizer_enabled,
+                "optimizer_runs": settings.optimizer_runs,
+                "evm_version": settings.evm_version,
+                "remappings": remappings,
+                "remappings_path": remappings_path,
+                "foundry_toml_path": foundry_toml_path,
+                "preferred_working_dir": "foundry_project",
+                "preferred_target": settings.prepared_target,
+                "preferred_source_root": settings.source_root,
+                "test_dir": "foundry_project/test",
+                "script_dir": "foundry_project/script",
+            }),
+        )?;
+        self.record(
+            "prepare_foundry_project",
+            &remappings_path,
+            "prep",
+            "executed",
+            "Prepared Foundry remappings.",
+        );
+        self.record(
+            "prepare_foundry_project",
+            &foundry_toml_path,
+            "prep",
+            "executed",
+            "Prepared a deterministic Foundry config.",
+        );
+        self.record(
+            "prepare_foundry_project",
+            &manifest_path,
+            "prep",
+            "executed",
+            "Prepared a deterministic Foundry project manifest.",
+        );
+        Ok("prepared".to_string())
+    }
+
+    fn prepare_echidna_project(
+        &mut self,
+        address: &str,
+        chain: &str,
+        bundle_payload: &Value,
+    ) -> AppResult<String> {
+        let echidna_root = self.workspace.root.join("echidna_project");
+        if bundle_payload.get("status").and_then(Value::as_str) != Some("fetched") {
+            recreate_dir(&echidna_root)?;
+            let manifest_path = self.workspace.write_json(
+                "echidna_project/build_manifest.json",
+                &json!({
+                    "target": {"address": address, "chain": chain},
+                    "run_id": self.workspace.run_id,
+                    "status": "source_not_fetched",
+                    "note": "Fetch verified source before preparing an Echidna project.",
+                }),
+            )?;
+            self.record(
+                "prepare_echidna_project",
+                &manifest_path,
+                "prep",
+                "configured_not_executed",
+                "Skipped Echidna project preparation because source fetching did not complete.",
+            );
+            return Ok("source_not_fetched".to_string());
+        }
+
+        let sources_root = self.workspace.root.join("sources");
+        if !sources_root.exists() {
+            recreate_dir(&echidna_root)?;
+            let manifest_path = self.workspace.write_json(
+                "echidna_project/build_manifest.json",
+                &json!({
+                    "target": {"address": address, "chain": chain},
+                    "run_id": self.workspace.run_id,
+                    "status": "source_files_missing",
+                    "note": "Source bundle exists but sources/ is missing.",
+                }),
+            )?;
+            self.record(
+                "prepare_echidna_project",
+                &manifest_path,
+                "prep",
+                "executed_with_error",
+                "Failed Echidna project preparation because source files are missing.",
+            );
+            return Ok("source_files_missing".to_string());
+        }
+
+        let settings = tool_project_settings(bundle_payload);
+        recreate_dir(&echidna_root)?;
+        let source_links = self.link_tool_project_sources(
+            &sources_root,
+            &echidna_root.join("src"),
+            Some(&settings.source_root),
+        )?;
+        let node_modules_links = self.create_slither_node_modules(
+            &sources_root.join("npm"),
+            &echidna_root.join("node_modules"),
+        )?;
+        let remappings = merge_unique_lists(&[
+            settings.remappings.clone(),
+            node_modules_remappings(&node_modules_links),
+        ]);
+        self.workspace
+            .write_text("echidna_project/test/.gitkeep", "")?;
+        self.workspace
+            .write_text("echidna_project/lib/.gitkeep", "")?;
+        let config_path = self.workspace.write_text(
+            "echidna_project/echidna.yaml",
+            &render_echidna_yaml(&settings),
+        )?;
+        let manifest_path = self.workspace.write_json(
+            "echidna_project/build_manifest.json",
+            &json!({
+                "target": {"address": address, "chain": chain},
+                "run_id": self.workspace.run_id,
+                "status": "prepared",
+                "project_root": "echidna_project",
+                "analysis_target": analysis_target_payload(bundle_payload),
+                "source_links": source_links,
+                "node_modules_links": node_modules_links,
+                "compiler_version": settings.compiler_version,
+                "solc_version": settings.solc_version,
+                "optimizer_enabled": settings.optimizer_enabled,
+                "optimizer_runs": settings.optimizer_runs,
+                "evm_version": settings.evm_version,
+                "remappings": remappings,
+                "config_path": config_path,
+                "preferred_working_dir": "echidna_project",
+                "preferred_target": settings.prepared_target,
+                "preferred_source_root": settings.source_root,
+                "harness_dir": "echidna_project/test",
+            }),
+        )?;
+        self.record(
+            "prepare_echidna_project",
+            &config_path,
+            "prep",
+            "executed",
+            "Prepared an Echidna config scaffold.",
+        );
+        self.record(
+            "prepare_echidna_project",
+            &manifest_path,
+            "prep",
+            "executed",
+            "Prepared a deterministic Echidna project manifest.",
+        );
+        Ok("prepared".to_string())
+    }
+
+    fn link_tool_project_sources(
+        &self,
+        sources_root: &Path,
+        tool_src_root: &Path,
+        source_root_filter: Option<&str>,
+    ) -> AppResult<Vec<Value>> {
+        let source_root_filter = source_root_filter
+            .unwrap_or_default()
+            .trim_matches('/')
+            .to_string();
+        let source_root_prefix = if source_root_filter.is_empty() {
+            None
+        } else {
+            Some(format!("{source_root_filter}/"))
+        };
+        let mut linked = Vec::new();
+        for entry in walkdir::WalkDir::new(sources_root).sort_by_file_name() {
+            let entry = entry?;
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let relative = self.workspace.relative(entry.path())?;
+            let source_relative = relative.trim_start_matches("sources/").to_string();
+            if source_relative.starts_with("dependencies/") || source_relative.starts_with("npm/") {
+                continue;
+            }
+            let mapped_path = if let Some(prefix) = &source_root_prefix {
+                if source_relative == source_root_filter {
+                    PathBuf::from(".")
+                } else if let Some(stripped) = source_relative.strip_prefix(prefix) {
+                    PathBuf::from(stripped)
+                } else {
+                    continue;
+                }
+            } else {
+                PathBuf::from(&source_relative)
+            };
+            let link_path = tool_src_root.join(&mapped_path);
+            recreate_symlink(&link_path, entry.path())?;
+            let display_path = link_path
+                .strip_prefix(tool_src_root)
+                .unwrap_or(&mapped_path)
+                .to_path_buf();
+            linked.push(json!({
+                "path": format_path_for_json(&display_path),
+                "target": relative,
+            }));
+        }
+        Ok(linked)
     }
 
     fn existing_paths(&self, relative_paths: &[&str]) -> Vec<String> {
@@ -653,6 +1192,18 @@ struct SlitherSettings {
     remappings: Vec<String>,
     remappings_file: String,
     solc_args: String,
+}
+
+#[derive(Clone)]
+struct ToolProjectSettings {
+    source_root: String,
+    prepared_target: String,
+    compiler_version: String,
+    solc_version: String,
+    optimizer_enabled: bool,
+    optimizer_runs: u64,
+    evm_version: String,
+    remappings: Vec<String>,
 }
 
 fn analysis_target_from_bundle(
@@ -727,7 +1278,10 @@ fn analysis_target_payload(bundle_payload: &Value) -> Value {
         });
     }
 
-    if let Some(analysis_target) = bundle_payload.get("analysis_target").and_then(Value::as_object) {
+    if let Some(analysis_target) = bundle_payload
+        .get("analysis_target")
+        .and_then(Value::as_object)
+    {
         if !analysis_target
             .get("path")
             .and_then(Value::as_str)
@@ -844,6 +1398,42 @@ fn node_modules_remappings(node_modules_links: &[Value]) -> Vec<String> {
         .collect()
 }
 
+fn tool_project_settings(bundle_payload: &Value) -> ToolProjectSettings {
+    let analysis_target = analysis_target_payload(bundle_payload);
+    let target_path = analysis_target
+        .get("path")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim_start_matches("./")
+        .to_string();
+    let source_root = path_parent_string(&target_path);
+    let prepared_target = if source_root.is_empty() {
+        target_path.clone()
+    } else {
+        target_path
+            .strip_prefix(&format!("{source_root}/"))
+            .unwrap_or(target_path.as_str())
+            .to_string()
+    };
+    let compiler_version = compiler_version_for_path(bundle_payload, &target_path);
+    let solc_version = extract_semver(&compiler_version);
+    let source_meta = source_meta_for_path(bundle_payload, &target_path);
+    let optimizer_enabled = compiler_optimizer_enabled(bundle_payload, &source_meta);
+    let optimizer_runs = compiler_optimizer_runs(bundle_payload, &source_meta);
+    let evm_version = compiler_evm_version(bundle_payload, &source_meta);
+    let remappings = provider_remappings(&source_meta);
+    ToolProjectSettings {
+        source_root,
+        prepared_target,
+        compiler_version,
+        solc_version,
+        optimizer_enabled,
+        optimizer_runs,
+        evm_version,
+        remappings,
+    }
+}
+
 fn slither_target_settings(
     workspace: &RunWorkspace,
     bundle_payload: &Value,
@@ -865,7 +1455,11 @@ fn slither_target_settings(
     let generated_remappings = node_modules_remappings(node_modules_links);
     let remappings = merge_unique_lists(&[provider_remappings, generated_remappings]);
     let use_project_root = !remappings.is_empty();
-    let working_root = if use_project_root { String::new() } else { source_root.clone() };
+    let working_root = if use_project_root {
+        String::new()
+    } else {
+        source_root.clone()
+    };
     let prepared_root = if use_project_root {
         ".".to_string()
     } else if source_root.is_empty() {
@@ -890,7 +1484,11 @@ fn slither_target_settings(
         prepared_root,
         prepared_target: prepared_target.clone(),
         working_dir,
-        working_dir_token: if working_root.is_empty() { ".".to_string() } else { working_root.clone() },
+        working_dir_token: if working_root.is_empty() {
+            ".".to_string()
+        } else {
+            working_root.clone()
+        },
         compiler_version,
         solc_version: solc_version.clone(),
         solc_select: solc_select_status(workspace, &solc_version),
@@ -898,6 +1496,146 @@ fn slither_target_settings(
         remappings_file: slither_relative_from_working_dir(&working_root, "remappings.txt"),
         remappings,
         solc_args: slither_solc_args(&include_paths),
+    }
+}
+
+fn compiler_optimizer_enabled(bundle_payload: &Value, source_meta: &Value) -> bool {
+    source_meta
+        .get("settings")
+        .and_then(Value::as_object)
+        .and_then(|obj| obj.get("optimizer"))
+        .and_then(Value::as_object)
+        .and_then(|obj| obj.get("enabled"))
+        .and_then(Value::as_bool)
+        .unwrap_or_else(|| {
+            bundle_payload
+                .get("compiler")
+                .and_then(Value::as_object)
+                .and_then(|obj| obj.get("optimization_used"))
+                .and_then(Value::as_str)
+                .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+                .unwrap_or(false)
+        })
+}
+
+fn compiler_optimizer_runs(bundle_payload: &Value, source_meta: &Value) -> u64 {
+    source_meta
+        .get("settings")
+        .and_then(Value::as_object)
+        .and_then(|obj| obj.get("optimizer"))
+        .and_then(Value::as_object)
+        .and_then(|obj| obj.get("runs"))
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            bundle_payload
+                .get("compiler")
+                .and_then(Value::as_object)
+                .and_then(|obj| obj.get("runs"))
+                .and_then(Value::as_str)
+                .and_then(|value| value.parse::<u64>().ok())
+        })
+        .unwrap_or(200)
+}
+
+fn compiler_evm_version(bundle_payload: &Value, source_meta: &Value) -> String {
+    let meta_value = source_meta
+        .get("settings")
+        .and_then(Value::as_object)
+        .and_then(|obj| obj.get("evmVersion"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if !meta_value.is_empty() && meta_value != "Default" {
+        return meta_value;
+    }
+    let compiler_value = bundle_payload
+        .get("compiler")
+        .and_then(Value::as_object)
+        .and_then(|obj| obj.get("evm_version"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if compiler_value.is_empty() || compiler_value == "Default" {
+        String::new()
+    } else {
+        compiler_value
+    }
+}
+
+fn path_parent_string(path: &str) -> String {
+    Path::new(path)
+        .parent()
+        .map(|parent| {
+            let rendered = parent.to_string_lossy().replace('\\', "/");
+            if rendered == "." {
+                String::new()
+            } else {
+                rendered
+            }
+        })
+        .unwrap_or_default()
+}
+
+fn render_foundry_toml(settings: &ToolProjectSettings, remappings: &[String]) -> String {
+    let mut lines = vec![
+        "[profile.default]".to_string(),
+        "src = \"src\"".to_string(),
+        "test = \"test\"".to_string(),
+        "script = \"script\"".to_string(),
+        "out = \"out\"".to_string(),
+        "libs = [\"lib\", \"node_modules\"]".to_string(),
+    ];
+    if !settings.solc_version.is_empty() {
+        lines.push(format!("solc = \"{}\"", settings.solc_version));
+    }
+    lines.push(format!("optimizer = {}", settings.optimizer_enabled));
+    lines.push(format!("optimizer_runs = {}", settings.optimizer_runs));
+    if !settings.evm_version.is_empty() {
+        lines.push(format!("evm_version = \"{}\"", settings.evm_version));
+    }
+    if !remappings.is_empty() {
+        let rendered = remappings
+            .iter()
+            .map(|entry| format!("\"{}\"", entry.replace('\\', "\\\\").replace('\"', "\\\"")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!("remappings = [{rendered}]"));
+    }
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+fn render_echidna_yaml(settings: &ToolProjectSettings) -> String {
+    let mut lines = vec![
+        format!("testMode: \"property\""),
+        format!("format: \"text\""),
+        format!("corpusDir: \"corpus\""),
+        format!("srcDir: \"src\""),
+        format!("testDir: \"test\""),
+    ];
+    if !settings.prepared_target.is_empty() {
+        lines.push(format!("prefix: \"{}\"", settings.prepared_target));
+    }
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+fn render_line_list(items: &[String]) -> String {
+    if items.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", items.join("\n"))
+    }
+}
+
+fn format_path_for_json(path: &Path) -> String {
+    let rendered = path.to_string_lossy().replace('\\', "/");
+    if rendered.is_empty() || rendered == "." {
+        ".".to_string()
+    } else {
+        rendered
     }
 }
 
@@ -918,7 +1656,11 @@ fn slither_source_root_for_target(target_path: &str, linked_entries: &[Value]) -
 
 fn slither_relative_target_path(target_path: &str, source_root: &str) -> String {
     let normalized_target_path = target_path.trim_start_matches("./");
-    let normalized_target_path = if normalized_target_path.is_empty() { "." } else { normalized_target_path };
+    let normalized_target_path = if normalized_target_path.is_empty() {
+        "."
+    } else {
+        normalized_target_path
+    };
     if source_root.is_empty() {
         return normalized_target_path.to_string();
     }
@@ -1004,7 +1746,8 @@ fn solc_select_status(workspace: &RunWorkspace, requested_version: &str) -> Valu
     };
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let pattern = Regex::new(r"(?P<version>\d+\.\d+\.\d+)(?:\s+\(current.*\))?$").expect("valid solc-select regex");
+    let pattern = Regex::new(r"(?P<version>\d+\.\d+\.\d+)(?:\s+\(current.*\))?$")
+        .expect("valid solc-select regex");
     let mut available_versions = Vec::new();
     let mut current_version = String::new();
     for raw_line in stdout.lines() {
@@ -1023,11 +1766,17 @@ fn solc_select_status(workspace: &RunWorkspace, requested_version: &str) -> Valu
             }
         }
     }
-    let is_installed = available_versions.iter().any(|version| version == requested_version);
+    let is_installed = available_versions
+        .iter()
+        .any(|version| version == requested_version);
     let recommended_action = if is_installed {
-        format!("Run `solc-select use {requested_version}` inside the devShell before invoking Slither.")
+        format!(
+            "Run `solc-select use {requested_version}` inside the devShell before invoking Slither."
+        )
     } else {
-        format!("`{requested_version}` is not installed in solc-select. Install or select it before Slither, for example with `solc-select install {requested_version} && solc-select use {requested_version}`.")
+        format!(
+            "`{requested_version}` is not installed in solc-select. Install or select it before Slither, for example with `solc-select install {requested_version} && solc-select use {requested_version}`."
+        )
     };
     json!({
         "requested_version": requested_version,
@@ -1041,11 +1790,18 @@ fn solc_select_status(workspace: &RunWorkspace, requested_version: &str) -> Valu
 }
 
 fn split_versioned_package_name(name: &str) -> (String, String) {
-    let pattern = Regex::new(r"^(?P<package>.+)@(?P<version>\d[\w.+-]*)$").expect("valid package regex");
+    let pattern =
+        Regex::new(r"^(?P<package>.+)@(?P<version>\d[\w.+-]*)$").expect("valid package regex");
     if let Some(capture) = pattern.captures(name) {
         (
-            capture.name("package").map(|m| m.as_str().to_string()).unwrap_or_else(|| name.to_string()),
-            capture.name("version").map(|m| m.as_str().to_string()).unwrap_or_default(),
+            capture
+                .name("package")
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_else(|| name.to_string()),
+            capture
+                .name("version")
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_default(),
         )
     } else {
         (name.to_string(), String::new())
@@ -1072,8 +1828,11 @@ fn recreate_symlink(link_path: &Path, target_path: &Path) -> AppResult<()> {
     if let Some(parent) = link_path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let relative_target = pathdiff::diff_paths(target_path, link_path.parent().unwrap_or_else(|| Path::new(".")))
-        .unwrap_or_else(|| target_path.to_path_buf());
+    let relative_target = pathdiff::diff_paths(
+        target_path,
+        link_path.parent().unwrap_or_else(|| Path::new(".")),
+    )
+    .unwrap_or_else(|| target_path.to_path_buf());
     #[cfg(unix)]
     std::os::unix::fs::symlink(relative_target, link_path)?;
     #[cfg(windows)]

@@ -42,7 +42,12 @@ impl Drop for RunGuard {
 }
 
 impl RunWorkspace {
-    pub fn create(project_root: &Path, runs_dir: &Path, address: &str, chain: &str) -> AppResult<Self> {
+    pub fn create(
+        project_root: &Path,
+        runs_dir: &Path,
+        address: &str,
+        chain: &str,
+    ) -> AppResult<Self> {
         fs::create_dir_all(runs_dir)?;
         loop {
             let run_id = generate_run_id(address, chain);
@@ -81,7 +86,9 @@ impl RunWorkspace {
     pub fn load(project_root: &Path, runs_dir: &Path, run_id: &str) -> AppResult<Self> {
         let root = runs_dir.join(run_id);
         if !root.exists() {
-            return Err(AppError::RunNotFound(format!("run_id does not exist: {run_id}")));
+            return Err(AppError::RunNotFound(format!(
+                "run_id does not exist: {run_id}"
+            )));
         }
         let workspace = Self::from_root(project_root, &root, run_id);
         workspace.ensure_dirs()?;
@@ -101,7 +108,12 @@ impl RunWorkspace {
     }
 
     pub fn ensure_dirs(&self) -> AppResult<()> {
-        for dir in [&self.input_dir, &self.artifacts_dir, &self.reports_dir, &self.logs_dir] {
+        for dir in [
+            &self.input_dir,
+            &self.artifacts_dir,
+            &self.reports_dir,
+            &self.logs_dir,
+        ] {
             fs::create_dir_all(dir)?;
         }
         Ok(())
@@ -128,9 +140,9 @@ impl RunWorkspace {
     }
 
     pub fn relative(&self, path: &Path) -> AppResult<String> {
-        let rel = path
-            .strip_prefix(&self.root)
-            .map_err(|_| AppError::Message(format!("path is outside workspace: {}", path.display())))?;
+        let rel = path.strip_prefix(&self.root).map_err(|_| {
+            AppError::Message(format!("path is outside workspace: {}", path.display()))
+        })?;
         Ok(rel.to_string_lossy().replace('\\', "/"))
     }
 
@@ -139,7 +151,12 @@ impl RunWorkspace {
         if let Some(parent) = lock_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let file = OpenOptions::new().create(true).truncate(false).read(true).write(true).open(lock_path)?;
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(lock_path)?;
         file.lock_exclusive()?;
         Ok(RunGuard { file })
     }

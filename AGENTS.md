@@ -21,15 +21,14 @@ If `agent-audit` is already installed on `PATH`, invoking `agent-audit <subcomma
 Suggested order:
 
 1. `$workspace`
-2. `$source-fetch`
-3. `$dependency-scan`
-4. `$aggregate-materials`
+2. inspect `reports/materials_manifest.json`
+3. inspect raw evidence files
 
 After that:
 
-- inspect `reports/materials_manifest.json`
-- inspect raw evidence files
-- inspect `slither_project/build_manifest.json` when source fetch succeeded
+- inspect `slither_project/build_manifest.json`
+- inspect `foundry_project/build_manifest.json`
+- inspect `echidna_project/build_manifest.json`
 - decide whether use tools like: Slither, Echidna, Forge, Cast, or Anvil
 - if you run direct tools, save their artifacts under the same `runs/<run_id>/artifacts/` tree
 - reuse `$aggregate-materials` if you want the manifest to list those optional artifacts
