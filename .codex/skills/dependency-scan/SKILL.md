@@ -8,7 +8,7 @@ description: Run repository dependency discovery and role-specific dependency an
 Run dependency analysis:
 
 ```bash
-uv run agent-audit run-dependency --run-id <run_id>
+cargo run --bin agent-audit -- run-dependency --run-id <run_id>
 ```
 
 Inspect first:

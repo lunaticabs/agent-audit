@@ -8,10 +8,11 @@ description: Fetch verified source and dependency source bundles for an existing
 Fetch verified source:
 
 ```bash
-uv run agent-audit fetch-source --run-id <run_id>
+cargo run --bin agent-audit -- fetch-source --run-id <run_id>
 ```
 
 This step uses an Etherscan V2-compatible API and switches chains by `chainid`.
+When source fetching succeeds, the Rust CLI also prepares `slither_project/build_manifest.json`.
 
 Practical notes:
 
@@ -24,3 +25,4 @@ Inspect first:
 - `artifacts/source_bundle.json`
 - `artifacts/source_provider_response.json`
 - `sources/`
+- `slither_project/build_manifest.json`

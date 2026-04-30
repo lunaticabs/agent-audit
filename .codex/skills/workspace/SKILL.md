@@ -8,13 +8,14 @@ description: Create a new run workspace for a contract address. Use when you nee
 Initialize a run workspace:
 
 ```bash
-uv run agent-audit init-run --chain <chain> --address <address>
+cargo run --bin agent-audit -- init-run --chain <chain> --address <address>
 ```
 
 What it does:
 
 - Creates `runs/<run_id>/`
-- Creates `input/`, `ir/`, `artifacts/`, `reports/`, and `logs/`
+- Creates `input/`, `artifacts/`, `reports/`, and `logs/`
 - Writes `input/request.json`
+- Writes `input/run_meta.json`
 
 It does not fetch source or run any analyzer.

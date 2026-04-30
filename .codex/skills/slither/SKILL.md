@@ -7,7 +7,7 @@ Run Slither with the CLI-generated `preferred_working_dir` and `preferred_target
 
 Use this workflow:
 
-1. Read `slither_project/build_manifest.json`.
+1. Ensure `slither_project/build_manifest.json` exists. If it does not, run `cargo run --bin agent-audit -- prepare-slither --run-id <run_id>`.
 2. Use `preferred_working_dir`, `preferred_target`, `solc_version`, `solc_args`, and `remappings`.
 3. If you intentionally analyze a different target, switch to that target's source root and keep the target path relative to that root.
 

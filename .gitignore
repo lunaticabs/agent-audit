@@ -3,15 +3,11 @@
 .venv/
 __pycache__/
 *.pyc
-.pytest_cache/
 .ruff_cache/
-build/
-dist/
-*.egg-info/
+target/
 runs/*
 !runs/.gitkeep
 archive/
-unfin_opencode.jsonc
 .claude/
 batch_logs/
 configs/
