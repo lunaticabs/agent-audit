@@ -1,11 +1,12 @@
 use serde::Serialize;
 
 use crate::error::AppResult;
-use crate::models::artifact::ArtifactRecord;
+use crate::models::artifact::{ArtifactKind, ArtifactRecord, ArtifactStatus, ArtifactStep};
 use crate::models::finding::DependencyFindingsArtifact;
 use crate::models::identity::{ChainAlias, ChainId, EvmAddress, RunId};
 use crate::models::path::WorkspaceRelPath;
 use crate::models::tooling::MaterialStatusSnapshot;
+use crate::workspace::paths;
 
 use super::AuditPipelineService;
 
@@ -56,14 +57,14 @@ impl AuditPipelineService {
             "artifacts/slither_raw.json",
             "artifacts/static_findings.json",
             "artifacts/analyzer_index.json",
-            "artifacts/tooling_manifest.json",
-            "slither_project/build_manifest.json",
+            paths::TOOLING_MANIFEST,
+            paths::SLITHER_BUILD_MANIFEST,
             "slither_project/remappings.txt",
             "slither_project/slither_inputs.json",
-            "foundry_project/build_manifest.json",
+            paths::FOUNDRY_BUILD_MANIFEST,
             "foundry_project/foundry.toml",
             "foundry_project/remappings.txt",
-            "echidna_project/build_manifest.json",
+            paths::ECHIDNA_BUILD_MANIFEST,
             "echidna_project/echidna.yaml",
         ]);
         optional_tool_artifacts.extend(self.existing_tree(&[
@@ -79,32 +80,30 @@ impl AuditPipelineService {
             "echidna_project/lib",
             "echidna_project/node_modules",
         ])?);
-        let artifact_records = self.artifacts.iter().collect::<Vec<_>>();
-        let manifest_path = self.workspace.write_json(
-            "reports/materials_manifest.json",
+        let artifact_records = self.artifact_records().iter().collect::<Vec<_>>();
+        let manifest_path = self.workspace.store().write_json(
+            paths::MATERIALS_MANIFEST,
             &MaterialsManifestRef {
                 target: RunTargetRef {
                     address,
                     chain,
                     chain_id: None,
                 },
-                run_id: &self.workspace.run_id,
+                run_id: self.workspace.run_id(),
                 statuses: self.material_status_snapshot()?,
-                inputs: self.existing_paths(&["input/request.json", "input/source_request.json"]),
-                core_materials: self.existing_paths(&[
-                    "artifacts/source_bundle.json",
-                    "artifacts/dependency_findings.json",
-                ]),
+                inputs: self.existing_paths(&[paths::REQUEST, paths::SOURCE_REQUEST]),
+                core_materials: self
+                    .existing_paths(&[paths::SOURCE_BUNDLE, paths::DEPENDENCY_FINDINGS]),
                 optional_tool_artifacts,
                 artifact_records,
                 notes: MATERIAL_NOTES.to_vec(),
             },
         )?;
         self.record(
-            "aggregate_materials",
+            ArtifactStep::AggregateMaterials,
             &manifest_path,
-            "report",
-            "executed",
+            ArtifactKind::Report,
+            ArtifactStatus::Executed,
             "Stored a neutral manifest of prepared review materials.",
         );
         Ok(manifest_path)
@@ -113,10 +112,7 @@ impl AuditPipelineService {
     pub fn material_status_snapshot(&self) -> AppResult<MaterialStatusSnapshot> {
         let source_payload = self.load_source_bundle_payload()?;
         let dependency_payload: DependencyFindingsArtifact = super::support::read_json_if_exists(
-            &self
-                .workspace
-                .root
-                .join("artifacts/dependency_findings.json"),
+            &self.workspace.paths().resolve(paths::DEPENDENCY_FINDINGS),
         )?;
         Ok(MaterialStatusSnapshot {
             source_fetch_status: source_payload.status,

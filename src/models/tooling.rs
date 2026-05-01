@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
-use crate::models::envelope::StepStatus;
 use crate::models::identity::RunId;
 use crate::models::path::{RelativePath, WorkspaceRelPath};
 use crate::models::run::RunTarget;
 use crate::models::source::AnalysisTarget;
+use crate::models::step::StepStatus;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct RunArtifactHeader {

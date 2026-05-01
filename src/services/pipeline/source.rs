@@ -6,8 +6,8 @@ use serde::Serialize;
 use crate::analysis::dependencies::analyze_dependencies;
 use crate::analysis::discovery::discover_dependencies;
 use crate::error::AppResult;
+use crate::models::artifact::{ArtifactKind, ArtifactStatus, ArtifactStep};
 use crate::models::discovery::{DependencyCandidate, DependencyDiscoveryContext};
-use crate::models::envelope::StepStatus;
 use crate::models::finding::DependencyFindingsArtifact;
 use crate::models::identity::{ChainAlias, EvmAddress};
 use crate::models::path::RelativePath;
@@ -17,7 +17,9 @@ use crate::models::source::{
     ProxyResolution, ProxyResolutionStatus, SourceBundleArtifact, SourceFile,
     VerifiedSourceMetadata,
 };
+use crate::models::step::StepStatus;
 use crate::services::source_provider::{fetch_verified_source, sanitize_dependency_name};
+use crate::workspace::paths;
 
 use super::AuditPipelineService;
 
@@ -43,8 +45,8 @@ impl AuditPipelineService {
             .keys()
             .map(String::as_str)
             .collect::<Vec<_>>();
-        let request_path = self.workspace.write_json(
-            "input/source_request.json",
+        let request_path = self.workspace.store().write_json(
+            paths::SOURCE_REQUEST,
             &SourceFetchRequestArtifactRef {
                 address,
                 chain,
@@ -56,25 +58,25 @@ impl AuditPipelineService {
         )?;
 
         let Some(base_url) = self.config.source_api_base.as_ref() else {
-            let bundle_path = self.workspace.write_json(
-                "artifacts/source_bundle.json",
+            let bundle_path = self.workspace.store().write_json(
+                paths::SOURCE_BUNDLE,
                 &SourceBundleArtifact::not_configured(RunTarget::new(
                     address.clone(),
                     chain.clone(),
                 )),
             )?;
             self.record(
-                "fetch_contract_source",
+                ArtifactStep::FetchContractSource,
                 &request_path,
-                "request",
-                "configured_not_executed",
+                ArtifactKind::Request,
+                StepStatus::ConfiguredNotExecuted,
                 "Persisted source fetch request metadata.",
             );
             self.record(
-                "fetch_contract_source",
+                ArtifactStep::FetchContractSource,
                 &bundle_path,
-                "artifact",
-                "configured_not_executed",
+                ArtifactKind::Artifact,
+                StepStatus::ConfiguredNotExecuted,
                 "Skipped source fetch because the source API is not configured.",
             );
             return Ok(StepStatus::SourceApiNotConfigured);
@@ -89,8 +91,8 @@ impl AuditPipelineService {
         ) {
             Ok(bundle) => bundle,
             Err(error) => {
-                let bundle_path = self.workspace.write_json(
-                    "artifacts/source_bundle.json",
+                let bundle_path = self.workspace.store().write_json(
+                    paths::SOURCE_BUNDLE,
                     &SourceBundleArtifact::fetch_failed(
                         RunTarget::new(address.clone(), chain.clone()),
                         error.to_string(),
@@ -98,17 +100,17 @@ impl AuditPipelineService {
                     ),
                 )?;
                 self.record(
-                    "fetch_contract_source",
+                    ArtifactStep::FetchContractSource,
                     &request_path,
-                    "request",
-                    "executed_with_error",
+                    ArtifactKind::Request,
+                    StepStatus::ExecutedWithError,
                     "Persisted source fetch request metadata.",
                 );
                 self.record(
-                    "fetch_contract_source",
+                    ArtifactStep::FetchContractSource,
                     &bundle_path,
-                    "artifact",
-                    "executed_with_error",
+                    ArtifactKind::Artifact,
+                    StepStatus::ExecutedWithError,
                     "Source fetch failed; inspect the stored error payload.",
                 );
                 return Ok(StepStatus::SourceFetchFailed);
@@ -122,10 +124,10 @@ impl AuditPipelineService {
             .as_ref()
             .filter(|implementation| *implementation != address);
 
-        let raw_response_path = self.workspace.write_json(
-            "artifacts/source_provider_response.json",
-            &bundle.provider_payload,
-        )?;
+        let raw_response_path = self
+            .workspace
+            .store()
+            .write_json(paths::SOURCE_PROVIDER_RESPONSE, &bundle.provider_payload)?;
         let primary_sources =
             self.write_fetched_source_files(&bundle.files, None, "Stored a fetched source file.")?;
 
@@ -173,27 +175,28 @@ impl AuditPipelineService {
 
         let bundle_path = self
             .workspace
-            .write_json("artifacts/source_bundle.json", &bundle_payload)?;
+            .store()
+            .write_json(paths::SOURCE_BUNDLE, &bundle_payload)?;
 
         self.record(
-            "fetch_contract_source",
+            ArtifactStep::FetchContractSource,
             &request_path,
-            "request",
-            "executed",
+            ArtifactKind::Request,
+            ArtifactStatus::Executed,
             "Persisted source fetch request metadata.",
         );
         self.record(
-            "fetch_contract_source",
+            ArtifactStep::FetchContractSource,
             &raw_response_path,
-            "artifact",
-            "executed",
+            ArtifactKind::Artifact,
+            ArtifactStatus::Executed,
             "Stored the raw source provider response.",
         );
         self.record(
-            "fetch_contract_source",
+            ArtifactStep::FetchContractSource,
             &bundle_path,
-            "artifact",
-            "executed",
+            ArtifactKind::Artifact,
+            ArtifactStatus::Executed,
             "Fetched and normalized verified source metadata.",
         );
         Ok(StepStatus::SourceFetched)
@@ -206,8 +209,8 @@ impl AuditPipelineService {
     ) -> AppResult<StepStatus> {
         let bundle_payload = self.load_source_bundle_payload()?;
         if !bundle_payload.is_fetched() {
-            let findings_path = self.workspace.write_json(
-                "artifacts/dependency_findings.json",
+            let findings_path = self.workspace.store().write_json(
+                paths::DEPENDENCY_FINDINGS,
                 &DependencyFindingsArtifact::new(
                     RunTarget::new(address.clone(), chain.clone()),
                     StepStatus::SourceNotFetched,
@@ -215,19 +218,19 @@ impl AuditPipelineService {
                 ),
             )?;
             self.record(
-                "run_dependency_analysis",
+                ArtifactStep::RunDependencyAnalysis,
                 &findings_path,
-                "artifact",
-                "configured_not_executed",
+                ArtifactKind::Artifact,
+                StepStatus::ConfiguredNotExecuted,
                 "Skipped dependency analysis because source fetching did not complete.",
             );
             return Ok(StepStatus::SourceNotFetched);
         }
 
-        let findings = analyze_dependencies(&bundle_payload, &self.workspace.root);
+        let findings = analyze_dependencies(&bundle_payload, self.workspace.root());
         let status = StepStatus::Executed;
-        let findings_path = self.workspace.write_json(
-            "artifacts/dependency_findings.json",
+        let findings_path = self.workspace.store().write_json(
+            paths::DEPENDENCY_FINDINGS,
             &DependencyFindingsArtifact::new(
                 RunTarget::new(address.clone(), chain.clone()),
                 status,
@@ -235,10 +238,10 @@ impl AuditPipelineService {
             ),
         )?;
         self.record(
-            "run_dependency_analysis",
+            ArtifactStep::RunDependencyAnalysis,
             &findings_path,
-            "artifact",
-            status.as_str(),
+            ArtifactKind::Artifact,
+            status,
             "Analyzed fetched dependencies for high-signal role-specific findings.",
         );
         Ok(status)
@@ -251,7 +254,7 @@ impl AuditPipelineService {
         let mut source_map_for_discovery = BTreeMap::new();
         for item in primary_sources {
             let relative_path = item.path.as_str();
-            let file_path = self.workspace.root.join("sources").join(relative_path);
+            let file_path = self.workspace.root().join("sources").join(relative_path);
             if file_path.exists() {
                 source_map_for_discovery
                     .insert(relative_path.to_string(), fs::read_to_string(file_path)?);
@@ -322,7 +325,7 @@ impl AuditPipelineService {
             }
         };
 
-        let response_artifact = self.workspace.write_json(
+        let response_artifact = self.workspace.store().write_json(
             format!(
                 "artifacts/source_provider_response_{}.json",
                 prefix.as_str().replace('/', "_")
@@ -330,10 +333,10 @@ impl AuditPipelineService {
             &bundle.provider_payload,
         )?;
         self.record(
-            "fetch_contract_source",
+            ArtifactStep::FetchContractSource,
             &response_artifact,
-            "artifact",
-            "executed",
+            ArtifactKind::Artifact,
+            ArtifactStatus::Executed,
             "Stored the raw dependency provider response.",
         );
         let written_files = self.write_fetched_source_files(

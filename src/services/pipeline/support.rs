@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::error::AppResult;
-use crate::models::artifact::ArtifactRecord;
+use crate::models::artifact::{ArtifactKind, ArtifactRecord, ArtifactStatus, ArtifactStep};
 use crate::models::path::{RelativePath, WorkspaceRelPath};
 use crate::models::source::SourceFile;
 use crate::workspace::RunWorkspace;
@@ -49,7 +49,7 @@ pub(super) fn recreate_symlink(link_path: &Path, target_path: &Path) -> AppResul
 }
 
 pub(super) fn load_existing_artifacts(workspace: &RunWorkspace) -> Vec<ArtifactRecord> {
-    let path = workspace.root.join("artifacts/artifact_index.json");
+    let path = workspace.paths().resolve("artifacts/artifact_index.json");
     let Ok(text) = fs::read_to_string(path) else {
         return Vec::new();
     };
@@ -89,7 +89,7 @@ impl AuditPipelineService {
     pub(super) fn existing_paths(&self, relative_paths: &[&str]) -> Vec<WorkspaceRelPath> {
         relative_paths
             .iter()
-            .filter(|path| self.workspace.root.join(path).exists())
+            .filter(|path| self.workspace.root().join(path).exists())
             .map(WorkspaceRelPath::new)
             .collect()
     }
@@ -101,7 +101,7 @@ impl AuditPipelineService {
         let mut existing = Vec::new();
         let mut seen = BTreeSet::<String>::new();
         for root in relative_roots {
-            let path = self.workspace.root.join(root);
+            let path = self.workspace.root().join(root);
             if path.is_file() {
                 let relative = WorkspaceRelPath::new(root);
                 if seen.insert(relative.as_str().to_string()) {
@@ -117,7 +117,7 @@ impl AuditPipelineService {
                 if !entry.file_type().is_file() {
                     continue;
                 }
-                let relative = self.workspace.relative(entry.path())?;
+                let relative = self.workspace.paths().relative(entry.path())?;
                 if seen.insert(relative.as_str().to_string()) {
                     existing.push(relative);
                 }
@@ -134,12 +134,13 @@ impl AuditPipelineService {
     ) -> AppResult<()> {
         let workspace_path = WorkspaceRelPath::new(format!("sources/{final_path}"));
         self.workspace
+            .store()
             .write_text(workspace_path.as_str(), &source_file.content)?;
         self.record(
-            "fetch_contract_source",
+            ArtifactStep::FetchContractSource,
             &workspace_path,
-            "source",
-            "executed",
+            ArtifactKind::Source,
+            ArtifactStatus::Executed,
             summary_prefix,
         );
         Ok(())

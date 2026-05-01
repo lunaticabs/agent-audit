@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use crate::models::envelope::StepStatus;
 use crate::models::path::WorkspaceRelPath;
 use crate::models::run::RunTarget;
+use crate::models::step::StepStatus;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]

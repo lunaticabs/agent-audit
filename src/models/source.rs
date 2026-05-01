@@ -3,10 +3,10 @@ use serde_json::Value;
 use serde_with::skip_serializing_none;
 
 use crate::models::discovery::{DependencyDiscoveryContext, DependencyDiscoveryReport};
-use crate::models::envelope::StepStatus;
 use crate::models::identity::EvmAddress;
 use crate::models::path::{RelativePath, WorkspaceRelPath};
 use crate::models::run::RunTarget;
+use crate::models::step::StepStatus;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SourceFile {

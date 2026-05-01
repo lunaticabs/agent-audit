@@ -16,24 +16,168 @@ use crate::models::path::WorkspaceRelPath;
 use crate::models::run::{RunMeta, RunRequest, RunTarget};
 use crate::serde_ext::to_pretty_json;
 
+pub mod paths {
+    pub const RUN_META: &str = "input/run_meta.json";
+    pub const REQUEST: &str = "input/request.json";
+    pub const SOURCE_REQUEST: &str = "input/source_request.json";
+    pub const ARTIFACT_INDEX: &str = "artifacts/artifact_index.json";
+    pub const SOURCE_BUNDLE: &str = "artifacts/source_bundle.json";
+    pub const SOURCE_PROVIDER_RESPONSE: &str = "artifacts/source_provider_response.json";
+    pub const DEPENDENCY_FINDINGS: &str = "artifacts/dependency_findings.json";
+    pub const TOOLING_MANIFEST: &str = "artifacts/tooling_manifest.json";
+    pub const MATERIALS_MANIFEST: &str = "reports/materials_manifest.json";
+    pub const FINAL_REPORT: &str = "reports/final_report.json";
+    pub const INIT_RUN_LOG: &str = "logs/init_run_result.json";
+    pub const FETCH_SOURCE_LOG: &str = "logs/fetch_source_result.json";
+    pub const RUN_DEPENDENCY_LOG: &str = "logs/run_dependency_result.json";
+    pub const PREPARE_SLITHER_LOG: &str = "logs/prepare_slither_result.json";
+    pub const PREPARE_TOOLING_LOG: &str = "logs/prepare_tooling_result.json";
+    pub const AGGREGATE_MATERIALS_LOG: &str = "logs/aggregate_materials_result.json";
+    pub const SLITHER_BUILD_MANIFEST: &str = "slither_project/build_manifest.json";
+    pub const FOUNDRY_BUILD_MANIFEST: &str = "foundry_project/build_manifest.json";
+    pub const ECHIDNA_BUILD_MANIFEST: &str = "echidna_project/build_manifest.json";
+}
+
 #[derive(Clone, Debug)]
 pub struct RunWorkspace {
     pub project_root: PathBuf,
-    pub root: PathBuf,
-    pub run_id: RunId,
-    pub input_dir: PathBuf,
-    pub artifacts_dir: PathBuf,
-    pub reports_dir: PathBuf,
-    pub logs_dir: PathBuf,
+    paths: RunPaths,
 }
 
 pub struct RunGuard {
     file: File,
 }
 
+#[derive(Clone, Debug)]
+pub struct RunPaths {
+    root: PathBuf,
+    run_id: RunId,
+    input_dir: PathBuf,
+    artifacts_dir: PathBuf,
+    reports_dir: PathBuf,
+    logs_dir: PathBuf,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct RunWorkspaceStore<'a> {
+    root: &'a Path,
+}
+
+#[derive(Clone, Debug)]
+pub struct RunLock {
+    path: PathBuf,
+}
+
 impl Drop for RunGuard {
     fn drop(&mut self) {
         let _ = self.file.unlock();
+    }
+}
+
+impl RunPaths {
+    fn new(root: &Path, run_id: &RunId) -> Self {
+        Self {
+            root: root.to_path_buf(),
+            run_id: run_id.clone(),
+            input_dir: root.join("input"),
+            artifacts_dir: root.join("artifacts"),
+            reports_dir: root.join("reports"),
+            logs_dir: root.join("logs"),
+        }
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    pub fn run_id(&self) -> &RunId {
+        &self.run_id
+    }
+
+    pub fn input_dir(&self) -> &Path {
+        &self.input_dir
+    }
+
+    pub fn artifacts_dir(&self) -> &Path {
+        &self.artifacts_dir
+    }
+
+    pub fn reports_dir(&self) -> &Path {
+        &self.reports_dir
+    }
+
+    pub fn logs_dir(&self) -> &Path {
+        &self.logs_dir
+    }
+
+    pub fn resolve(&self, relative_path: impl AsRef<str>) -> PathBuf {
+        self.root
+            .join(WorkspaceRelPath::new(relative_path).as_str())
+    }
+
+    pub fn relative(&self, path: &Path) -> AppResult<WorkspaceRelPath> {
+        let rel = path.strip_prefix(self.root()).map_err(|_| {
+            AppError::Message(format!("path is outside workspace: {}", path.display()))
+        })?;
+        Ok(WorkspaceRelPath::new(rel.to_string_lossy()))
+    }
+}
+
+impl RunWorkspaceStore<'_> {
+    fn new(root: &Path) -> RunWorkspaceStore<'_> {
+        RunWorkspaceStore { root }
+    }
+
+    pub fn write_json<T: Serialize>(
+        &self,
+        relative_path: impl AsRef<str>,
+        payload: &T,
+    ) -> AppResult<WorkspaceRelPath> {
+        let relative_path = WorkspaceRelPath::new(relative_path);
+        let path = self.root.join(relative_path.as_str());
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut file = File::create(&path)?;
+        file.write_all(to_pretty_json(payload)?.as_bytes())?;
+        file.write_all(b"\n")?;
+        Ok(relative_path)
+    }
+
+    pub fn write_text(
+        &self,
+        relative_path: impl AsRef<str>,
+        content: &str,
+    ) -> AppResult<WorkspaceRelPath> {
+        let relative_path = WorkspaceRelPath::new(relative_path);
+        let path = self.root.join(relative_path.as_str());
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&path, content)?;
+        Ok(relative_path)
+    }
+}
+
+impl RunLock {
+    fn new(root: &Path) -> Self {
+        Self {
+            path: root.join(".run.lock"),
+        }
+    }
+
+    pub fn acquire(&self) -> AppResult<RunGuard> {
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&self.path)?;
+        file.lock_exclusive()?;
+        Ok(RunGuard { file })
     }
 }
 
@@ -64,8 +208,8 @@ impl RunWorkspace {
     ) -> AppResult<Self> {
         let workspace = Self::from_root(project_root, root, run_id);
         workspace.ensure_dirs()?;
-        workspace.write_json(
-            "input/run_meta.json",
+        workspace.store().write_json(
+            paths::RUN_META,
             &RunMeta {
                 run_id: run_id.clone(),
                 id_scheme: "sha256-base64url-v1".to_string(),
@@ -91,86 +235,49 @@ impl RunWorkspace {
     fn from_root(project_root: &Path, root: &Path, run_id: &RunId) -> Self {
         Self {
             project_root: project_root.to_path_buf(),
-            root: root.to_path_buf(),
-            run_id: run_id.clone(),
-            input_dir: root.join("input"),
-            artifacts_dir: root.join("artifacts"),
-            reports_dir: root.join("reports"),
-            logs_dir: root.join("logs"),
+            paths: RunPaths::new(root, run_id),
         }
     }
 
     pub fn ensure_dirs(&self) -> AppResult<()> {
         for dir in [
-            &self.input_dir,
-            &self.artifacts_dir,
-            &self.reports_dir,
-            &self.logs_dir,
+            self.paths.input_dir(),
+            self.paths.artifacts_dir(),
+            self.paths.reports_dir(),
+            self.paths.logs_dir(),
         ] {
             fs::create_dir_all(dir)?;
         }
         Ok(())
     }
 
-    pub fn write_json<T: Serialize>(
-        &self,
-        relative_path: impl AsRef<str>,
-        payload: &T,
-    ) -> AppResult<WorkspaceRelPath> {
-        let relative_path = WorkspaceRelPath::new(relative_path);
-        let path = self.root.join(relative_path.as_str());
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut file = File::create(&path)?;
-        file.write_all(to_pretty_json(payload)?.as_bytes())?;
-        file.write_all(b"\n")?;
-        self.relative(&path)
+    pub fn root(&self) -> &Path {
+        self.paths.root()
     }
 
-    pub fn write_text(
-        &self,
-        relative_path: impl AsRef<str>,
-        content: &str,
-    ) -> AppResult<WorkspaceRelPath> {
-        let relative_path = WorkspaceRelPath::new(relative_path);
-        let path = self.root.join(relative_path.as_str());
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(&path, content)?;
-        self.relative(&path)
+    pub fn run_id(&self) -> &RunId {
+        self.paths.run_id()
     }
 
-    pub fn relative(&self, path: &Path) -> AppResult<WorkspaceRelPath> {
-        let rel = path.strip_prefix(&self.root).map_err(|_| {
-            AppError::Message(format!("path is outside workspace: {}", path.display()))
-        })?;
-        Ok(WorkspaceRelPath::new(rel.to_string_lossy()))
+    pub fn paths(&self) -> &RunPaths {
+        &self.paths
     }
 
-    pub fn lock(&self) -> AppResult<RunGuard> {
-        let lock_path = self.root.join(".run.lock");
-        if let Some(parent) = lock_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(lock_path)?;
-        file.lock_exclusive()?;
-        Ok(RunGuard { file })
+    pub fn store(&self) -> RunWorkspaceStore<'_> {
+        RunWorkspaceStore::new(self.root())
+    }
+
+    pub fn lock_handle(&self) -> RunLock {
+        RunLock::new(self.root())
     }
 }
 
 pub fn load_request_context(workspace: &RunWorkspace) -> AppResult<RunRequest> {
-    let path = workspace.root.join("input/request.json");
+    let path = workspace.paths().resolve(paths::REQUEST);
     if !path.exists() {
         return Err(AppError::RunNotFound(format!(
             "missing request context for run_id {}: {}",
-            workspace.run_id,
+            workspace.run_id(),
             path.display()
         )));
     }
@@ -236,6 +343,7 @@ mod tests {
         .expect("create workspace");
 
         let relative = workspace
+            .store()
             .write_json(
                 "input/request.json",
                 &RunRequest {
@@ -246,9 +354,9 @@ mod tests {
             )
             .expect("write request");
 
-        assert_eq!(relative.as_str(), "input/request.json");
+        assert_eq!(relative.as_str(), paths::REQUEST);
         let written =
-            fs::read_to_string(workspace.root.join("input/request.json")).expect("read request");
+            fs::read_to_string(workspace.paths().resolve(paths::REQUEST)).expect("read request");
         assert!(written.ends_with('\n'));
         assert!(written.contains("\n  \"address\": "));
     }

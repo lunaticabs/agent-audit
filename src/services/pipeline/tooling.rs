@@ -5,18 +5,19 @@ use regex::Regex;
 use serde_json::Value;
 
 use crate::error::AppResult;
-use crate::models::envelope::StepStatus;
+use crate::models::artifact::{ArtifactKind, ArtifactStatus, ArtifactStep};
 use crate::models::identity::{ChainAlias, EvmAddress, RunId};
 use crate::models::path::{RelativePath, WorkspaceRelPath};
 use crate::models::run::RunTarget;
 use crate::models::source::{SourceBundleArtifact, SourceMetadata};
+use crate::models::step::StepStatus;
 use crate::models::tooling::{
     EchidnaBuildManifest, FoundryBuildManifest, NodeModuleLink, RunArtifactHeader,
     SlitherBuildManifest, SlitherInputsArtifact, SolcSelectStatus, SourceLink, SourceLinkKind,
     ToolCommandStatus, ToolWorkspaceManifest, ToolWorkspaceManifestSet, ToolingManifest,
 };
 use crate::services::source_provider::{extract_semver, merge_unique_lists};
-use crate::workspace::RunWorkspace;
+use crate::workspace::{RunWorkspace, paths};
 
 use super::AuditPipelineService;
 use super::source::{
@@ -32,59 +33,36 @@ impl AuditPipelineService {
         address: &EvmAddress,
         chain: &ChainAlias,
     ) -> AppResult<StepStatus> {
-        let slither_root = self.workspace.root.join("slither_project");
+        let slither_root = self.workspace.root().join("slither_project");
         let bundle_payload = self.load_source_bundle_payload()?;
         if !bundle_payload.is_fetched() {
-            recreate_dir(&slither_root)?;
-            let manifest_path = self.workspace.write_json(
-                "slither_project/build_manifest.json",
-                &SlitherBuildManifest {
-                    header: build_header(
-                        address,
-                        chain,
-                        &self.workspace.run_id,
-                        StepStatus::SourceNotFetched,
-                    ),
-                    note: Some(
-                        "Fetch verified source before preparing a Slither project.".to_string(),
-                    ),
-                    ..SlitherBuildManifest::default()
+            return self.prepare_slither_precondition(
+                address,
+                chain,
+                &slither_root,
+                PreconditionSpec {
+                    status: StepStatus::SourceNotFetched,
+                    note: "Fetch verified source before preparing a Slither project.",
+                    artifact_status: StepStatus::ConfiguredNotExecuted,
+                    summary:
+                        "Skipped Slither project preparation because source fetching did not complete.",
                 },
-            )?;
-            self.record(
-                "prepare_slither_project",
-                &manifest_path,
-                "prep",
-                "configured_not_executed",
-                "Skipped Slither project preparation because source fetching did not complete.",
             );
-            return Ok(StepStatus::SourceNotFetched);
         }
 
-        let sources_root = self.workspace.root.join("sources");
+        let sources_root = self.workspace.root().join("sources");
         if !sources_root.exists() {
-            recreate_dir(&slither_root)?;
-            let manifest_path = self.workspace.write_json(
-                "slither_project/build_manifest.json",
-                &SlitherBuildManifest {
-                    header: build_header(
-                        address,
-                        chain,
-                        &self.workspace.run_id,
-                        StepStatus::SourceFilesMissing,
-                    ),
-                    note: Some("Source bundle exists but sources/ is missing.".to_string()),
-                    ..SlitherBuildManifest::default()
+            return self.prepare_slither_precondition(
+                address,
+                chain,
+                &slither_root,
+                PreconditionSpec {
+                    status: StepStatus::SourceFilesMissing,
+                    note: "Source bundle exists but sources/ is missing.",
+                    artifact_status: StepStatus::ExecutedWithError,
+                    summary: "Failed Slither project preparation because source files are missing.",
                 },
-            )?;
-            self.record(
-                "prepare_slither_project",
-                &manifest_path,
-                "prep",
-                "executed_with_error",
-                "Failed Slither project preparation because source files are missing.",
             );
-            return Ok(StepStatus::SourceFilesMissing);
         }
 
         recreate_dir(&slither_root)?;
@@ -106,11 +84,11 @@ impl AuditPipelineService {
             preferred_settings.prepared_root.clone(),
         );
 
-        let remappings_path = self.workspace.write_text(
+        let remappings_path = self.workspace.store().write_text(
             "slither_project/remappings.txt",
             &render_line_list(&preferred_settings.remappings),
         )?;
-        let config_path = self.workspace.write_json(
+        let config_path = self.workspace.store().write_json(
             "slither_project/slither_inputs.json",
             &SlitherInputsArtifact {
                 status: StepStatus::Prepared,
@@ -125,23 +103,28 @@ impl AuditPipelineService {
             },
         )?;
         self.record(
-            "prepare_slither_project",
+            ArtifactStep::PrepareSlitherProject,
             &remappings_path,
-            "prep",
-            "executed",
+            ArtifactKind::Prep,
+            ArtifactStatus::Executed,
             "Prepared Slither remappings.",
         );
         self.record(
-            "prepare_slither_project",
+            ArtifactStep::PrepareSlitherProject,
             &config_path,
-            "prep",
-            "executed",
+            ArtifactKind::Prep,
+            ArtifactStatus::Executed,
             "Prepared Slither config metadata.",
         );
-        let manifest_path = self.workspace.write_json(
-            "slither_project/build_manifest.json",
+        let manifest_path = self.workspace.store().write_json(
+            paths::SLITHER_BUILD_MANIFEST,
             &SlitherBuildManifest {
-                header: build_header(address, chain, &self.workspace.run_id, StepStatus::Prepared),
+                header: build_header(
+                    address,
+                    chain,
+                    self.workspace.run_id(),
+                    StepStatus::Prepared,
+                ),
                 slither_project_root: Some(WorkspaceRelPath::new("slither_project")),
                 analysis_target: Some(prepared_analysis_target),
                 compiler_version: preferred_settings.compiler_version,
@@ -159,13 +142,39 @@ impl AuditPipelineService {
             },
         )?;
         self.record(
-            "prepare_slither_project",
+            ArtifactStep::PrepareSlitherProject,
             &manifest_path,
-            "prep",
-            "executed",
+            ArtifactKind::Prep,
+            ArtifactStatus::Executed,
             "Prepared a deterministic Slither project manifest.",
         );
         Ok(StepStatus::Prepared)
+    }
+
+    fn prepare_slither_precondition(
+        &mut self,
+        address: &EvmAddress,
+        chain: &ChainAlias,
+        slither_root: &Path,
+        spec: PreconditionSpec<'_>,
+    ) -> AppResult<StepStatus> {
+        recreate_dir(slither_root)?;
+        let manifest_path = self.workspace.store().write_json(
+            paths::SLITHER_BUILD_MANIFEST,
+            &SlitherBuildManifest {
+                header: build_header(address, chain, self.workspace.run_id(), spec.status),
+                note: Some(spec.note.to_string()),
+                ..SlitherBuildManifest::default()
+            },
+        )?;
+        self.record(
+            ArtifactStep::PrepareSlitherProject,
+            &manifest_path,
+            ArtifactKind::Prep,
+            spec.artifact_status,
+            spec.summary,
+        );
+        Ok(spec.status)
     }
 
     pub fn prepare_tooling_workspaces(
@@ -184,32 +193,32 @@ impl AuditPipelineService {
             foundry_status,
             echidna_status,
         );
-        let manifest_path = self.workspace.write_json(
-            "artifacts/tooling_manifest.json",
+        let manifest_path = self.workspace.store().write_json(
+            paths::TOOLING_MANIFEST,
             &ToolingManifest {
-                header: build_header(address, chain, &self.workspace.run_id, status),
+                header: build_header(address, chain, self.workspace.run_id(), status),
                 source_fetch_status: source_status,
                 workspaces: ToolWorkspaceManifestSet {
                     slither: ToolWorkspaceManifest {
                         status: slither_status,
-                        manifest_path: WorkspaceRelPath::new("slither_project/build_manifest.json"),
+                        manifest_path: WorkspaceRelPath::new(paths::SLITHER_BUILD_MANIFEST),
                     },
                     foundry: ToolWorkspaceManifest {
                         status: foundry_status,
-                        manifest_path: WorkspaceRelPath::new("foundry_project/build_manifest.json"),
+                        manifest_path: WorkspaceRelPath::new(paths::FOUNDRY_BUILD_MANIFEST),
                     },
                     echidna: ToolWorkspaceManifest {
                         status: echidna_status,
-                        manifest_path: WorkspaceRelPath::new("echidna_project/build_manifest.json"),
+                        manifest_path: WorkspaceRelPath::new(paths::ECHIDNA_BUILD_MANIFEST),
                     },
                 },
             },
         )?;
         self.record(
-            "prepare_tooling_workspaces",
+            ArtifactStep::PrepareToolingWorkspaces,
             &manifest_path,
-            "prep",
-            status.as_str(),
+            ArtifactKind::Prep,
+            status,
             "Prepared standard working directories for supported analysis tools.",
         );
         Ok(status)
@@ -230,7 +239,7 @@ impl AuditPipelineService {
             recreate_symlink(&link_path, &path)?;
             linked.push(SourceLink {
                 path: RelativePath::new(file_name),
-                target: self.workspace.relative(&path)?,
+                target: self.workspace.paths().relative(&path)?,
                 kind: Some(if path.is_dir() {
                     SourceLinkKind::Directory
                 } else {
@@ -273,8 +282,8 @@ impl AuditPipelineService {
                     links.push(NodeModuleLink {
                         alias: format!("{name}/{alias_name}"),
                         version,
-                        link_path: self.workspace.relative(&link_path)?,
-                        target: self.workspace.relative(&package_path)?,
+                        link_path: self.workspace.paths().relative(&link_path)?,
+                        target: self.workspace.paths().relative(&package_path)?,
                     });
                 }
             } else {
@@ -284,8 +293,8 @@ impl AuditPipelineService {
                 links.push(NodeModuleLink {
                     alias: alias_name,
                     version,
-                    link_path: self.workspace.relative(&link_path)?,
-                    target: self.workspace.relative(&path)?,
+                    link_path: self.workspace.paths().relative(&link_path)?,
+                    target: self.workspace.paths().relative(&path)?,
                 });
             }
         }
@@ -298,58 +307,35 @@ impl AuditPipelineService {
         chain: &ChainAlias,
         bundle_payload: &SourceBundleArtifact,
     ) -> AppResult<StepStatus> {
-        let foundry_root = self.workspace.root.join("foundry_project");
+        let foundry_root = self.workspace.root().join("foundry_project");
         if !bundle_payload.is_fetched() {
-            recreate_dir(&foundry_root)?;
-            let manifest_path = self.workspace.write_json(
-                "foundry_project/build_manifest.json",
-                &FoundryBuildManifest {
-                    header: build_header(
-                        address,
-                        chain,
-                        &self.workspace.run_id,
-                        StepStatus::SourceNotFetched,
-                    ),
-                    note: Some(
-                        "Fetch verified source before preparing a Foundry project.".to_string(),
-                    ),
-                    ..FoundryBuildManifest::default()
+            return self.prepare_foundry_precondition(
+                address,
+                chain,
+                &foundry_root,
+                PreconditionSpec {
+                    status: StepStatus::SourceNotFetched,
+                    note: "Fetch verified source before preparing a Foundry project.",
+                    artifact_status: StepStatus::ConfiguredNotExecuted,
+                    summary:
+                        "Skipped Foundry project preparation because source fetching did not complete.",
                 },
-            )?;
-            self.record(
-                "prepare_foundry_project",
-                &manifest_path,
-                "prep",
-                "configured_not_executed",
-                "Skipped Foundry project preparation because source fetching did not complete.",
             );
-            return Ok(StepStatus::SourceNotFetched);
         }
 
-        let sources_root = self.workspace.root.join("sources");
+        let sources_root = self.workspace.root().join("sources");
         if !sources_root.exists() {
-            recreate_dir(&foundry_root)?;
-            let manifest_path = self.workspace.write_json(
-                "foundry_project/build_manifest.json",
-                &FoundryBuildManifest {
-                    header: build_header(
-                        address,
-                        chain,
-                        &self.workspace.run_id,
-                        StepStatus::SourceFilesMissing,
-                    ),
-                    note: Some("Source bundle exists but sources/ is missing.".to_string()),
-                    ..FoundryBuildManifest::default()
+            return self.prepare_foundry_precondition(
+                address,
+                chain,
+                &foundry_root,
+                PreconditionSpec {
+                    status: StepStatus::SourceFilesMissing,
+                    note: "Source bundle exists but sources/ is missing.",
+                    artifact_status: StepStatus::ExecutedWithError,
+                    summary: "Failed Foundry project preparation because source files are missing.",
                 },
-            )?;
-            self.record(
-                "prepare_foundry_project",
-                &manifest_path,
-                "prep",
-                "executed_with_error",
-                "Failed Foundry project preparation because source files are missing.",
             );
-            return Ok(StepStatus::SourceFilesMissing);
         }
 
         let settings = tool_project_settings(bundle_payload);
@@ -368,38 +354,46 @@ impl AuditPipelineService {
             settings.remappings.as_slice(),
             generated_remappings.as_slice(),
         ]);
-        let remappings_path = self.workspace.write_text(
+        let remappings_path = self.workspace.store().write_text(
             "foundry_project/remappings.txt",
             &render_line_list(&remappings),
         )?;
         self.workspace
+            .store()
             .write_text("foundry_project/test/.gitkeep", "")?;
         self.workspace
+            .store()
             .write_text("foundry_project/script/.gitkeep", "")?;
         self.workspace
+            .store()
             .write_text("foundry_project/lib/.gitkeep", "")?;
-        let foundry_toml_path = self.workspace.write_text(
+        let foundry_toml_path = self.workspace.store().write_text(
             "foundry_project/foundry.toml",
             &render_foundry_toml(&settings, &remappings),
         )?;
         self.record(
-            "prepare_foundry_project",
+            ArtifactStep::PrepareFoundryProject,
             &remappings_path,
-            "prep",
-            "executed",
+            ArtifactKind::Prep,
+            ArtifactStatus::Executed,
             "Prepared Foundry remappings.",
         );
         self.record(
-            "prepare_foundry_project",
+            ArtifactStep::PrepareFoundryProject,
             &foundry_toml_path,
-            "prep",
-            "executed",
+            ArtifactKind::Prep,
+            ArtifactStatus::Executed,
             "Prepared a deterministic Foundry config.",
         );
-        let manifest_path = self.workspace.write_json(
-            "foundry_project/build_manifest.json",
+        let manifest_path = self.workspace.store().write_json(
+            paths::FOUNDRY_BUILD_MANIFEST,
             &FoundryBuildManifest {
-                header: build_header(address, chain, &self.workspace.run_id, StepStatus::Prepared),
+                header: build_header(
+                    address,
+                    chain,
+                    self.workspace.run_id(),
+                    StepStatus::Prepared,
+                ),
                 project_root: Some(WorkspaceRelPath::new("foundry_project")),
                 analysis_target: Some(analysis_target_for_prepared(bundle_payload)),
                 source_links,
@@ -421,13 +415,39 @@ impl AuditPipelineService {
             },
         )?;
         self.record(
-            "prepare_foundry_project",
+            ArtifactStep::PrepareFoundryProject,
             &manifest_path,
-            "prep",
-            "executed",
+            ArtifactKind::Prep,
+            ArtifactStatus::Executed,
             "Prepared a deterministic Foundry project manifest.",
         );
         Ok(StepStatus::Prepared)
+    }
+
+    fn prepare_foundry_precondition(
+        &mut self,
+        address: &EvmAddress,
+        chain: &ChainAlias,
+        foundry_root: &Path,
+        spec: PreconditionSpec<'_>,
+    ) -> AppResult<StepStatus> {
+        recreate_dir(foundry_root)?;
+        let manifest_path = self.workspace.store().write_json(
+            paths::FOUNDRY_BUILD_MANIFEST,
+            &FoundryBuildManifest {
+                header: build_header(address, chain, self.workspace.run_id(), spec.status),
+                note: Some(spec.note.to_string()),
+                ..FoundryBuildManifest::default()
+            },
+        )?;
+        self.record(
+            ArtifactStep::PrepareFoundryProject,
+            &manifest_path,
+            ArtifactKind::Prep,
+            spec.artifact_status,
+            spec.summary,
+        );
+        Ok(spec.status)
     }
 
     fn prepare_echidna_project(
@@ -436,58 +456,35 @@ impl AuditPipelineService {
         chain: &ChainAlias,
         bundle_payload: &SourceBundleArtifact,
     ) -> AppResult<StepStatus> {
-        let echidna_root = self.workspace.root.join("echidna_project");
+        let echidna_root = self.workspace.root().join("echidna_project");
         if !bundle_payload.is_fetched() {
-            recreate_dir(&echidna_root)?;
-            let manifest_path = self.workspace.write_json(
-                "echidna_project/build_manifest.json",
-                &EchidnaBuildManifest {
-                    header: build_header(
-                        address,
-                        chain,
-                        &self.workspace.run_id,
-                        StepStatus::SourceNotFetched,
-                    ),
-                    note: Some(
-                        "Fetch verified source before preparing an Echidna project.".to_string(),
-                    ),
-                    ..EchidnaBuildManifest::default()
+            return self.prepare_echidna_precondition(
+                address,
+                chain,
+                &echidna_root,
+                PreconditionSpec {
+                    status: StepStatus::SourceNotFetched,
+                    note: "Fetch verified source before preparing an Echidna project.",
+                    artifact_status: StepStatus::ConfiguredNotExecuted,
+                    summary:
+                        "Skipped Echidna project preparation because source fetching did not complete.",
                 },
-            )?;
-            self.record(
-                "prepare_echidna_project",
-                &manifest_path,
-                "prep",
-                "configured_not_executed",
-                "Skipped Echidna project preparation because source fetching did not complete.",
             );
-            return Ok(StepStatus::SourceNotFetched);
         }
 
-        let sources_root = self.workspace.root.join("sources");
+        let sources_root = self.workspace.root().join("sources");
         if !sources_root.exists() {
-            recreate_dir(&echidna_root)?;
-            let manifest_path = self.workspace.write_json(
-                "echidna_project/build_manifest.json",
-                &EchidnaBuildManifest {
-                    header: build_header(
-                        address,
-                        chain,
-                        &self.workspace.run_id,
-                        StepStatus::SourceFilesMissing,
-                    ),
-                    note: Some("Source bundle exists but sources/ is missing.".to_string()),
-                    ..EchidnaBuildManifest::default()
+            return self.prepare_echidna_precondition(
+                address,
+                chain,
+                &echidna_root,
+                PreconditionSpec {
+                    status: StepStatus::SourceFilesMissing,
+                    note: "Source bundle exists but sources/ is missing.",
+                    artifact_status: StepStatus::ExecutedWithError,
+                    summary: "Failed Echidna project preparation because source files are missing.",
                 },
-            )?;
-            self.record(
-                "prepare_echidna_project",
-                &manifest_path,
-                "prep",
-                "executed_with_error",
-                "Failed Echidna project preparation because source files are missing.",
             );
-            return Ok(StepStatus::SourceFilesMissing);
         }
 
         let settings = tool_project_settings(bundle_payload);
@@ -507,24 +504,31 @@ impl AuditPipelineService {
             generated_remappings.as_slice(),
         ]);
         self.workspace
+            .store()
             .write_text("echidna_project/test/.gitkeep", "")?;
         self.workspace
+            .store()
             .write_text("echidna_project/lib/.gitkeep", "")?;
-        let config_path = self.workspace.write_text(
+        let config_path = self.workspace.store().write_text(
             "echidna_project/echidna.yaml",
             &render_echidna_yaml(&settings),
         )?;
         self.record(
-            "prepare_echidna_project",
+            ArtifactStep::PrepareEchidnaProject,
             &config_path,
-            "prep",
-            "executed",
+            ArtifactKind::Prep,
+            ArtifactStatus::Executed,
             "Prepared an Echidna config scaffold.",
         );
-        let manifest_path = self.workspace.write_json(
-            "echidna_project/build_manifest.json",
+        let manifest_path = self.workspace.store().write_json(
+            paths::ECHIDNA_BUILD_MANIFEST,
             &EchidnaBuildManifest {
-                header: build_header(address, chain, &self.workspace.run_id, StepStatus::Prepared),
+                header: build_header(
+                    address,
+                    chain,
+                    self.workspace.run_id(),
+                    StepStatus::Prepared,
+                ),
                 project_root: Some(WorkspaceRelPath::new("echidna_project")),
                 analysis_target: Some(analysis_target_for_prepared(bundle_payload)),
                 source_links,
@@ -544,13 +548,39 @@ impl AuditPipelineService {
             },
         )?;
         self.record(
-            "prepare_echidna_project",
+            ArtifactStep::PrepareEchidnaProject,
             &manifest_path,
-            "prep",
-            "executed",
+            ArtifactKind::Prep,
+            ArtifactStatus::Executed,
             "Prepared a deterministic Echidna project manifest.",
         );
         Ok(StepStatus::Prepared)
+    }
+
+    fn prepare_echidna_precondition(
+        &mut self,
+        address: &EvmAddress,
+        chain: &ChainAlias,
+        echidna_root: &Path,
+        spec: PreconditionSpec<'_>,
+    ) -> AppResult<StepStatus> {
+        recreate_dir(echidna_root)?;
+        let manifest_path = self.workspace.store().write_json(
+            paths::ECHIDNA_BUILD_MANIFEST,
+            &EchidnaBuildManifest {
+                header: build_header(address, chain, self.workspace.run_id(), spec.status),
+                note: Some(spec.note.to_string()),
+                ..EchidnaBuildManifest::default()
+            },
+        )?;
+        self.record(
+            ArtifactStep::PrepareEchidnaProject,
+            &manifest_path,
+            ArtifactKind::Prep,
+            spec.artifact_status,
+            spec.summary,
+        );
+        Ok(spec.status)
     }
 
     fn link_tool_project_sources(
@@ -575,7 +605,7 @@ impl AuditPipelineService {
             if !entry.file_type().is_file() {
                 continue;
             }
-            let relative = self.workspace.relative(entry.path())?;
+            let relative = self.workspace.paths().relative(entry.path())?;
             let source_relative = relative.as_str().trim_start_matches("sources/").to_string();
             if source_relative.starts_with("dependencies/") || source_relative.starts_with("npm/") {
                 continue;
@@ -634,6 +664,13 @@ struct ToolProjectSettings {
     optimizer_runs: u64,
     evm_version: String,
     remappings: Vec<String>,
+}
+
+struct PreconditionSpec<'a> {
+    status: StepStatus,
+    note: &'a str,
+    artifact_status: StepStatus,
+    summary: &'a str,
 }
 
 fn build_header(

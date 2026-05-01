@@ -1,10 +1,11 @@
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use std::path::PathBuf;
-use std::str::FromStr;
 
+use crate::models::command::CommandName;
 use crate::models::identity::{ChainAlias, EvmAddress, RunId};
 use crate::models::path::WorkspaceRelPath;
+use crate::models::step::StepStatus;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -13,53 +14,6 @@ pub enum CommandStatus {
     RetryableError,
     FatalError,
     PreconditionMissing,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum StepStatus {
-    #[default]
-    NotPrepared,
-    Prepared,
-    Executed,
-    SourceFetched,
-    SourceFetchFailed,
-    SourceNotFetched,
-    SourceFilesMissing,
-    SourceApiNotConfigured,
-}
-
-impl StepStatus {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::NotPrepared => "not_prepared",
-            Self::Prepared => "prepared",
-            Self::Executed => "executed",
-            Self::SourceFetched => "source_fetched",
-            Self::SourceFetchFailed => "source_fetch_failed",
-            Self::SourceNotFetched => "source_not_fetched",
-            Self::SourceFilesMissing => "source_files_missing",
-            Self::SourceApiNotConfigured => "source_api_not_configured",
-        }
-    }
-}
-
-impl FromStr for StepStatus {
-    type Err = &'static str;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "not_prepared" => Ok(Self::NotPrepared),
-            "prepared" => Ok(Self::Prepared),
-            "executed" => Ok(Self::Executed),
-            "source_fetched" => Ok(Self::SourceFetched),
-            "source_fetch_failed" => Ok(Self::SourceFetchFailed),
-            "source_not_fetched" => Ok(Self::SourceNotFetched),
-            "source_files_missing" => Ok(Self::SourceFilesMissing),
-            "source_api_not_configured" => Ok(Self::SourceApiNotConfigured),
-            _ => Err("unknown step status"),
-        }
-    }
 }
 
 #[skip_serializing_none]
@@ -110,7 +64,7 @@ pub struct SyncRunPayload {
 pub struct StepPayload {
     pub run_id: RunId,
     pub run_dir: PathBuf,
-    pub step: String,
+    pub step: CommandName,
     pub status: StepStatus,
     pub artifact_index: WorkspaceRelPath,
     pub init_run: Option<InitRunDetails>,
@@ -151,16 +105,4 @@ pub struct PrepareSlitherDetails {
 #[derive(Clone, Debug, Serialize)]
 pub struct AggregateMaterialsDetails {
     pub materials_manifest_path: WorkspaceRelPath,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn step_status_serializes_as_snake_case() {
-        let json = serde_json::to_string(&StepStatus::SourceApiNotConfigured)
-            .expect("serialize step status");
-        assert_eq!(json, "\"source_api_not_configured\"");
-    }
 }

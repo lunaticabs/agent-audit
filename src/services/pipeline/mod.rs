@@ -1,72 +1,52 @@
+mod journal;
 mod materials;
 mod source;
 mod support;
 mod tooling;
 
-use serde::Serialize;
-
 use crate::config::AppConfig;
 use crate::error::AppResult;
-use crate::models::artifact::ArtifactRecord;
-use crate::models::identity::RunId;
-use crate::models::path::WorkspaceRelPath;
 use crate::models::source::SourceBundleArtifact;
-use crate::workspace::RunWorkspace;
+use crate::workspace::{RunWorkspace, paths};
 
-#[derive(Serialize)]
-struct ArtifactIndexRef<'a> {
-    run_id: &'a RunId,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    artifacts: Vec<&'a ArtifactRecord>,
-}
+use self::journal::ArtifactJournal;
 
 pub struct AuditPipelineService {
     pub config: AppConfig,
     pub workspace: RunWorkspace,
-    pub artifacts: Vec<ArtifactRecord>,
+    journal: ArtifactJournal,
 }
 
 impl AuditPipelineService {
     pub fn new(config: AppConfig, workspace: RunWorkspace) -> Self {
-        let artifacts = support::load_existing_artifacts(&workspace);
+        let journal = ArtifactJournal::load(&workspace);
         Self {
             config,
             workspace,
-            artifacts,
+            journal,
         }
     }
 
     pub fn load_source_bundle_payload(&self) -> AppResult<SourceBundleArtifact> {
-        support::read_json_if_exists(&self.workspace.root.join("artifacts/source_bundle.json"))
+        support::read_json_if_exists(&self.workspace.paths().resolve(paths::SOURCE_BUNDLE))
     }
 
-    pub fn write_artifact_index(&self) -> AppResult<WorkspaceRelPath> {
-        let artifacts = self.artifacts.iter().collect::<Vec<_>>();
-        self.workspace.write_json(
-            "artifacts/artifact_index.json",
-            &ArtifactIndexRef {
-                run_id: &self.workspace.run_id,
-                artifacts,
-            },
-        )
+    pub fn write_artifact_index(&self) -> AppResult<crate::models::path::WorkspaceRelPath> {
+        self.journal.write_index(&self.workspace)
     }
 
-    fn record(
+    pub(super) fn record(
         &mut self,
-        step: &str,
-        path: &WorkspaceRelPath,
-        kind: &str,
-        status: &str,
+        step: crate::models::artifact::ArtifactStep,
+        path: &crate::models::path::WorkspaceRelPath,
+        kind: crate::models::artifact::ArtifactKind,
+        status: crate::models::artifact::ArtifactStatus,
         summary: &str,
     ) {
-        self.artifacts
-            .retain(|item| !(item.path == *path && item.step == step && item.kind == kind));
-        self.artifacts.push(ArtifactRecord {
-            step: step.to_string(),
-            path: path.clone(),
-            kind: kind.to_string(),
-            status: status.to_string(),
-            summary: summary.to_string(),
-        });
+        self.journal.record(step, path, kind, status, summary);
+    }
+
+    pub(super) fn artifact_records(&self) -> &[crate::models::artifact::ArtifactRecord] {
+        self.journal.records()
     }
 }
