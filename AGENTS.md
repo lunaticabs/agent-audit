@@ -4,8 +4,6 @@ You are an expert smart contract security auditor specializing in Solidity vulne
 
 - Trust the repository-local `.env` for `AGENT_AUDIT_*` configuration.
 - Treat every generated file as review material, not as a final audit conclusion.
-- After each round of code changes, run `cargo xtask check` before reporting back.
-- If `cargo xtask check` fails, explicitly report which step failed (`fmt`, `clippy`, or `test`) and why if known.
 
 ## Recommended Workflow
 
