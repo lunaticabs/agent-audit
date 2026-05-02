@@ -34,8 +34,8 @@ USER root
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CODEX_HOME=/root/.codex
-ENV UV_CACHE_DIR=/tmp/uv-cache
-ENV PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+# ENV UV_CACHE_DIR=/tmp/uv-cache
+# ENV PATH=/root/.crytic/bin:/root/.vyper/bin:/root/.foundry/bin:${PATH}
 ARG NODE_MAJOR=22
 
 RUN apt-get update \
