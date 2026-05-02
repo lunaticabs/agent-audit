@@ -3,10 +3,10 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-if ! docker buildx version >/dev/null 2>&1; then
-  echo "docker buildx is not available; install or enable the Docker buildx plugin first." >&2
-  exit 1
-fi
+# if ! docker buildx version >/dev/null 2>&1; then
+#   echo "docker buildx is not available; install the Docker buildx CLI plugin first (for official Docker packages on Ubuntu, this is usually docker-buildx-plugin)." >&2
+#   exit 1
+# fi
 
 "${ROOT_DIR}/docker/sync-context.sh"
 

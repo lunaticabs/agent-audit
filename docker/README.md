@@ -23,6 +23,7 @@ Notes:
 - `docker/context/` is generated build input and is ignored by git.
 - The generated context includes only the files needed to build `agent-audit` and ship the Codex runtime assets.
 - `docker/build.sh` checks that `docker buildx` is available, then uses `docker build`, which Docker documents as a wrapper around Buildx for the default builder.
+- If `docker buildx` is missing, install the Docker buildx CLI plugin before building. On Ubuntu with Docker's official apt repo, this is typically the `docker-buildx-plugin` package.
 
 Run a single audit:
 
