@@ -6,6 +6,12 @@ Build:
 ./docker/build.sh
 ```
 
+Direct Docker invocation must also use `docker/` as the build context:
+
+```bash
+docker build -f docker/Dockerfile -t agent-audit-codex docker
+```
+
 Runtime contents:
 
 - `codex`
@@ -20,6 +26,7 @@ Notes:
 - `flake.nix` and `flake.lock` are not copied into the runtime image.
 - Python is included only because `slither-analyzer` and `solc-select` require it at runtime.
 - No batch scheduler is included; the entrypoint runs exactly one Codex audit task.
+- The Docker build context root is `docker/`, not the repository root.
 - `docker/context/` is generated build input and is ignored by git.
 - The generated context includes only the files needed to build `agent-audit` and ship the Codex runtime assets.
 - `docker/build.sh` checks that `docker buildx` is available, then uses `docker build`, which Docker documents as a wrapper around Buildx for the default builder.
