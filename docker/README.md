@@ -3,7 +3,8 @@
 Build:
 
 ```bash
-docker build -t agent-audit-codex .
+./docker/sync-context.sh
+docker build -f docker/Dockerfile -t agent-audit-codex .
 ```
 
 Runtime contents:
@@ -20,6 +21,8 @@ Notes:
 - `flake.nix` and `flake.lock` are not copied into the runtime image.
 - Python is included only because `slither-analyzer` and `solc-select` require it at runtime.
 - No batch scheduler is included; the entrypoint runs exactly one Codex audit task.
+- `docker/context/` is generated build input and is ignored by git.
+- The generated context includes only the files needed to build `agent-audit` and ship the Codex runtime assets.
 
 Run a single audit:
 

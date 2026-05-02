@@ -11,3 +11,4 @@ archive/
 .claude/
 batch_logs/
 configs/
+docker/context/

@@ -2,9 +2,9 @@ FROM docker.io/library/rust:1.88-bookworm AS builder
 
 WORKDIR /build
 
-COPY Cargo.toml Cargo.lock ./
-COPY src ./src
-COPY xtask ./xtask
+COPY context/Cargo.toml context/Cargo.lock ./
+COPY context/src ./src
+COPY context/xtask ./xtask
 
 RUN cargo build --release --bin agent-audit
 
@@ -44,10 +44,8 @@ RUN npm install -g @openai/codex \
 WORKDIR /opt/agent-audit
 
 COPY --from=builder /build/target/release/agent-audit /usr/local/bin/agent-audit
-COPY AGENTS.md ./AGENTS.md
-COPY .codex ./.codex
-COPY .env.example ./.env.example
-COPY runs/.gitkeep ./runs/.gitkeep
+COPY context/AGENTS.md ./AGENTS.md
+COPY context/.codex ./.codex
 COPY entrypoint.sh /usr/local/bin/agent-audit-run
 
 RUN chmod +x /usr/local/bin/agent-audit-run \
