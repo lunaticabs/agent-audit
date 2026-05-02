@@ -18,10 +18,10 @@ docker build -f docker/Dockerfile -t agent-audit:0.1 .
 Run:
 
 ```bash
-APIAPI_API_KEY=... ./docker/run.sh 0x0000000000000000000000000000000000000000 eth
+./docker/run.sh 0x0000000000000000000000000000000000000000 eth
 ```
 
-`docker/run.sh` only starts the container and injects configuration. If the repository-local `.env` exists, it is mounted read-only as `/opt/agent-audit/.env` so the CLI and shell tools see the same `AGENT_AUDIT_*` configuration as the host workflow.
+`docker/run.sh` expects the repository-local `.env` to exist and mounts it read-only as `/opt/agent-audit/.env`. Put both `APIAPI_API_KEY` and the required `AGENT_AUDIT_*` settings there so Codex and the packaged CLI share one configuration source.
 
 Runtime contents:
 
@@ -47,7 +47,6 @@ Run a single audit directly with `docker run`:
 
 ```bash
 docker run --rm \
-  -e APIAPI_API_KEY=... \
   -v "$(pwd)/.env:/opt/agent-audit/.env:ro" \
   agent-audit:0.1 \
   0x0000000000000000000000000000000000000000 eth
