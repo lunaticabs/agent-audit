@@ -6,10 +6,13 @@ Build:
 ./docker/build.sh
 ```
 
+By default this produces `agent-audit:0.1` and first builds a `smoke-test` target that fails early if required tools or packaged files are missing.
+
 Direct Docker invocation should use the repository root as the build context:
 
 ```bash
-docker build -f docker/Dockerfile -t agent-audit-codex .
+docker build -f docker/Dockerfile --target smoke-test -t agent-audit:smoke-test .
+docker build -f docker/Dockerfile -t agent-audit:0.1 .
 ```
 
 Runtime contents:
@@ -29,7 +32,7 @@ Notes:
 - `flake.nix` and `flake.lock` are not copied into the runtime image.
 - No batch scheduler is included; the entrypoint runs exactly one Codex audit task.
 - The Docker build context root is the repository root. Runtime-specific files stay under `docker/`; repository files are copied directly by the Dockerfile.
-- `docker/build.sh` is now a thin wrapper around `docker build -f docker/Dockerfile ... .`.
+- `docker/build.sh` first builds the `smoke-test` target, then builds the final runtime image. Override the default name with `IMAGE_REPO=...` and `IMAGE_TAG=...`.
 - `solc` remains run-dependent. The toolbox image includes `solc-select`, but the exact compiler version needed is only known after `fetch-source` discovers the target contract settings. The runtime therefore still needs network access if a run must install a missing `solc` version on demand.
 
 Run a single audit:
@@ -45,7 +48,7 @@ docker run --rm \
   -e AGENT_AUDIT_MONGO_RUNS_META_COLLECTION=runs_meta \
   -e AGENT_AUDIT_MONGO_RUNS_FILES_COLLECTION=runs_files \
   -v "$(pwd)/runs:/opt/agent-audit/runs" \
-  agent-audit-codex \
+  agent-audit:0.1 \
   0x0000000000000000000000000000000000000000 eth
 ```
 

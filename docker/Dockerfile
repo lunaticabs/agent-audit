@@ -28,7 +28,7 @@ COPY xtask ./xtask
 
 RUN cargo build --release --bin agent-audit
 
-FROM ${TOOLBOX_IMAGE}
+FROM ${TOOLBOX_IMAGE} AS runtime
 
 USER root
 
@@ -73,3 +73,22 @@ RUN chmod +x /usr/local/bin/agent-audit-run \
     && cp /opt/agent-audit/.codex/config.toml /root/.codex/config.toml
 
 ENTRYPOINT ["/usr/local/bin/agent-audit-run"]
+
+FROM runtime AS smoke-test
+
+RUN bash -lc 'set -euo pipefail \
+    && command -v bash \
+    && command -v codex \
+    && command -v agent-audit \
+    && command -v slither \
+    && command -v solc-select \
+    && command -v forge \
+    && command -v cast \
+    && command -v anvil \
+    && command -v echidna \
+    && test -f /opt/agent-audit/AGENTS.md \
+    && test -f /opt/agent-audit/.codex/config.toml \
+    && grep -q "^model_provider = \"apiapi\"$" /opt/agent-audit/.codex/config.toml \
+    && grep -q "^approval_policy = \"never\"$" /opt/agent-audit/.codex/config.toml'
+
+FROM runtime AS final
