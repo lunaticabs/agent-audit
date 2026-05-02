@@ -15,6 +15,14 @@ docker build -f docker/Dockerfile --target smoke-test -t agent-audit:smoke-test 
 docker build -f docker/Dockerfile -t agent-audit:0.1 .
 ```
 
+Run:
+
+```bash
+APIAPI_API_KEY=... ./docker/run.sh 0x0000000000000000000000000000000000000000 eth
+```
+
+`docker/run.sh` only starts the container and injects configuration. If the repository-local `.env` exists, it is mounted read-only as `/opt/agent-audit/.env` so the CLI and shell tools see the same `AGENT_AUDIT_*` configuration as the host workflow.
+
 Runtime contents:
 
 - `codex`
@@ -35,19 +43,12 @@ Notes:
 - `docker/build.sh` first builds the `smoke-test` target, then builds the final runtime image. Override the default name with `IMAGE_REPO=...` and `IMAGE_TAG=...`.
 - `solc` remains run-dependent. The toolbox image includes `solc-select`, but the exact compiler version needed is only known after `fetch-source` discovers the target contract settings. The runtime therefore still needs network access if a run must install a missing `solc` version on demand.
 
-Run a single audit:
+Run a single audit directly with `docker run`:
 
 ```bash
 docker run --rm \
   -e APIAPI_API_KEY=... \
-  -e AGENT_AUDIT_SOURCE_API_BASE=... \
-  -e AGENT_AUDIT_SOURCE_API_KEY=... \
-  -e AGENT_AUDIT_RPC_URL=... \
-  -e AGENT_AUDIT_MONGO_URI=... \
-  -e AGENT_AUDIT_MONGO_DB=agent_audit \
-  -e AGENT_AUDIT_MONGO_RUNS_META_COLLECTION=runs_meta \
-  -e AGENT_AUDIT_MONGO_RUNS_FILES_COLLECTION=runs_files \
-  -v "$(pwd)/runs:/opt/agent-audit/runs" \
+  -v "$(pwd)/.env:/opt/agent-audit/.env:ro" \
   agent-audit:0.1 \
   0x0000000000000000000000000000000000000000 eth
 ```
