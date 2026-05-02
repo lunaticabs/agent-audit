@@ -5,10 +5,6 @@ description: Use Slither directly in the container shell when verified source is
 
 Run Slither with the CLI-generated `preferred_working_dir` and `preferred_target` from `slither_project/build_manifest.json`.
 
-Container variant:
-
-- The container entrypoint loads `/opt/agent-audit/.env` before launching Codex, so `AGENT_AUDIT_*` environment variables should already be available in shell commands.
-
 Use this workflow:
 
 1. Ensure `slither_project/build_manifest.json` exists. Normally `$workspace` already prepares it. If needed, rerun `agent-audit prepare-tooling --run-id <run_id>` or `agent-audit prepare-slither --run-id <run_id>`.

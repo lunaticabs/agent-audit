@@ -5,11 +5,6 @@ description: Create and fully prepare a run workspace for a contract address ins
 
 # Audit Workspace
 
-Container variant:
-
-- Use the installed `agent-audit` binary directly.
-- Do not use `cargo run`.
-
 Initialize and fully prepare a run workspace:
 
 ```bash

@@ -5,11 +5,6 @@ description: Aggregate prepared findings and write a neutral materials manifest 
 
 # Audit Materials
 
-Container variant:
-
-- Use the installed `agent-audit` binary directly.
-- Do not use `cargo run`.
-
 Aggregate prepared materials:
 
 ```bash

@@ -7,10 +7,6 @@ description: Use Foundry's forge tool in the containerized CLI-prepared run work
 
 Run Forge from `foundry_project/build_manifest.json`'s `preferred_working_dir`.
 
-Container variant:
-
-- The standard container entrypoint loads `/opt/agent-audit/.env` before launching Codex, so `AGENT_AUDIT_RPC_URL` should already be available to shell commands.
-
 Use this workflow:
 
 1. Ensure `foundry_project/build_manifest.json` exists. Normally `$workspace` already prepares it. If needed, rerun `agent-audit prepare-tooling --run-id <run_id>`.

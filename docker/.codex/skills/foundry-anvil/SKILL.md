@@ -9,10 +9,6 @@ description: Use Foundry's anvil tool for local nodes and forked-chain reproduct
 anvil
 ```
 
-Container variant:
-
-- The standard container entrypoint loads `/opt/agent-audit/.env` before launching Codex, so `AGENT_AUDIT_RPC_URL` should already be available to shell commands.
-
 RPC source:
 
 - When fork mode is needed, default to `AGENT_AUDIT_RPC_URL` from the container environment.

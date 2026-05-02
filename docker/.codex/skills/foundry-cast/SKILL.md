@@ -9,10 +9,6 @@ description: Use Foundry's cast tool for RPC queries and on-chain inspection ins
 cast <subcommand> ...
 ```
 
-Container variant:
-
-- The standard container entrypoint loads `/opt/agent-audit/.env` before launching Codex, so `AGENT_AUDIT_RPC_URL` should already be available to shell commands.
-
 RPC source:
 
 - By default, use `AGENT_AUDIT_RPC_URL` from the container environment.
