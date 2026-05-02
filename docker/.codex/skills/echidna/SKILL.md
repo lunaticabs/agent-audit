@@ -11,11 +11,11 @@ Container variant:
 
 - Use the installed `agent-audit` binary directly.
 
-Run Echidna from `echidna_project/build_manifest.json`'s `preferred_working_dir`.
+Run Echidna from `runs/<run_id>/echidna_project/build_manifest.json`'s `preferred_working_dir`.
 
 Use this workflow:
 
-1. Ensure `echidna_project/build_manifest.json` exists. Normally `$workspace` already prepares it. If needed, rerun `agent-audit prepare-tooling --run-id <run_id>`.
+1. Ensure `runs/<run_id>/echidna_project/build_manifest.json` exists. Normally `$workspace` already prepares it. If needed, rerun `agent-audit prepare-tooling --run-id <run_id>`.
 2. `cd runs/<run_id>/echidna_project`
 3. Put custom harnesses under `runs/<run_id>/sources/echidna/` or `runs/<run_id>/echidna_project/test/`.
 
@@ -36,10 +36,10 @@ Guidelines:
 
 - Keep the target narrow.
 - Make the property explicit.
-- Save the exact command, target, and property in `artifacts/echidna_plan.json`.
-- Save raw Echidna output in `artifacts/echidna_output.txt`.
-- If you summarize or normalize candidate findings, save them in `artifacts/echidna_findings.json`.
-- Save any harness or helper source under `sources/echidna/`.
+- Save the exact command, target, and property in `runs/<run_id>/artifacts/echidna_plan.json`.
+- Save raw Echidna output in `runs/<run_id>/artifacts/echidna_output.txt`.
+- If you summarize or normalize candidate findings, save them in `runs/<run_id>/artifacts/echidna_findings.json`.
+- Save any harness or helper source under `runs/<run_id>/sources/echidna/`.
 - Rerun `agent-audit aggregate-materials --run-id <run_id>` if you want the manifest to list these optional artifacts.
 - Treat Echidna output as evidence material to interpret, not as a final verdict.
 

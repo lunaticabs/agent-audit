@@ -3,11 +3,11 @@ name: slither
 description: Use Slither directly in the container shell when verified source is available.
 ---
 
-Run Slither with the CLI-generated `preferred_working_dir` and `preferred_target` from `slither_project/build_manifest.json`.
+Run Slither with the CLI-generated `preferred_working_dir` and `preferred_target` from `runs/<run_id>/slither_project/build_manifest.json`.
 
 Use this workflow:
 
-1. Ensure `slither_project/build_manifest.json` exists. Normally `$workspace` already prepares it. If needed, rerun `agent-audit prepare-tooling --run-id <run_id>` or `agent-audit prepare-slither --run-id <run_id>`.
+1. Ensure `runs/<run_id>/slither_project/build_manifest.json` exists. Normally `$workspace` already prepares it. If needed, rerun `agent-audit prepare-tooling --run-id <run_id>` or `agent-audit prepare-slither --run-id <run_id>`.
 2. Use `preferred_working_dir`, `preferred_target`, `solc_version`, `solc_args`, and `remappings`.
 3. If you intentionally analyze a different target, switch to that target's source root and keep the target path relative to that root.
 

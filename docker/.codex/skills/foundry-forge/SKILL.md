@@ -5,11 +5,11 @@ description: Use Foundry's forge tool in the containerized CLI-prepared run work
 
 # Foundry Forge
 
-Run Forge from `foundry_project/build_manifest.json`'s `preferred_working_dir`.
+Run Forge from `runs/<run_id>/foundry_project/build_manifest.json`'s `preferred_working_dir`.
 
 Use this workflow:
 
-1. Ensure `foundry_project/build_manifest.json` exists. Normally `$workspace` already prepares it. If needed, rerun `agent-audit prepare-tooling --run-id <run_id>`.
+1. Ensure `runs/<run_id>/foundry_project/build_manifest.json` exists. Normally `$workspace` already prepares it. If needed, rerun `agent-audit prepare-tooling --run-id <run_id>`.
 2. `cd runs/<run_id>/foundry_project`
 3. Use `preferred_target`, `solc_version`, and `remappings` from the manifest.
 
@@ -66,11 +66,11 @@ Audit guidance:
 - Use `-vvvv` when the trace matters.
 - `forge script` is useful for local simulation and fork reproduction.
 - Do not add `--broadcast` unless the user explicitly asks for a live transaction.
-- Do not assume the prepared project already has tests or scripts; inspect `foundry_project/` first.
-- Save the exact command, target, and intent in `artifacts/forge_plan.json`.
-- Save raw test or script output in `artifacts/forge_output.txt`.
-- If you summarize a reproduced issue or invariant break, save it in `artifacts/forge_findings.json`.
-- Save any ad-hoc test, script, or harness source under `sources/forge/`.
+- Do not assume the prepared project already has tests or scripts; inspect `runs/<run_id>/foundry_project/` first.
+- Save the exact command, target, and intent in `runs/<run_id>/artifacts/forge_plan.json`.
+- Save raw test or script output in `runs/<run_id>/artifacts/forge_output.txt`.
+- If you summarize a reproduced issue or invariant break, save it in `runs/<run_id>/artifacts/forge_findings.json`.
+- Save any ad-hoc test, script, or harness source under `runs/<run_id>/sources/forge/`.
 - Rerun `agent-audit aggregate-materials --run-id <run_id>` if you want the manifest to list these optional artifacts.
 
 Official docs:

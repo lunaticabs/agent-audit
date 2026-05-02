@@ -14,19 +14,19 @@ agent-audit init-run --chain <chain> --address <address>
 What it does:
 
 - Creates `runs/<run_id>/`
-- Creates `input/`, `artifacts/`, `reports/`, and `logs/`
-- Writes `input/request.json`
-- Writes `input/run_meta.json`
-- Fetches verified source into `sources/`
-- Fetches discovered dependency source into `sources/dependencies/`
-- Runs dependency analysis and writes `artifacts/dependency_findings.json`
-- Prepares `slither_project/`, `foundry_project/`, and `echidna_project/`
-- Writes `artifacts/tooling_manifest.json`
-- Writes `reports/materials_manifest.json`
+- Creates `runs/<run_id>/input/`, `runs/<run_id>/artifacts/`, `runs/<run_id>/reports/`, and `runs/<run_id>/logs/`
+- Writes `runs/<run_id>/input/request.json`
+- Writes `runs/<run_id>/input/run_meta.json`
+- Fetches verified source into `runs/<run_id>/sources/`
+- Fetches discovered dependency source into `runs/<run_id>/sources/dependencies/`
+- Runs dependency analysis and writes `runs/<run_id>/artifacts/dependency_findings.json`
+- Prepares `runs/<run_id>/slither_project/`, `runs/<run_id>/foundry_project/`, and `runs/<run_id>/echidna_project/`
+- Writes `runs/<run_id>/artifacts/tooling_manifest.json`
+- Writes `runs/<run_id>/reports/materials_manifest.json`
 
 Inspect first:
 
-- `reports/materials_manifest.json`
-- `artifacts/source_bundle.json`
-- `artifacts/dependency_findings.json`
-- `artifacts/tooling_manifest.json`
+- `runs/<run_id>/reports/materials_manifest.json`
+- `runs/<run_id>/artifacts/source_bundle.json`
+- `runs/<run_id>/artifacts/dependency_findings.json`
+- `runs/<run_id>/artifacts/tooling_manifest.json`

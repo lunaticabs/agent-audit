@@ -17,14 +17,14 @@ agent-audit <subcommand>
 Suggested order:
 
 1. `$workspace`
-2. inspect `reports/materials_manifest.json`
+2. inspect `runs/<run_id>/reports/materials_manifest.json`
 3. inspect raw evidence files
 
 After that:
 
-- inspect `slither_project/build_manifest.json`
-- inspect `foundry_project/build_manifest.json`
-- inspect `echidna_project/build_manifest.json`
+- inspect `runs/<run_id>/slither_project/build_manifest.json`
+- inspect `runs/<run_id>/foundry_project/build_manifest.json`
+- inspect `runs/<run_id>/echidna_project/build_manifest.json`
 - decide whether to use tools like Slither, Echidna, Forge, Cast, or Anvil
 - if you run direct tools, save their artifacts under the same `runs/<run_id>/artifacts/` tree
 - reuse `$aggregate-materials` if you want the manifest to list those optional artifacts

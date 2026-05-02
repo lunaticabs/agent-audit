@@ -48,9 +48,9 @@ Audit guidance:
 - Prefer running Anvil in a separate terminal/session, then use `cast` or `forge` against that local RPC.
 - Fork mode is the right place to test exploit reproduction, privileged calls, or balance-sensitive paths.
 - Default Anvil accounts are public test accounts only; never treat them as secure keys.
-- Save the launch command, fork source, and intent in `artifacts/anvil_plan.json`.
-- Save startup output or relevant logs in `artifacts/anvil_output.txt`.
-- If you summarize any environment assumptions or reproduction notes, save them in `artifacts/anvil_findings.json`.
+- Save the launch command, fork source, and intent in `runs/<run_id>/artifacts/anvil_plan.json`.
+- Save startup output or relevant logs in `runs/<run_id>/artifacts/anvil_output.txt`.
+- If you summarize any environment assumptions or reproduction notes, save them in `runs/<run_id>/artifacts/anvil_findings.json`.
 - Rerun `agent-audit aggregate-materials --run-id <run_id>` if you want the manifest to list these optional artifacts.
 
 Official docs:

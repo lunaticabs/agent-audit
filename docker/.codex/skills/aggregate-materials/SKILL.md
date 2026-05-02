@@ -13,10 +13,10 @@ agent-audit aggregate-materials --run-id <run_id>
 
 Inspect first:
 
-- `reports/materials_manifest.json`
-- `artifacts/dependency_findings.json`
+- `runs/<run_id>/reports/materials_manifest.json`
+- `runs/<run_id>/artifacts/dependency_findings.json`
 
 Notes:
 
-- Repository-side findings, when present, live in `artifacts/dependency_findings.json`.
-- If you save direct tool artifacts under the current `runs/<run_id>/artifacts/`, rerunning this step will surface them in `reports/materials_manifest.json` under optional tool artifacts.
+- Repository-side findings, when present, live in `runs/<run_id>/artifacts/dependency_findings.json`.
+- If you save direct tool artifacts under the current `runs/<run_id>/artifacts/`, rerunning this step will surface them in `runs/<run_id>/reports/materials_manifest.json` under optional tool artifacts.
