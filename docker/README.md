@@ -3,8 +3,7 @@
 Build:
 
 ```bash
-./docker/sync-context.sh
-docker build -f docker/Dockerfile -t agent-audit-codex .
+./docker/build.sh
 ```
 
 Runtime contents:
@@ -23,6 +22,7 @@ Notes:
 - No batch scheduler is included; the entrypoint runs exactly one Codex audit task.
 - `docker/context/` is generated build input and is ignored by git.
 - The generated context includes only the files needed to build `agent-audit` and ship the Codex runtime assets.
+- `docker/build.sh` uses `docker buildx build` instead of the legacy builder.
 
 Run a single audit:
 
