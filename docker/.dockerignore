@@ -1,0 +1,7 @@
+.git
+target
+runs/*
+!runs/.gitkeep
+.env
+scripts/__pycache__
+**/.DS_Store

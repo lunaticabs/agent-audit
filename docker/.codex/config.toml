@@ -1,0 +1,18 @@
+model_provider = "apiapi"
+model = "gpt-5.4"
+sandbox_mode = "danger-full-access"
+approval_policy = "never"
+model_reasoning_effort = "xhigh"
+
+[model_providers.apiapi]
+name = "apiapi"
+base_url = "https://apiapi.chat/v1"
+wire_api = "responses"
+# env_key = "APIAPI_API_KEY"
+
+[sandbox_danger_full_access]
+network_access = true
+
+[shell_environment_policy]
+inherit = "all"
+set = { UV_CACHE_DIR = "/tmp/uv-cache" }
