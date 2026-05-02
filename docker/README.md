@@ -36,7 +36,7 @@ Notes:
 
 - The runtime base image is `ghcr.io/trailofbits/eth-security-toolbox/ci:nightly-20260406`, pinned by digest in [docker/Dockerfile](/Users/lunaticabs/code/agent-audit/docker/Dockerfile).
 - `agent-audit` is built in an Ubuntu 22.04 builder stage so the resulting binary is ABI-compatible with the Ubuntu 22.04 toolbox runtime.
-- The image injects a dedicated container Codex config from `docker/config.toml`. It fixes provider, model, `wire_api = "responses"`, `sandbox_mode = "danger-full-access"`, `approval_policy = "never"`, and `shell_environment_policy.inherit = "all"`.
+- The image injects a dedicated container Codex bundle from `docker/.codex/`. This includes a container-specific `config.toml` plus rewritten audit skills that use direct `agent-audit` and tool binaries instead of host-development workflows such as `cargo run` or manual `.env` sourcing.
 - `flake.nix` and `flake.lock` are not copied into the runtime image.
 - No batch scheduler is included; the entrypoint runs exactly one Codex audit task.
 - The Docker build context root is the repository root. Runtime-specific files stay under `docker/`; repository files are copied directly by the Dockerfile.

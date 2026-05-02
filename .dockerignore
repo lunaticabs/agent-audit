@@ -1,6 +1,7 @@
 .git
 .DS_Store
 .env
+.codex/
 .venv/
 __pycache__/
 *.pyc
@@ -13,3 +14,4 @@ target/
 runs/*
 !runs/.gitkeep
 scripts/__pycache__/
+AGENTS.md

@@ -63,9 +63,8 @@ RUN mkdir -p /etc/apt/keyrings \
 WORKDIR /opt/agent-audit
 
 COPY --from=builder /build/target/release/agent-audit /usr/local/bin/agent-audit
-COPY AGENTS.md ./AGENTS.md
-COPY .codex ./.codex
-COPY docker/config.toml ./.codex/config.toml
+COPY docker/AGENTS.md ./AGENTS.md
+COPY docker/.codex ./.codex
 COPY docker/entrypoint.sh /usr/local/bin/agent-audit-run
 
 RUN chmod +x /usr/local/bin/agent-audit-run \
@@ -88,6 +87,7 @@ RUN bash -lc 'set -euo pipefail \
     && command -v echidna \
     && test -f /opt/agent-audit/AGENTS.md \
     && test -f /opt/agent-audit/.codex/config.toml \
+    && test -f /opt/agent-audit/.codex/skills/workspace/SKILL.md \
     && grep -q "^model_provider = \"apiapi\"$" /opt/agent-audit/.codex/config.toml \
     && grep -q "^approval_policy = \"never\"$" /opt/agent-audit/.codex/config.toml'
 
