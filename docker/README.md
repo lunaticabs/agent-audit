@@ -6,10 +6,10 @@ Build:
 ./docker/build.sh
 ```
 
-Direct Docker invocation must also use `docker/` as the build context:
+Direct Docker invocation should use the repository root as the build context:
 
 ```bash
-docker build -f docker/Dockerfile -t agent-audit-codex docker
+docker build -f docker/Dockerfile -t agent-audit-codex .
 ```
 
 Runtime contents:
@@ -23,14 +23,14 @@ Runtime contents:
 
 Notes:
 
+- The runtime base image is `ghcr.io/trailofbits/eth-security-toolbox/ci:nightly-20260406`, pinned by digest in [docker/Dockerfile](/Users/lunaticabs/code/agent-audit/docker/Dockerfile).
+- `agent-audit` is built in an Ubuntu 22.04 builder stage so the resulting binary is ABI-compatible with the Ubuntu 22.04 toolbox runtime.
+- The image injects a dedicated container Codex config from `docker/config.toml`. It fixes provider, model, `wire_api = "responses"`, `sandbox_mode = "danger-full-access"`, `approval_policy = "never"`, and `shell_environment_policy.inherit = "all"`.
 - `flake.nix` and `flake.lock` are not copied into the runtime image.
-- Python is included only because `slither-analyzer` and `solc-select` require it at runtime.
 - No batch scheduler is included; the entrypoint runs exactly one Codex audit task.
-- The Docker build context root is `docker/`, not the repository root.
-- `docker/context/` is generated build input and is ignored by git.
-- The generated context includes only the files needed to build `agent-audit` and ship the Codex runtime assets.
-- `docker/build.sh` checks that `docker buildx` is available, then uses `docker build`, which Docker documents as a wrapper around Buildx for the default builder.
-- If `docker buildx` is missing, install the Docker buildx CLI plugin before building. On Ubuntu with Docker's official apt repo, this is typically the `docker-buildx-plugin` package.
+- The Docker build context root is the repository root. Runtime-specific files stay under `docker/`; repository files are copied directly by the Dockerfile.
+- `docker/build.sh` is now a thin wrapper around `docker build -f docker/Dockerfile ... .`.
+- `solc` remains run-dependent. The toolbox image includes `solc-select`, but the exact compiler version needed is only known after `fetch-source` discovers the target contract settings. The runtime therefore still needs network access if a run must install a missing `solc` version on demand.
 
 Run a single audit:
 
