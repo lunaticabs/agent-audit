@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd /opt/agent-audit
 
-mkdir -p runs /tmp/uv-cache
+mkdir -p runs
 
 if [[ -f /opt/agent-audit/.env ]]; then
   set -a
@@ -13,6 +13,7 @@ if [[ -f /opt/agent-audit/.env ]]; then
 fi
 
 export CODEX_HOME="${CODEX_HOME:-/root/.codex}"
+export AGENT_AUDIT_PROJECT_ROOT="${AGENT_AUDIT_PROJECT_ROOT:-/opt/agent-audit}"
 mkdir -p "$CODEX_HOME"
 
 if [[ ! -f "$CODEX_HOME/config.toml" ]]; then

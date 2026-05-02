@@ -8,6 +8,8 @@ use url::Url;
 use crate::error::{AppResult, msg};
 use crate::models::identity::ChainAlias;
 
+const PROJECT_ROOT_ENV: &str = "AGENT_AUDIT_PROJECT_ROOT";
+
 #[derive(Clone, Debug)]
 pub struct AppConfig {
     pub project_root: PathBuf,
@@ -59,7 +61,31 @@ impl AppConfig {
 }
 
 fn default_project_root() -> PathBuf {
+    if let Some(root) = env_optional(PROJECT_ROOT_ENV) {
+        return PathBuf::from(root);
+    }
+
+    if let Ok(current_dir) = env::current_dir() {
+        if let Some(root) = discover_project_root(&current_dir) {
+            return root;
+        }
+        return current_dir;
+    }
+
     Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
+}
+
+fn discover_project_root(start: &Path) -> Option<PathBuf> {
+    for candidate in start.ancestors() {
+        if is_project_root(candidate) {
+            return Some(candidate.to_path_buf());
+        }
+    }
+    None
+}
+
+fn is_project_root(path: &Path) -> bool {
+    path.join("AGENTS.md").is_file() && path.join(".codex").is_dir()
 }
 
 fn env_optional(name: &str) -> Option<String> {
@@ -117,6 +143,7 @@ fn env_json_dict(name: &str) -> AppResult<BTreeMap<String, String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn env_optional_url_rejects_invalid_url() {
@@ -141,5 +168,35 @@ mod tests {
         unsafe {
             env::remove_var("AGENT_AUDIT_DEFAULT_CHAIN");
         }
+    }
+
+    #[test]
+    fn discover_project_root_walks_up_to_marked_root() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("repo");
+        let nested = root.join("runs/example/foundry_project");
+        std::fs::create_dir_all(root.join(".codex")).expect("create .codex");
+        std::fs::create_dir_all(&nested).expect("create nested");
+        std::fs::write(root.join("AGENTS.md"), "test").expect("write AGENTS.md");
+
+        let discovered = discover_project_root(&nested).expect("discover root");
+        assert_eq!(discovered, root);
+    }
+
+    #[test]
+    fn default_project_root_prefers_explicit_override() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("explicit-root");
+        std::fs::create_dir_all(&root).expect("create root");
+
+        unsafe {
+            env::set_var(PROJECT_ROOT_ENV, &root);
+        }
+        let discovered = default_project_root();
+        unsafe {
+            env::remove_var(PROJECT_ROOT_ENV);
+        }
+
+        assert_eq!(discovered, root);
     }
 }

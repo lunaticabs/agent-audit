@@ -68,7 +68,7 @@ COPY docker/.codex ./.codex
 COPY docker/entrypoint.sh /usr/local/bin/agent-audit-run
 
 RUN chmod +x /usr/local/bin/agent-audit-run \
-    && mkdir -p /root/.codex /tmp/uv-cache /opt/agent-audit/runs \
+    && mkdir -p /root/.codex /opt/agent-audit/runs \
     && cp /opt/agent-audit/.codex/config.toml /root/.codex/config.toml
 
 ENTRYPOINT ["/usr/local/bin/agent-audit-run"]

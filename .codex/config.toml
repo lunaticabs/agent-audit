@@ -7,4 +7,4 @@ network_access = true
 
 [shell_environment_policy]
 inherit = "all"
-set = { UV_CACHE_DIR = "/tmp/uv-cache" }
+# set = { UV_CACHE_DIR = "/tmp/uv-cache" }
