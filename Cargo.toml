@@ -1,5 +1,5 @@
 [workspace]
-members = ["xtask"]
+members = ["dispatcher", "xtask"]
 
 [package]
 name = "agent-audit"

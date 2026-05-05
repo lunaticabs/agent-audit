@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-audit-redis
+  namespace: agent-audit
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-audit-redis
+  template:
+    metadata:
+      labels:
+        app: agent-audit-redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.2-alpine
+          imagePullPolicy: IfNotPresent
+          args:
+            - --save
+            - ""
+            - --appendonly
+            - "no"
+          ports:
+            - containerPort: 6379
+              name: redis
+          readinessProbe:
+            tcpSocket:
+              port: redis
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: redis
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-audit-redis
+  namespace: agent-audit
+spec:
+  selector:
+    app: agent-audit-redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis

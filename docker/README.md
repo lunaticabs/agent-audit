@@ -6,6 +6,8 @@ Build:
 ./docker/build.sh
 ```
 
+The repository also includes a GitHub Actions workflow at [.github/workflows/publish-images.yml](/Users/lunaticabs/code/agent-audit/.github/workflows/publish-images.yml) that builds and publishes both runtime images to GHCR.
+
 By default this produces `agent-audit:0.1` and first builds a `smoke-test` target that fails early if required tools or packaged files are missing.
 
 Direct Docker invocation should use the repository root as the build context:
@@ -18,10 +20,17 @@ docker build -f docker/Dockerfile -t agent-audit:0.1 .
 Run:
 
 ```bash
-./docker/run.sh --address 0x0000000000000000000000000000000000000000 --chain eth
+./docker/run.sh --prompt "Check AGENTS.md and audit 0x0000000000000000000000000000000000000000 on eth."
 ```
 
 `docker/run.sh` expects the repository-local `.env` to exist and mounts it read-only as `/opt/agent-audit/.env`. Put both `APIAPI_API_KEY` and the required `AGENT_AUDIT_*` settings there so the packaged Codex SDK entrypoint and the bundled CLI share one configuration source.
+
+The container no longer understands business fields such as `address`, `chain`, or `instructions`. It accepts one complete prompt only:
+
+- `FULL_PROMPT` environment variable
+- `--prompt "..."` CLI argument for local/manual runs
+
+If both are present, `FULL_PROMPT` wins. Prompt composition is now the caller's responsibility.
 
 Runtime contents:
 
@@ -52,9 +61,17 @@ Run a single audit directly with `docker run`:
 ```bash
 docker run --rm \
   -v "$(pwd)/.env:/opt/agent-audit/.env:ro" \
-  agent-audit:0.1 \
-  --address 0x0000000000000000000000000000000000000000 \
-  --chain eth
+  -e FULL_PROMPT="Check AGENTS.md and audit 0x0000000000000000000000000000000000000000 on eth." \
+  agent-audit:0.1
 ```
 
-Append extra instructions with `--instructions "..."`.
+Or pass the prompt as a CLI argument:
+
+```bash
+docker run --rm \
+  -v "$(pwd)/.env:/opt/agent-audit/.env:ro" \
+  agent-audit:0.1 \
+  --prompt "Check AGENTS.md and audit 0x0000000000000000000000000000000000000000 on eth."
+```
+
+`TASK_ID` is optional and can be injected alongside `FULL_PROMPT` when an external scheduler wants a stable task identifier in container logs.

@@ -23,6 +23,7 @@ RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-too
 WORKDIR /build
 
 COPY Cargo.toml Cargo.lock ./
+COPY dispatcher ./dispatcher
 COPY src ./src
 COPY xtask ./xtask
 

@@ -253,8 +253,7 @@ mod tests {
         let root = temp.path().join("explicit-root");
         std::fs::create_dir_all(&root).expect("create root");
 
-        let _project_root =
-            EnvVarGuard::set(PROJECT_ROOT_ENV, root.to_string_lossy().as_ref());
+        let _project_root = EnvVarGuard::set(PROJECT_ROOT_ENV, root.to_string_lossy().as_ref());
         let discovered = default_project_root();
 
         assert_eq!(discovered, root);

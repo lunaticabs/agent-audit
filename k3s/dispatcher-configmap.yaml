@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-audit-dispatcher-config
+  namespace: agent-audit
+data:
+  DISPATCHER_NAMESPACE: agent-audit
+  DISPATCHER_REDIS_STREAM: agent-audit:tasks
+  DISPATCHER_REDIS_GROUP: agent-audit-dispatcher
+  DISPATCHER_REDIS_CONSUMER: dispatcher
+  DISPATCHER_IMAGE: ghcr.io/replace-me/agent-audit:latest
+  DISPATCHER_RUNNER_ENV_SECRET: agent-audit-runner-env
+  DISPATCHER_IMAGE_PULL_SECRET: ""
+  DISPATCHER_JOB_PULL_POLICY: IfNotPresent
+  DISPATCHER_JOB_TTL_SECONDS: "86400"
+  DISPATCHER_REDIS_BLOCK_MS: "5000"
+  DISPATCHER_JOB_CPU_REQUEST: "1000m"
+  DISPATCHER_JOB_CPU_LIMIT: "2000m"
+  DISPATCHER_JOB_MEMORY_REQUEST: "2Gi"
+  DISPATCHER_JOB_MEMORY_LIMIT: "4Gi"
+  DISPATCHER_RUNS_VOLUME_SIZE_LIMIT: "10Gi"

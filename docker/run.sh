@@ -9,16 +9,15 @@ ENV_FILE="${ROOT_DIR}/.env"
 
 usage() {
   cat >&2 <<'EOF'
-usage: ./docker/run.sh --address <contract_address> [--chain <chain>] [--instructions <text>]
+usage: ./docker/run.sh [--prompt <text>]
 
 examples:
-  ./docker/run.sh --address 0x0000000000000000000000000000000000000000
-  ./docker/run.sh --address 0x0000000000000000000000000000000000000000 --chain eth
-  ./docker/run.sh --address 0x0000000000000000000000000000000000000000 --instructions "Focus on upgradeability and auth."
+  ./docker/run.sh --prompt "Check AGENTS.md and audit 0x0000000000000000000000000000000000000000 on eth."
+  FULL_PROMPT="Check AGENTS.md and audit 0x0000000000000000000000000000000000000000 on eth." ./docker/run.sh
 EOF
 }
 
-if [[ $# -eq 0 ]]; then
+if [[ $# -eq 0 && -z "${FULL_PROMPT:-}" ]]; then
   usage
   exit 2
 fi
@@ -43,6 +42,18 @@ docker_args=(
   --rm
   -v "${ENV_FILE}:/opt/agent-audit/.env:ro"
 )
+
+if [[ -n "${FULL_PROMPT:-}" ]]; then
+  docker_args+=(
+    -e "FULL_PROMPT=${FULL_PROMPT}"
+  )
+fi
+
+if [[ -n "${TASK_ID:-}" ]]; then
+  docker_args+=(
+    -e "TASK_ID=${TASK_ID}"
+  )
+fi
 
 docker_args+=(
   "${IMAGE}"

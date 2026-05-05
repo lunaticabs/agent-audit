@@ -2,8 +2,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-
-import { Codex } from "@openai/codex-sdk";
+import { pathToFileURL } from "node:url";
 
 const IMAGE_PROJECT_ROOT = "/opt/agent-audit";
 const DEFAULT_CODEX_HOME = "/root/.codex";
@@ -14,14 +13,14 @@ const MAX_STRING_LENGTH = 2_000;
 
 function usage() {
   return [
-    "usage: docker run ... --address <contract_address> [--chain <chain>] [--instructions <text>]",
+    "usage: docker run ... [--prompt <text>]",
     "",
-    "required:",
-    "  --address <contract_address>   Contract address to audit",
+    "prompt sources (highest priority first):",
+    "  1. FULL_PROMPT environment variable",
+    "  2. --prompt <text> CLI argument",
     "",
     "optional:",
-    "  --chain <chain>                Chain alias (default: eth)",
-    "  --instructions <text>          Extra instructions appended to the Codex prompt",
+    "  --prompt <text>                Full prompt text for local/manual runs",
     "  -h, --help                     Show this help message",
   ].join("\n");
 }
@@ -186,9 +185,7 @@ function summarizeEvent(event) {
 
 function parseArgs(argv) {
   const args = {
-    address: null,
-    chain: "eth",
-    instructions: "",
+    prompt: null,
     help: false,
   };
 
@@ -199,56 +196,22 @@ function parseArgs(argv) {
       continue;
     }
 
-    if (arg.startsWith("--address=")) {
-      args.address = arg.slice("--address=".length);
+    if (arg.startsWith("--prompt=")) {
+      args.prompt = arg.slice("--prompt=".length);
       continue;
     }
 
-    if (arg === "--address") {
+    if (arg === "--prompt") {
       const value = argv[i + 1];
       if (!value || value.startsWith("--")) {
-        return { error: "--address requires a value" };
+        return { error: "--prompt requires a value" };
       }
-      args.address = value;
-      i += 1;
-      continue;
-    }
-
-    if (arg.startsWith("--chain=")) {
-      args.chain = arg.slice("--chain=".length);
-      continue;
-    }
-
-    if (arg === "--chain") {
-      const value = argv[i + 1];
-      if (!value || value.startsWith("--")) {
-        return { error: "--chain requires a value" };
-      }
-      args.chain = value;
-      i += 1;
-      continue;
-    }
-
-    if (arg.startsWith("--instructions=")) {
-      args.instructions = arg.slice("--instructions=".length);
-      continue;
-    }
-
-    if (arg === "--instructions") {
-      const value = argv[i + 1];
-      if (!value || value.startsWith("--")) {
-        return { error: "--instructions requires a value" };
-      }
-      args.instructions = value;
+      args.prompt = value;
       i += 1;
       continue;
     }
 
     return { error: `unknown argument: ${arg}` };
-  }
-
-  if (!args.help && !args.address) {
-    return { error: "--address is required" };
   }
 
   return { args };
@@ -338,12 +301,31 @@ function ensureRuntime() {
   };
 }
 
-function buildPrompt(address, chain, instructions) {
-  const prompt = `Check AGENTS.md and audit ${address} on ${chain}.`;
-  if (!instructions.trim()) {
-    return prompt;
+function resolvePrompt(args, env = process.env) {
+  const envPrompt = typeof env.FULL_PROMPT === "string" ? env.FULL_PROMPT.trim() : "";
+  if (envPrompt !== "") {
+    return {
+      prompt: env.FULL_PROMPT,
+      source: "FULL_PROMPT",
+    };
   }
-  return `${prompt}\n\n${instructions}`;
+
+  const cliPrompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
+  if (cliPrompt !== "") {
+    return {
+      prompt: args.prompt,
+      source: "--prompt",
+    };
+  }
+
+  return {
+    error: "FULL_PROMPT or --prompt is required",
+  };
+}
+
+async function loadCodexSdk() {
+  const { Codex } = await import("@openai/codex-sdk");
+  return Codex;
 }
 
 function extractThreadId(event) {
@@ -381,12 +363,19 @@ function extractCompletedResponse(event) {
 
 async function runAudit(args) {
   const envInfo = loadDotEnv(ENV_FILE);
+  const promptInfo = resolvePrompt(args);
+  if (promptInfo.error) {
+    const error = new Error(promptInfo.error);
+    error.name = "UsageError";
+    throw error;
+  }
+
   const runtime = ensureRuntime();
-  const prompt = buildPrompt(args.address, args.chain, args.instructions);
+  const { prompt, source: promptSource } = promptInfo;
 
   infoLog("starting audit", {
-    address: args.address,
-    chain: args.chain,
+    task_id: process.env.TASK_ID,
+    prompt_source: promptSource,
     cwd: runtime.projectRoot,
     codex_home: runtime.codexHome,
     codex_config: runtime.codexConfig,
@@ -400,6 +389,7 @@ async function runAudit(args) {
     prompt,
   });
 
+  const Codex = await loadCodexSdk();
   const codex = new Codex({
     codexPathOverride: CODEX_BIN,
   });
@@ -496,6 +486,15 @@ async function main() {
     await runAudit(parsed.args);
     return 0;
   } catch (error) {
+    if (error?.name === "UsageError") {
+      errorLog("invalid arguments", {
+        error_type: "usage_error",
+        message: error?.message || String(error),
+      });
+      process.stderr.write(`${usage()}\n`);
+      return 2;
+    }
+
     errorLog("audit failed", {
       error_type: error?.name || "Error",
       message: error?.message || String(error),
@@ -504,5 +503,9 @@ async function main() {
   }
 }
 
-const exitCode = await main();
-process.exitCode = exitCode;
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const exitCode = await main();
+  process.exitCode = exitCode;
+}
+
+export { parseArgs, resolvePrompt, usage };
