@@ -8,13 +8,6 @@ IMAGE_TAG="${IMAGE_TAG:-0.1}"
 
 docker build \
   -f "${DOCKER_DIR}/Dockerfile" \
-  --target smoke-test \
-  -t "${IMAGE_REPO}:smoke-test" \
-  "$@" \
-  "${ROOT_DIR}"
-
-docker build \
-  -f "${DOCKER_DIR}/Dockerfile" \
   -t "${IMAGE_REPO}:${IMAGE_TAG}" \
   "$@" \
   "${ROOT_DIR}"

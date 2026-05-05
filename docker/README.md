@@ -6,9 +6,9 @@ Build:
 ./docker/build.sh
 ```
 
-The repository also includes a GitHub Actions workflow at [.github/workflows/publish-images.yml](/Users/lunaticabs/code/agent-audit/.github/workflows/publish-images.yml) that builds and publishes both runtime images to GHCR.
+`./docker/build.sh` now builds only the final runtime image locally. The repository also includes a GitHub Actions workflow at [.github/workflows/publish-images.yml](/Users/lunaticabs/code/agent-audit/.github/workflows/publish-images.yml) that runs the `smoke-test` target in CI and publishes both runtime images to GHCR.
 
-By default this produces `agent-audit:0.1` and first builds a `smoke-test` target that fails early if required tools or packaged files are missing.
+By default this produces `agent-audit:0.1`.
 
 Direct Docker invocation should use the repository root as the build context:
 
@@ -16,6 +16,8 @@ Direct Docker invocation should use the repository root as the build context:
 docker build -f docker/Dockerfile --target smoke-test -t agent-audit:smoke-test .
 docker build -f docker/Dockerfile -t agent-audit:0.1 .
 ```
+
+Use the `smoke-test` target when you specifically want the packaging checks locally. CI already does that by default.
 
 Run:
 
@@ -52,7 +54,7 @@ Notes:
 - `flake.nix` and `flake.lock` are not copied into the runtime image.
 - No batch scheduler is included; the entrypoint runs exactly one Codex audit task.
 - The Docker build context root is the repository root. Runtime-specific files stay under `docker/`; repository files are copied directly by the Dockerfile.
-- `docker/build.sh` first builds the `smoke-test` target, then builds the final runtime image. Override the default name with `IMAGE_REPO=...` and `IMAGE_TAG=...`.
+- `docker/build.sh` builds the final runtime image. Override the default name with `IMAGE_REPO=...` and `IMAGE_TAG=...`.
 - `solc` remains run-dependent. The toolbox image includes `solc-select`, but the exact compiler version needed is only known after `fetch-source` discovers the target contract settings. The runtime therefore still needs network access if a run must install a missing `solc` version on demand.
 - The container now emits human-readable text logs. Major lifecycle steps, SDK event summaries, and the final assistant output are printed in a terminal-friendly format instead of raw JSON.
 
