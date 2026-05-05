@@ -7,9 +7,25 @@ IMAGE_TAG="${IMAGE_TAG:-0.1}"
 IMAGE="${IMAGE_REPO}:${IMAGE_TAG}"
 ENV_FILE="${ROOT_DIR}/.env"
 
-if [[ $# -lt 1 ]]; then
-  echo "usage: ./docker/run.sh <contract_address> [chain] [extra codex prompt]" >&2
+usage() {
+  cat >&2 <<'EOF'
+usage: ./docker/run.sh --address <contract_address> [--chain <chain>] [--instructions <text>]
+
+examples:
+  ./docker/run.sh --address 0x0000000000000000000000000000000000000000
+  ./docker/run.sh --address 0x0000000000000000000000000000000000000000 --chain eth
+  ./docker/run.sh --address 0x0000000000000000000000000000000000000000 --instructions "Focus on upgradeability and auth."
+EOF
+}
+
+if [[ $# -eq 0 ]]; then
+  usage
   exit 2
+fi
+
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+  usage
+  exit 0
 fi
 
 if [[ ! -f "${ENV_FILE}" ]]; then

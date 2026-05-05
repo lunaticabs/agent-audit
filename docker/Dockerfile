@@ -34,6 +34,7 @@ USER root
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CODEX_HOME=/root/.codex
+ENV CODEX_RUNNER_DIR=/opt/agent-audit/codex-runner
 # ENV UV_CACHE_DIR=/tmp/uv-cache
 # ENV PATH=/root/.crytic/bin:/root/.vyper/bin:/root/.foundry/bin:${PATH}
 ARG NODE_MAJOR=22
@@ -55,28 +56,36 @@ RUN mkdir -p /etc/apt/keyrings \
         > /etc/apt/sources.list.d/nodesource.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends nodejs \
-    && npm install -g @openai/codex \
     && apt-get purge -y --auto-remove gnupg \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p "${CODEX_RUNNER_DIR}" \
+    && cd "${CODEX_RUNNER_DIR}" \
+    && npm init -y \
+    && npm install --omit=dev @openai/codex @openai/codex-sdk \
+    && npm cache clean --force
+
+ENV PATH=${CODEX_RUNNER_DIR}/node_modules/.bin:${PATH}
 
 WORKDIR /opt/agent-audit
 
 COPY --from=builder /build/target/release/agent-audit /usr/local/bin/agent-audit
 COPY docker/AGENTS.md ./AGENTS.md
 COPY docker/.codex ./.codex
-COPY docker/entrypoint.sh /usr/local/bin/agent-audit-run
+COPY docker/codex-runner/agent-audit-run.mjs ${CODEX_RUNNER_DIR}/agent-audit-run.mjs
 
-RUN chmod +x /usr/local/bin/agent-audit-run \
+RUN chmod +x ${CODEX_RUNNER_DIR}/agent-audit-run.mjs \
     && mkdir -p /root/.codex /opt/agent-audit/runs \
     && cp /opt/agent-audit/.codex/config.toml /root/.codex/config.toml
 
-ENTRYPOINT ["/usr/local/bin/agent-audit-run"]
+ENTRYPOINT ["node", "/opt/agent-audit/codex-runner/agent-audit-run.mjs"]
 
 FROM runtime AS smoke-test
 
 RUN bash -lc 'set -euo pipefail \
     && command -v bash \
+    && command -v node \
     && command -v codex \
     && command -v agent-audit \
     && command -v slither \
@@ -85,6 +94,9 @@ RUN bash -lc 'set -euo pipefail \
     && command -v cast \
     && command -v anvil \
     && command -v echidna \
+    && test -f /opt/agent-audit/codex-runner/agent-audit-run.mjs \
+    && test -d /opt/agent-audit/codex-runner/node_modules/@openai/codex-sdk \
+    && node /opt/agent-audit/codex-runner/agent-audit-run.mjs --help >/dev/null \
     && test -f /opt/agent-audit/AGENTS.md \
     && test -f /opt/agent-audit/.codex/config.toml \
     && test -f /opt/agent-audit/.codex/skills/workspace/SKILL.md \
