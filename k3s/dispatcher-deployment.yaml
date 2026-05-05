@@ -16,8 +16,8 @@ spec:
       serviceAccountName: agent-audit-dispatcher
       containers:
         - name: dispatcher
-          image: ghcr.io/lunaticabs/agent-audit-dispatcher:sha-b0ad02b
-          imagePullPolicy: IfNotPresent
+          image: ghcr.io/lunaticabs/agent-audit-dispatcher:rebuild
+          imagePullPolicy: Always
           envFrom:
             - configMapRef:
                 name: agent-audit-dispatcher-config

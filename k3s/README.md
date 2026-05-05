@@ -36,15 +36,22 @@ The workflow publishes:
 - `ghcr.io/<owner>/agent-audit:<tag>`
 - `ghcr.io/<owner>/agent-audit-dispatcher:<tag>`
 
-Set image addresses in two places before applying:
+The current manifests are wired for your `rebuild` branch tags:
+
+- `ghcr.io/lunaticabs/agent-audit:rebuild`
+- `ghcr.io/lunaticabs/agent-audit-dispatcher:rebuild`
+
+Set image addresses in two places before applying if you later switch away from `rebuild`:
 
 - runner image in [runner-configmap.yaml](/Users/lunaticabs/code/agent-audit/k3s/runner-configmap.yaml)
 - dispatcher image in [dispatcher-deployment.yaml](/Users/lunaticabs/code/agent-audit/k3s/dispatcher-deployment.yaml)
 
-Both default to `ghcr.io/replace-me/...`. Replace `replace-me` with your GitHub owner or org before applying:
+These manifests intentionally use the moving `rebuild` tag plus `imagePullPolicy: Always` so you do not need to commit a new digest after each publish. If you later move to immutable deploys, replace those tags with a concrete `sha-...` tag or image digest.
+
+If you want to check the currently configured image references:
 
 ```bash
-rg -n "ghcr.io/replace-me" k3s
+rg -n "ghcr.io/.*/agent-audit" k3s
 ```
 
 ## Prepare Secrets
