@@ -9,6 +9,8 @@ Topology:
 - one Kubernetes `Job` per audit task
 - `Mongo` remains the durable archive through the existing `sync-run` flow
 
+There is no long-running `agent-audit` Deployment. The runner exists only as one-shot Jobs that the dispatcher creates from the template settings in [runner-configmap.yaml](/Users/lunaticabs/code/agent-audit/k3s/runner-configmap.yaml).
+
 Even though this is scoped to `k3s`, it still uses the standard Kubernetes APIs that `k3s` exposes: `Deployment`, `Service`, `Job`, `Secret`, `ConfigMap`, and `RBAC`.
 
 ## Build Images
@@ -34,7 +36,12 @@ The workflow publishes:
 - `ghcr.io/<owner>/agent-audit:<tag>`
 - `ghcr.io/<owner>/agent-audit-dispatcher:<tag>`
 
-The manifests in this directory default to `ghcr.io/replace-me/...`. Replace `replace-me` with your GitHub owner or org before applying:
+Set image addresses in two places before applying:
+
+- runner image in [runner-configmap.yaml](/Users/lunaticabs/code/agent-audit/k3s/runner-configmap.yaml)
+- dispatcher image in [dispatcher-deployment.yaml](/Users/lunaticabs/code/agent-audit/k3s/dispatcher-deployment.yaml)
+
+Both default to `ghcr.io/replace-me/...`. Replace `replace-me` with your GitHub owner or org before applying:
 
 ```bash
 rg -n "ghcr.io/replace-me" k3s
@@ -65,7 +72,7 @@ k3s kubectl create secret docker-registry agent-audit-registry \
 For private images:
 
 - add an `imagePullSecrets` stanza back into [dispatcher-deployment.yaml](/Users/lunaticabs/code/agent-audit/k3s/dispatcher-deployment.yaml)
-- set `DISPATCHER_IMAGE_PULL_SECRET` to `agent-audit-registry` in [dispatcher-configmap.yaml](/Users/lunaticabs/code/agent-audit/k3s/dispatcher-configmap.yaml)
+- set `DISPATCHER_RUNNER_IMAGE_PULL_SECRET` to `agent-audit-registry` in [runner-configmap.yaml](/Users/lunaticabs/code/agent-audit/k3s/runner-configmap.yaml)
 
 ## Deploy
 
@@ -128,4 +135,6 @@ Use `Job.status` and `Pod.status` as the source of truth for runtime state. Redi
 - `FULL_PROMPT` is injected into the Job pod as an environment variable. The runner image no longer accepts `address/chain/instructions` fields.
 - `runs/` lives on an `emptyDir` mounted at `/opt/agent-audit/runs`, which is sufficient for a single-node one-shot Job lifecycle.
 - `ttlSecondsAfterFinished` is enabled so finished Jobs and Pods clean themselves up automatically.
-- The dispatcher does not enforce a separate queue-level concurrency cap. Effective parallelism comes from `k3s` scheduling plus the Job `requests`/`limits` in [dispatcher-configmap.yaml](/Users/lunaticabs/code/agent-audit/k3s/dispatcher-configmap.yaml).
+- Runner Job settings such as image, TTL, resources, pull policy, and `runs/` volume size live in [runner-configmap.yaml](/Users/lunaticabs/code/agent-audit/k3s/runner-configmap.yaml).
+- Dispatcher settings such as Redis stream, consumer group, and block timeout live in [dispatcher-configmap.yaml](/Users/lunaticabs/code/agent-audit/k3s/dispatcher-configmap.yaml).
+- The dispatcher does not enforce a separate queue-level concurrency cap. Effective parallelism comes from `k3s` scheduling plus the runner Job `requests`/`limits` in [runner-configmap.yaml](/Users/lunaticabs/code/agent-audit/k3s/runner-configmap.yaml).

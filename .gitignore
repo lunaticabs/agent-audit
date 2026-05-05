@@ -11,3 +11,5 @@ archive/
 .claude/
 batch_logs/
 configs/
+k3s/runner-secret.yaml
+k3s/dispatcher-secret.yaml

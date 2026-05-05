@@ -46,32 +46,36 @@ struct Cli {
     redis_group: String,
     #[arg(long, env = "DISPATCHER_REDIS_CONSUMER", default_value = "dispatcher")]
     redis_consumer: String,
-    #[arg(long, env = "DISPATCHER_IMAGE")]
-    image: String,
+    #[arg(long, env = "DISPATCHER_RUNNER_IMAGE")]
+    runner_image: String,
     #[arg(long, env = "DISPATCHER_RUNNER_ENV_SECRET")]
     runner_env_secret: String,
-    #[arg(long, env = "DISPATCHER_IMAGE_PULL_SECRET")]
-    image_pull_secret: Option<String>,
+    #[arg(long, env = "DISPATCHER_RUNNER_IMAGE_PULL_SECRET")]
+    runner_image_pull_secret: Option<String>,
     #[arg(
         long,
-        env = "DISPATCHER_JOB_PULL_POLICY",
+        env = "DISPATCHER_RUNNER_JOB_PULL_POLICY",
         default_value = "IfNotPresent"
     )]
-    job_pull_policy: String,
-    #[arg(long, env = "DISPATCHER_JOB_TTL_SECONDS", default_value_t = 86_400)]
-    job_ttl_seconds: i32,
+    runner_job_pull_policy: String,
+    #[arg(
+        long,
+        env = "DISPATCHER_RUNNER_JOB_TTL_SECONDS",
+        default_value_t = 86_400
+    )]
+    runner_job_ttl_seconds: i32,
     #[arg(long, env = "DISPATCHER_REDIS_BLOCK_MS", default_value_t = 5_000)]
     redis_block_ms: usize,
-    #[arg(long, env = "DISPATCHER_JOB_CPU_REQUEST")]
-    job_cpu_request: Option<String>,
-    #[arg(long, env = "DISPATCHER_JOB_CPU_LIMIT")]
-    job_cpu_limit: Option<String>,
-    #[arg(long, env = "DISPATCHER_JOB_MEMORY_REQUEST")]
-    job_memory_request: Option<String>,
-    #[arg(long, env = "DISPATCHER_JOB_MEMORY_LIMIT")]
-    job_memory_limit: Option<String>,
-    #[arg(long, env = "DISPATCHER_RUNS_VOLUME_SIZE_LIMIT")]
-    runs_volume_size_limit: Option<String>,
+    #[arg(long, env = "DISPATCHER_RUNNER_JOB_CPU_REQUEST")]
+    runner_job_cpu_request: Option<String>,
+    #[arg(long, env = "DISPATCHER_RUNNER_JOB_CPU_LIMIT")]
+    runner_job_cpu_limit: Option<String>,
+    #[arg(long, env = "DISPATCHER_RUNNER_JOB_MEMORY_REQUEST")]
+    runner_job_memory_request: Option<String>,
+    #[arg(long, env = "DISPATCHER_RUNNER_JOB_MEMORY_LIMIT")]
+    runner_job_memory_limit: Option<String>,
+    #[arg(long, env = "DISPATCHER_RUNNER_RUNS_VOLUME_SIZE_LIMIT")]
+    runner_runs_volume_size_limit: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -80,17 +84,17 @@ struct DispatcherConfig {
     redis_stream: String,
     redis_group: String,
     redis_consumer: String,
-    default_image: String,
+    runner_image: String,
     runner_env_secret: String,
-    image_pull_secret: Option<String>,
-    job_pull_policy: String,
-    job_ttl_seconds: i32,
+    runner_image_pull_secret: Option<String>,
+    runner_job_pull_policy: String,
+    runner_job_ttl_seconds: i32,
     redis_block_ms: usize,
-    job_cpu_request: Option<String>,
-    job_cpu_limit: Option<String>,
-    job_memory_request: Option<String>,
-    job_memory_limit: Option<String>,
-    runs_volume_size_limit: Option<String>,
+    runner_job_cpu_request: Option<String>,
+    runner_job_cpu_limit: Option<String>,
+    runner_job_memory_request: Option<String>,
+    runner_job_memory_limit: Option<String>,
+    runner_runs_volume_size_limit: Option<String>,
 }
 
 impl From<Cli> for DispatcherConfig {
@@ -100,17 +104,17 @@ impl From<Cli> for DispatcherConfig {
             redis_stream: value.redis_stream.trim().to_string(),
             redis_group: value.redis_group.trim().to_string(),
             redis_consumer: value.redis_consumer.trim().to_string(),
-            default_image: value.image.trim().to_string(),
+            runner_image: value.runner_image.trim().to_string(),
             runner_env_secret: value.runner_env_secret.trim().to_string(),
-            image_pull_secret: trimmed_option(value.image_pull_secret),
-            job_pull_policy: value.job_pull_policy.trim().to_string(),
-            job_ttl_seconds: value.job_ttl_seconds,
+            runner_image_pull_secret: trimmed_option(value.runner_image_pull_secret),
+            runner_job_pull_policy: value.runner_job_pull_policy.trim().to_string(),
+            runner_job_ttl_seconds: value.runner_job_ttl_seconds,
             redis_block_ms: value.redis_block_ms,
-            job_cpu_request: trimmed_option(value.job_cpu_request),
-            job_cpu_limit: trimmed_option(value.job_cpu_limit),
-            job_memory_request: trimmed_option(value.job_memory_request),
-            job_memory_limit: trimmed_option(value.job_memory_limit),
-            runs_volume_size_limit: trimmed_option(value.runs_volume_size_limit),
+            runner_job_cpu_request: trimmed_option(value.runner_job_cpu_request),
+            runner_job_cpu_limit: trimmed_option(value.runner_job_cpu_limit),
+            runner_job_memory_request: trimmed_option(value.runner_job_memory_request),
+            runner_job_memory_limit: trimmed_option(value.runner_job_memory_limit),
+            runner_runs_volume_size_limit: trimmed_option(value.runner_runs_volume_size_limit),
         }
     }
 }
@@ -313,7 +317,7 @@ impl Dispatcher {
                     .task
                     .image
                     .as_deref()
-                    .unwrap_or(self.config.default_image.as_str()),
+                    .unwrap_or(self.config.runner_image.as_str()),
                 message.message_id
             );
         } else {
@@ -422,7 +426,7 @@ fn build_job(config: &DispatcherConfig, task: &TaskMessage, job_name: &str) -> J
         name: "runs".to_string(),
         empty_dir: Some(EmptyDirVolumeSource {
             size_limit: config
-                .runs_volume_size_limit
+                .runner_runs_volume_size_limit
                 .as_ref()
                 .map(|value| Quantity(value.clone())),
             ..Default::default()
@@ -433,7 +437,7 @@ fn build_job(config: &DispatcherConfig, task: &TaskMessage, job_name: &str) -> J
     let image = task
         .image
         .as_deref()
-        .unwrap_or(config.default_image.as_str())
+        .unwrap_or(config.runner_image.as_str())
         .to_string();
 
     Job {
@@ -446,7 +450,7 @@ fn build_job(config: &DispatcherConfig, task: &TaskMessage, job_name: &str) -> J
         },
         spec: Some(k8s_openapi::api::batch::v1::JobSpec {
             backoff_limit: Some(0),
-            ttl_seconds_after_finished: Some(config.job_ttl_seconds),
+            ttl_seconds_after_finished: Some(config.runner_job_ttl_seconds),
             template: PodTemplateSpec {
                 metadata: Some(ObjectMeta {
                     labels: Some(labels),
@@ -455,7 +459,7 @@ fn build_job(config: &DispatcherConfig, task: &TaskMessage, job_name: &str) -> J
                 }),
                 spec: Some(PodSpec {
                     restart_policy: Some("Never".to_string()),
-                    image_pull_secrets: config.image_pull_secret.as_ref().map(|name| {
+                    image_pull_secrets: config.runner_image_pull_secret.as_ref().map(|name| {
                         vec![k8s_openapi::api::core::v1::LocalObjectReference {
                             name: name.clone(),
                         }]
@@ -464,7 +468,7 @@ fn build_job(config: &DispatcherConfig, task: &TaskMessage, job_name: &str) -> J
                     containers: vec![Container {
                         name: "agent-audit".to_string(),
                         image: Some(image),
-                        image_pull_policy: Some(config.job_pull_policy.clone()),
+                        image_pull_policy: Some(config.runner_job_pull_policy.clone()),
                         env_from: Some(env_from),
                         env: Some(env),
                         resources,
@@ -488,16 +492,16 @@ fn build_resources(config: &DispatcherConfig) -> Option<ResourceRequirements> {
     let mut requests = BTreeMap::new();
     let mut limits = BTreeMap::new();
 
-    if let Some(cpu) = config.job_cpu_request.as_deref() {
+    if let Some(cpu) = config.runner_job_cpu_request.as_deref() {
         requests.insert("cpu".to_string(), Quantity(cpu.to_string()));
     }
-    if let Some(memory) = config.job_memory_request.as_deref() {
+    if let Some(memory) = config.runner_job_memory_request.as_deref() {
         requests.insert("memory".to_string(), Quantity(memory.to_string()));
     }
-    if let Some(cpu) = config.job_cpu_limit.as_deref() {
+    if let Some(cpu) = config.runner_job_cpu_limit.as_deref() {
         limits.insert("cpu".to_string(), Quantity(cpu.to_string()));
     }
-    if let Some(memory) = config.job_memory_limit.as_deref() {
+    if let Some(memory) = config.runner_job_memory_limit.as_deref() {
         limits.insert("memory".to_string(), Quantity(memory.to_string()));
     }
 

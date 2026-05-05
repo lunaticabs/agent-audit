@@ -16,11 +16,13 @@ spec:
       serviceAccountName: agent-audit-dispatcher
       containers:
         - name: dispatcher
-          image: ghcr.io/replace-me/agent-audit-dispatcher:latest
+          image: ghcr.io/lunaticabs/agent-audit-dispatcher:sha-b0ad02b
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
                 name: agent-audit-dispatcher-config
+            - configMapRef:
+                name: agent-audit-runner-config
             - secretRef:
                 name: agent-audit-dispatcher-secret
           resources:

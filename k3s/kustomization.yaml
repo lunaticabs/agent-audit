@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - dispatcher-configmap.yaml
+  - runner-configmap.yaml
   - redis.yaml
   - dispatcher-rbac.yaml
   - dispatcher-deployment.yaml
