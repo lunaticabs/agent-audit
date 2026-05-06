@@ -64,6 +64,19 @@ Copy [runner-secret.example.yaml](/Users/lunaticabs/code/agent-audit/k3s/runner-
 
 Copy [dispatcher-secret.example.yaml](/Users/lunaticabs/code/agent-audit/k3s/dispatcher-secret.example.yaml) to `k3s/dispatcher-secret.yaml`. For the default in-cluster Redis service, `redis://agent-audit-redis:6379/0` is enough.
 
+Host-side `k3s` reservations are separate from Pod requests and limits. The current recommendation for your single server is captured in [server-config.example.yaml](/Users/lunaticabs/code/agent-audit/k3s/server-config.example.yaml):
+
+- reserve `4` CPU cores and `16Gi` memory for the host via `system-reserved`
+- keep `traefik` and `servicelb` disabled
+
+Apply that file to `/etc/rancher/k3s/config.yaml` on the server and restart `k3s`:
+
+```bash
+sudo install -d /etc/rancher/k3s
+sudo cp k3s/server-config.example.yaml /etc/rancher/k3s/config.yaml
+sudo systemctl restart k3s
+```
+
 If you keep the GHCR images `public`, no image pull secret is required.
 
 If you keep them `private`, create a registry pull secret named `agent-audit-registry` in the `agent-audit` namespace:
@@ -100,6 +113,13 @@ Apply the rest:
 
 ```bash
 k3s kubectl apply -k k3s/
+```
+
+If you change [runner-configmap.yaml](/Users/lunaticabs/code/agent-audit/k3s/runner-configmap.yaml) later, restart the dispatcher so it reloads the new Job template environment:
+
+```bash
+k3s kubectl -n agent-audit rollout restart deploy/agent-audit-dispatcher
+k3s kubectl -n agent-audit rollout status deploy/agent-audit-dispatcher
 ```
 
 Watch the control plane:
@@ -143,5 +163,6 @@ Use `Job.status` and `Pod.status` as the source of truth for runtime state. Redi
 - `runs/` lives on an `emptyDir` mounted at `/opt/agent-audit/runs`, which is sufficient for a single-node one-shot Job lifecycle.
 - `ttlSecondsAfterFinished` is enabled so finished Jobs and Pods clean themselves up automatically.
 - Runner Job settings such as image, TTL, resources, pull policy, and `runs/` volume size live in [runner-configmap.yaml](/Users/lunaticabs/code/agent-audit/k3s/runner-configmap.yaml).
+- The current runner template requests `500m` CPU and `1Gi` memory, with limits of `2000m` CPU and `4Gi` memory.
 - Dispatcher settings such as Redis stream, consumer group, and block timeout live in [dispatcher-configmap.yaml](/Users/lunaticabs/code/agent-audit/k3s/dispatcher-configmap.yaml).
 - The dispatcher does not enforce a separate queue-level concurrency cap. Effective parallelism comes from `k3s` scheduling plus the runner Job `requests`/`limits` in [runner-configmap.yaml](/Users/lunaticabs/code/agent-audit/k3s/runner-configmap.yaml).
