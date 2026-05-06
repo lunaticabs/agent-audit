@@ -157,6 +157,9 @@ type Result<T> = std::result::Result<T, DispatcherError>;
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    // Kube's rustls stack can panic at runtime if no process-wide provider was
+    // selected by cargo features. Install one explicitly before creating clients.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let _ = dotenvy::dotenv();
 
     let cli = Cli::parse();
