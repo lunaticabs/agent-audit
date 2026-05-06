@@ -13,7 +13,7 @@ use kube::api::PostParams;
 use kube::{Api, Client};
 use redis::aio::MultiplexedConnection;
 use redis::streams::{StreamId, StreamReadOptions, StreamReadReply};
-use redis::{AsyncCommands, RedisError};
+use redis::{AsyncCommands, AsyncConnectionConfig, RedisError};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -173,7 +173,11 @@ async fn main() -> ExitCode {
         }
     };
 
-    let redis = match client.get_multiplexed_async_connection().await {
+    let redis_config = AsyncConnectionConfig::new().set_response_timeout(None);
+    let redis = match client
+        .get_multiplexed_async_connection_with_config(&redis_config)
+        .await
+    {
         Ok(connection) => connection,
         Err(error) => {
             eprintln!("failed to connect to redis: {error}");
