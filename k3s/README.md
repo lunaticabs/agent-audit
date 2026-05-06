@@ -142,6 +142,36 @@ k3s kubectl -n agent-audit exec deploy/agent-audit-redis -- \
     image registry.example.com/agent-audit:0.1
 ```
 
+For batch submission from an address list, keep a local port-forward open and use [enqueue_redis.py](/Users/lunaticabs/code/agent-audit/scripts/enqueue_redis.py):
+
+```bash
+k3s kubectl -n agent-audit port-forward svc/agent-audit-redis 6380:6379
+```
+
+```bash
+python3 scripts/enqueue_redis.py \
+  --chain eth \
+  --address-file scripts/addresses/addrs.txt \
+  --host 127.0.0.1 \
+  --port 6380 \
+  --image ghcr.io/lunaticabs/agent-audit:rebuild
+```
+
+Defaults:
+
+- one address per line
+- blank lines and `#` comments ignored
+- address text is preserved exactly as written, including case
+- only exact duplicate lines are skipped
+- default prompt template: `Check AGENTS.md and audit {address} on {chain}.`
+- auto-generated unique task IDs in the form `audit-<timestamp>-<chain>-<index>-...`
+
+Preview without sending:
+
+```bash
+python3 scripts/enqueue_redis.py --chain eth --dry-run
+```
+
 Track jobs and pods from `k3s` directly:
 
 ```bash
