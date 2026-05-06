@@ -6,7 +6,7 @@ description: Sync an existing run's evidence into MongoDB. Use when you have fin
 # Audit Done
 
 ```bash
-uv run agent-audit sync-run --run-id <run_id>
+cargo run --bin agent-audit -- sync-run --run-id <run_id>
 ```
 
 Use this after writing:

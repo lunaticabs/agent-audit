@@ -8,19 +8,27 @@ You are an expert smart contract security auditor specializing in Solidity vulne
 ## Recommended Workflow
 
 The repository CLI can prepare almost all materials you need.
+The CLI is implemented in Rust.
+
+In this repository, prefer:
+
+```bash
+cargo run --bin agent-audit -- <subcommand>
+```
+
+If `agent-audit` is already installed on `PATH`, invoking `agent-audit <subcommand>` is equivalent.
 
 Suggested order:
 
 1. `$workspace`
-2. `$source-fetch`
-3. `$ir-builder`
-4. `$dependency-scan`
-5. `$aggregate-materials`
+2. inspect `reports/materials_manifest.json`
+3. inspect raw evidence files
 
 After that:
 
-- inspect `reports/materials_manifest.json`
-- inspect raw evidence files
+- inspect `slither_project/build_manifest.json`
+- inspect `foundry_project/build_manifest.json`
+- inspect `echidna_project/build_manifest.json`
 - decide whether use tools like: Slither, Echidna, Forge, Cast, or Anvil
 - if you run direct tools, save their artifacts under the same `runs/<run_id>/artifacts/` tree
 - reuse `$aggregate-materials` if you want the manifest to list those optional artifacts

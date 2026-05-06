@@ -1,13 +1,17 @@
 ---
 name: foundry-forge
-description: Use Foundry's forge tool for Solidity build, test, traces, and scripts in this repository. Use when you need to compile contracts, run targeted tests, run fork tests, replay failures, or execute Solidity scripts for local simulation.
+description: Use Foundry's forge tool in the CLI-prepared run workspace. Use when you need to compile contracts, run targeted tests, run fork tests, replay failures, or execute Solidity scripts for local simulation.
 ---
 
 # Foundry Forge
 
-```bash
-forge <subcommand> ...
-```
+Run Forge from `foundry_project/build_manifest.json`'s `preferred_working_dir`.
+
+Use this workflow:
+
+1. Ensure `foundry_project/build_manifest.json` exists. Normally `$workspace` already prepares it. If needed, rerun `cargo run --bin agent-audit -- prepare-tooling --run-id <run_id>`.
+2. `cd runs/<run_id>/foundry_project`
+3. Use `preferred_target`, `solc_version`, and `remappings` from the manifest.
 
 RPC source:
 
@@ -20,31 +24,31 @@ For audit work, the most relevant workflows are:
 - build:
 
 ```bash
-forge build
+cd runs/<run_id>/foundry_project && forge build
 ```
 
 - run all tests:
 
 ```bash
-forge test
+cd runs/<run_id>/foundry_project && forge test
 ```
 
 - run targeted tests:
 
 ```bash
-forge test --match-contract <ContractTest> --match-test <test_name>
+cd runs/<run_id>/foundry_project && forge test --match-contract <ContractTest> --match-test <test_name>
 ```
 
 - get traces:
 
 ```bash
-forge test -vvvv
+cd runs/<run_id>/foundry_project && forge test -vvvv
 ```
 
 - run a Solidity script in simulation or fork context:
 
 ```bash
-source .env && forge script script/<Name>.s.sol --fork-url "$AGENT_AUDIT_RPC_URL"
+source .env && cd runs/<run_id>/foundry_project && forge script script/<Name>.s.sol --fork-url "$AGENT_AUDIT_RPC_URL"
 ```
 
 Default artifact convention for a current run:
@@ -63,7 +67,7 @@ Audit guidance:
 - Use `-vvvv` when the trace matters.
 - `forge script` is useful for local simulation and fork reproduction.
 - Do not add `--broadcast` unless the user explicitly asks for a live transaction.
-- Do not assume a project already has tests or scripts; inspect the repo first.
+- Do not assume the prepared project already has tests or scripts; inspect `foundry_project/` first.
 - Save the exact command, target, and intent in `artifacts/forge_plan.json`.
 - Save raw test or script output in `artifacts/forge_output.txt`.
 - If you summarize a reproduced issue or invariant break, save it in `artifacts/forge_findings.json`.

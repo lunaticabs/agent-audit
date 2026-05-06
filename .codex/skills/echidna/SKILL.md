@@ -7,8 +7,16 @@ description: Use Echidna when a concrete contract property merits fuzzing. Use w
 
 If you need a local fork, impersonation, or low-level chain interaction first, also use `$foundry-anvil` and `$foundry-cast`.
 
+Run Echidna from `echidna_project/build_manifest.json`'s `preferred_working_dir`.
+
+Use this workflow:
+
+1. Ensure `echidna_project/build_manifest.json` exists. Normally `$workspace` already prepares it. If needed, rerun `cargo run --bin agent-audit -- prepare-tooling --run-id <run_id>`.
+2. `cd runs/<run_id>/echidna_project`
+3. Put custom harnesses under `runs/<run_id>/sources/echidna/` or `runs/<run_id>/echidna_project/test/`.
+
 ```bash
-echidna
+cd runs/<run_id>/echidna_project && echidna .
 ```
 
 Default artifact convention for a current run:

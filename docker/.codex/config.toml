@@ -1,0 +1,14 @@
+model_provider = "apiapi"
+model = "gpt-5.4"
+model_reasoning_effort = "xhigh"
+wire_api = "responses"
+sandbox_mode = "danger-full-access"
+approval_policy = "never"
+
+[model_providers.apiapi]
+name = "apiapi"
+base_url = "https://apiapi.chat/v1"
+env_key = "APIAPI_API_KEY"
+
+[shell_environment_policy]
+inherit = "all"

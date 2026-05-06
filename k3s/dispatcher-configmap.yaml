@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-audit-dispatcher-config
+  namespace: agent-audit
+data:
+  DISPATCHER_NAMESPACE: agent-audit
+  DISPATCHER_REDIS_STREAM: agent-audit:tasks
+  DISPATCHER_REDIS_GROUP: agent-audit-dispatcher
+  DISPATCHER_REDIS_CONSUMER: dispatcher
+  DISPATCHER_REDIS_BLOCK_MS: "5000"

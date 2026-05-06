@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - dispatcher-configmap.yaml
+  - runner-configmap.yaml
+  - redis.yaml
+  - dispatcher-rbac.yaml
+  - dispatcher-deployment.yaml

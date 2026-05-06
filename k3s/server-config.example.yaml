@@ -1,0 +1,6 @@
+write-kubeconfig-mode: "0644"
+disable:
+  - traefik
+  - servicelb
+kubelet-arg:
+  - system-reserved=cpu=4000m,memory=16Gi
