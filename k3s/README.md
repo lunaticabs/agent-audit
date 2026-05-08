@@ -38,15 +38,15 @@ The workflow publishes:
 
 The current manifests are wired for your `rebuild` branch tags:
 
-- `ghcr.io/lunaticabs/agent-audit:rebuild`
-- `ghcr.io/lunaticabs/agent-audit-dispatcher:rebuild`
+- `ghcr.io/lunaticabs/agent-audit:main`
+- `ghcr.io/lunaticabs/agent-audit-dispatcher:main`
 
 Set image addresses in two places before applying if you later switch away from `rebuild`:
 
 - runner image in [runner-configmap.yaml](/Users/lunaticabs/code/agent-audit/k3s/runner-configmap.yaml)
 - dispatcher image in [dispatcher-deployment.yaml](/Users/lunaticabs/code/agent-audit/k3s/dispatcher-deployment.yaml)
 
-These manifests intentionally use the moving `rebuild` tag plus `imagePullPolicy: Always` so you do not need to commit a new digest after each publish. If you later move to immutable deploys, replace those tags with a concrete `sha-...` tag or image digest.
+These manifests currently use the moving `main` tag with `imagePullPolicy: IfNotPresent`. This avoids repeated registry lookups and reduces node-side image churn. For tighter release control, replace those tags with a concrete `sha-...` tag or image digest.
 
 If you want to check the currently configured image references:
 
@@ -154,7 +154,7 @@ python3 scripts/enqueue_redis.py \
   --address-file scripts/addresses/addrs.txt \
   --host 127.0.0.1 \
   --port 6380 \
-  --image ghcr.io/lunaticabs/agent-audit:rebuild
+  --image ghcr.io/lunaticabs/agent-audit:main
 ```
 
 Defaults:
