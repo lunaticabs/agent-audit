@@ -1,3 +1,4 @@
+mod dependency_chain;
 mod journal;
 mod materials;
 mod source;

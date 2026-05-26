@@ -8,7 +8,10 @@ use crate::analysis::discovery::discover_dependencies;
 use crate::error::AppResult;
 use crate::models::artifact::{ArtifactKind, ArtifactStatus, ArtifactStep};
 use crate::models::discovery::{DependencyCandidate, DependencyDiscoveryContext};
-use crate::models::finding::DependencyFindingsArtifact;
+use crate::models::finding::{
+    DependencyChainChecksArtifact, DependencyFindingsArtifact, FlashLoanSurfaceArtifact,
+    OracleChecksArtifact, ProxyChecksArtifact,
+};
 use crate::models::identity::{ChainAlias, EvmAddress};
 use crate::models::path::RelativePath;
 use crate::models::run::RunTarget;
@@ -208,14 +211,12 @@ impl AuditPipelineService {
         chain: &ChainAlias,
     ) -> AppResult<StepStatus> {
         let bundle_payload = self.load_source_bundle_payload()?;
+        let target = RunTarget::new(address.clone(), chain.clone());
         if !bundle_payload.is_fetched() {
+            let chain_artifacts = self.build_dependency_chain_artifacts(&bundle_payload, &target);
             let findings_path = self.workspace.store().write_json(
                 paths::DEPENDENCY_FINDINGS,
-                &DependencyFindingsArtifact::new(
-                    RunTarget::new(address.clone(), chain.clone()),
-                    StepStatus::SourceNotFetched,
-                    Vec::new(),
-                ),
+                &DependencyFindingsArtifact::new(target, StepStatus::SourceNotFetched, Vec::new()),
             )?;
             self.record(
                 ArtifactStep::RunDependencyAnalysis,
@@ -224,18 +225,16 @@ impl AuditPipelineService {
                 StepStatus::ConfiguredNotExecuted,
                 "Skipped dependency analysis because source fetching did not complete.",
             );
+            self.write_dependency_chain_artifacts(chain_artifacts)?;
             return Ok(StepStatus::SourceNotFetched);
         }
 
         let findings = analyze_dependencies(&bundle_payload, self.workspace.root());
+        let chain_artifacts = self.build_dependency_chain_artifacts(&bundle_payload, &target);
         let status = StepStatus::Executed;
         let findings_path = self.workspace.store().write_json(
             paths::DEPENDENCY_FINDINGS,
-            &DependencyFindingsArtifact::new(
-                RunTarget::new(address.clone(), chain.clone()),
-                status,
-                findings,
-            ),
+            &DependencyFindingsArtifact::new(target, status, findings),
         )?;
         self.record(
             ArtifactStep::RunDependencyAnalysis,
@@ -244,7 +243,82 @@ impl AuditPipelineService {
             status,
             "Analyzed fetched dependencies for high-signal role-specific findings.",
         );
+        self.write_dependency_chain_artifacts(chain_artifacts)?;
         Ok(status)
+    }
+
+    fn write_dependency_chain_artifacts(
+        &mut self,
+        artifacts: super::dependency_chain::DependencyChainArtifacts,
+    ) -> AppResult<()> {
+        let super::dependency_chain::DependencyChainArtifacts {
+            summary,
+            proxy,
+            oracle,
+            flash,
+        } = artifacts;
+        self.write_dependency_chain_summary(&summary)?;
+        self.write_proxy_checks(&proxy)?;
+        self.write_oracle_checks(&oracle)?;
+        self.write_flash_loan_surface(&flash)?;
+        Ok(())
+    }
+
+    fn write_dependency_chain_summary(
+        &mut self,
+        payload: &DependencyChainChecksArtifact,
+    ) -> AppResult<()> {
+        self.write_dependency_chain_payload(
+            paths::DEPENDENCY_CHAIN_CHECKS,
+            payload,
+            payload.status.artifact_status(),
+            "Stored non-mutating dependency chain-check summary.",
+        )
+    }
+
+    fn write_proxy_checks(&mut self, payload: &ProxyChecksArtifact) -> AppResult<()> {
+        self.write_dependency_chain_payload(
+            paths::PROXY_CHECKS,
+            payload,
+            payload.status.artifact_status(),
+            "Stored proxy upgradeability review signals for the target and dependencies.",
+        )
+    }
+
+    fn write_oracle_checks(&mut self, payload: &OracleChecksArtifact) -> AppResult<()> {
+        self.write_dependency_chain_payload(
+            paths::ORACLE_CHECKS,
+            payload,
+            payload.status.artifact_status(),
+            "Stored oracle configuration and liveness checks for candidate dependencies.",
+        )
+    }
+
+    fn write_flash_loan_surface(&mut self, payload: &FlashLoanSurfaceArtifact) -> AppResult<()> {
+        self.write_dependency_chain_payload(
+            paths::FLASH_LOAN_SURFACE,
+            payload,
+            payload.status.artifact_status(),
+            "Stored dependency surface mapping relevant to flash-loan-style simulations.",
+        )
+    }
+
+    fn write_dependency_chain_payload<T: serde::Serialize>(
+        &mut self,
+        relative_path: &str,
+        payload: &T,
+        status: StepStatus,
+        summary: &str,
+    ) -> AppResult<()> {
+        let path = self.workspace.store().write_json(relative_path, payload)?;
+        self.record(
+            ArtifactStep::RunDependencyAnalysis,
+            &path,
+            ArtifactKind::Artifact,
+            status,
+            summary,
+        );
+        Ok(())
     }
 
     fn source_map_for_discovery(
@@ -618,3 +692,156 @@ impl<'a> BundleRecordRef<'a> {
 
 #[allow(dead_code)]
 fn _metadata_ref(_metadata: &VerifiedSourceMetadata) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::AppConfig;
+    use crate::models::finding::{
+        ChainCheckStatus, DependencyChainChecksArtifact, DependencyFindingsArtifact,
+        FlashLoanSurfaceArtifact, OracleChecksArtifact, ProxyChecksArtifact,
+    };
+    use crate::models::identity::{ChainAlias, EvmAddress, RunId};
+    use crate::models::run::{RunRequest, RunTarget};
+    use crate::workspace::RunWorkspace;
+    use tempfile::TempDir;
+
+    fn test_workspace() -> (TempDir, RunWorkspace, RunTarget) {
+        let temp = TempDir::new().expect("temp dir");
+        std::fs::write(
+            temp.path().join(".env"),
+            "AGENT_AUDIT_DEFAULT_CHAIN=eth\nAGENT_AUDIT_RUNS_DIR=runs\n",
+        )
+        .expect("write env");
+        let target = RunTarget::new(
+            EvmAddress::new("0x1234567890abcdef1234567890abcdef12345678").expect("address"),
+            ChainAlias::new("eth").expect("chain"),
+        );
+        let workspace = RunWorkspace::create_at_root(
+            temp.path(),
+            &temp.path().join("runs/run-1"),
+            &RunId::new("run-1").expect("run id"),
+            &target.address,
+            &target.chain,
+        )
+        .expect("workspace");
+        workspace
+            .store()
+            .write_json(
+                paths::REQUEST,
+                &RunRequest {
+                    address: target.address.clone(),
+                    chain: target.chain.clone(),
+                },
+            )
+            .expect("write request");
+        (temp, workspace, target)
+    }
+
+    #[test]
+    fn missing_rpc_writes_skipped_chain_artifacts_and_preserves_dependency_findings() {
+        let (_temp, workspace, target) = test_workspace();
+        workspace
+            .store()
+            .write_json(
+                paths::SOURCE_BUNDLE,
+                &SourceBundleArtifact {
+                    target: target.clone(),
+                    status: StepStatus::SourceFetched,
+                    contract: Some(ContractMetadata {
+                        name: "ProxyTarget".into(),
+                        proxy: true,
+                        ..ContractMetadata::default()
+                    }),
+                    ..SourceBundleArtifact::default()
+                },
+            )
+            .expect("source bundle");
+        let config = AppConfig::load(Some(workspace.project_root.clone())).expect("config");
+        let mut service = AuditPipelineService::new(config, workspace);
+
+        let status = service
+            .run_dependency_analysis(&target.address, &target.chain)
+            .expect("run dependency");
+        assert_eq!(status, StepStatus::Executed);
+
+        let findings: DependencyFindingsArtifact = super::super::support::read_json_if_exists(
+            &service
+                .workspace
+                .paths()
+                .resolve(paths::DEPENDENCY_FINDINGS),
+        )
+        .expect("findings");
+        assert_eq!(findings.status, StepStatus::Executed);
+
+        let summary: DependencyChainChecksArtifact = super::super::support::read_json_if_exists(
+            &service
+                .workspace
+                .paths()
+                .resolve(paths::DEPENDENCY_CHAIN_CHECKS),
+        )
+        .expect("summary");
+        assert_eq!(summary.status, ChainCheckStatus::RpcNotConfigured);
+        assert!(summary.summary_signals.is_empty());
+
+        let proxy: ProxyChecksArtifact = super::super::support::read_json_if_exists(
+            &service.workspace.paths().resolve(paths::PROXY_CHECKS),
+        )
+        .expect("proxy");
+        assert_eq!(proxy.status, ChainCheckStatus::RpcNotConfigured);
+        assert!(proxy.checks.iter().all(|check| check.signals.is_empty()));
+
+        let oracle: OracleChecksArtifact = super::super::support::read_json_if_exists(
+            &service.workspace.paths().resolve(paths::ORACLE_CHECKS),
+        )
+        .expect("oracle");
+        assert_eq!(oracle.status, ChainCheckStatus::RpcNotConfigured);
+
+        let flash: FlashLoanSurfaceArtifact = super::super::support::read_json_if_exists(
+            &service.workspace.paths().resolve(paths::FLASH_LOAN_SURFACE),
+        )
+        .expect("flash");
+        assert_eq!(flash.status, ChainCheckStatus::RpcNotConfigured);
+    }
+
+    #[test]
+    fn source_not_fetched_writes_skipped_chain_artifacts() {
+        let (_temp, workspace, target) = test_workspace();
+        workspace
+            .store()
+            .write_json(
+                paths::SOURCE_BUNDLE,
+                &SourceBundleArtifact {
+                    target: target.clone(),
+                    status: StepStatus::SourceFetchFailed,
+                    ..SourceBundleArtifact::default()
+                },
+            )
+            .expect("source bundle");
+        let config = AppConfig::load(Some(workspace.project_root.clone())).expect("config");
+        let mut service = AuditPipelineService::new(config, workspace);
+
+        let status = service
+            .run_dependency_analysis(&target.address, &target.chain)
+            .expect("run dependency");
+        assert_eq!(status, StepStatus::SourceNotFetched);
+
+        let findings: DependencyFindingsArtifact = super::super::support::read_json_if_exists(
+            &service
+                .workspace
+                .paths()
+                .resolve(paths::DEPENDENCY_FINDINGS),
+        )
+        .expect("findings");
+        assert_eq!(findings.status, StepStatus::SourceNotFetched);
+
+        let summary: DependencyChainChecksArtifact = super::super::support::read_json_if_exists(
+            &service
+                .workspace
+                .paths()
+                .resolve(paths::DEPENDENCY_CHAIN_CHECKS),
+        )
+        .expect("summary");
+        assert_eq!(summary.status, ChainCheckStatus::SourceNotFetched);
+    }
+}
