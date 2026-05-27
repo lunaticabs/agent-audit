@@ -15,6 +15,15 @@ const CODEX_BIN =
   path.join(CODEX_RUNNER_DIR, "node_modules", ".bin", "codex");
 const ENV_FILE = path.join(IMAGE_PROJECT_ROOT, ".env");
 const MAX_STRING_LENGTH = 2_000;
+const PRODUCTION_DATA_ENV_KEYS = [
+  "AGENT_AUDIT_RPC_URL",
+  "AGENT_AUDIT_SOURCE_API_BASE",
+  "AGENT_AUDIT_SOURCE_API_KEY",
+  "AGENT_AUDIT_MONGODB_URI",
+  "MONGODB_URI",
+  "ETH_RPC_URL",
+  "FOUNDRY_ETH_RPC_URL",
+];
 
 function usage() {
   return [
@@ -252,6 +261,17 @@ function loadDotEnv(filePath) {
   return { loaded: true, keys };
 }
 
+function scrubProductionDataEnv() {
+  const removed = [];
+  for (const key of PRODUCTION_DATA_ENV_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(process.env, key)) {
+      delete process.env[key];
+      removed.push(key);
+    }
+  }
+  return removed;
+}
+
 function parseEnvValue(rawValue) {
   const value = rawValue.trim();
   if (value === "") {
@@ -415,6 +435,7 @@ function extractCompletedResponse(event) {
 
 async function runAudit(args) {
   const envInfo = loadDotEnv(ENV_FILE);
+  const scrubbedEnvKeys = scrubProductionDataEnv();
   const promptInfo = resolvePrompt(args);
   if (promptInfo.error) {
     const error = new Error(promptInfo.error);
@@ -437,6 +458,7 @@ async function runAudit(args) {
     dotenv_path: ENV_FILE,
     dotenv_loaded: envInfo.loaded,
     dotenv_keys: envInfo.keys,
+    scrubbed_keys: scrubbedEnvKeys,
   });
   infoLog("prepared prompt", {
     prompt,

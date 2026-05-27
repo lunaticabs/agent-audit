@@ -31,6 +31,8 @@ repository through `CODEX_WORKDIR`. It writes the grader output to the EVMbench
 submission path, usually `/home/agent/submission/audit.md` or
 `/home/oai/submission/audit.md`.
 
-The Detect path deliberately does not call the production address/chain audit
-pipeline. EVMbench supplies source code in the audit directory, and the official
-grader consumes only `submission/audit.md`.
+The Detect path deliberately blocks the production address/chain data pipeline.
+EVMbench supplies source code in the audit directory, and the official grader
+consumes only `submission/audit.md`. The agent may create local intermediate
+materials under `runs/`, `artifacts/`, `logs/`, or `LOGS_DIR`, but those files
+must be derived from benchmark-local source and local tool output.

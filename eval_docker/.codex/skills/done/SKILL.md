@@ -1,14 +1,27 @@
 ---
 name: done
-description: Sync an existing run's evidence into MongoDB from the containerized audit runtime.
+description: Finalize an EVMbench Detect report in the benchmark submission path.
 ---
 
-# Audit Done
+# EVMbench Done
+
+EVMbench Detect is complete only when the official report exists and is
+non-empty:
 
 ```bash
-agent-audit sync-run --run-id <run_id>
+test -s "${SUBMISSION_DIR:-submission}/audit.md" || test -s submission/audit.md
 ```
 
-Use this after writing:
+If `submission/audit.md` exists relative to the audit repository but
+`${SUBMISSION_DIR}/audit.md` is empty, copy it to the official location:
 
-- `runs/<run_id>/reports/final_report.json`
+```bash
+mkdir -p "${SUBMISSION_DIR:-submission}"
+cp submission/audit.md "${SUBMISSION_DIR:-submission}/audit.md"
+```
+
+Optional local `runs/`, `artifacts/`, or log files may remain as supporting
+material, but EVMbench consumes only `audit.md`.
+
+Do not run `agent-audit sync-run`. There is no MongoDB sync step in this eval
+runtime.

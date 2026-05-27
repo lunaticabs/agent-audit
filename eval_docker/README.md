@@ -26,6 +26,7 @@ docker build -f eval_docker/Dockerfile -t agent-audit-eval:0.1 .
 Run against a local EVMbench audit repository:
 
 ```bash
+APIAPI_API_KEY=... \
 ./eval_docker/run.sh --audit-dir /path/to/audit
 ```
 
@@ -37,7 +38,8 @@ Runtime contents:
 - `node`
 - `@openai/codex-sdk`
 - `codex`
-- `agent-audit`
+- `agent-audit` guard wrapper
+- `/opt/agent-audit/bin/agent-audit-real` retained for image debugging only
 - `slither`
 - `solc-select`
 - `forge` / `cast` / `anvil`
@@ -50,9 +52,14 @@ EVMbench integration:
 - The eval image runs Codex in the benchmark audit directory, not in
   `/opt/agent-audit`.
 - The final Detect output is always `submission/audit.md`.
-- The production address/chain pipeline is intentionally not used for Detect,
-  because EVMbench provides a local audit repository rather than a chain/address
-  target.
+- The production address/chain data pipeline is intentionally blocked for
+  Detect, because EVMbench provides a local audit repository rather than a
+  chain/address target.
+- Local intermediate files under `runs/`, `artifacts/`, `logs/`, or `LOGS_DIR`
+  are allowed when they are derived from benchmark-local source and local tool
+  output. The grader still consumes only `submission/audit.md`.
 
-The image still bundles the production Codex config, skills, CLI, and smart
-contract tooling so the benchmark uses the same packaged runtime environment.
+The image bundles an EVMbench-specific Codex config, skills, guard wrapper, and
+smart contract tooling. Skills instruct the agent to use tools directly against
+the benchmark repository instead of calling production fetch, prepare, aggregate,
+or sync commands.

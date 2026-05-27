@@ -72,16 +72,18 @@ ENV PATH=${CODEX_RUNNER_DIR}/node_modules/.bin:${PATH}
 
 WORKDIR /opt/agent-audit
 
-COPY --from=builder /build/target/release/agent-audit /usr/local/bin/agent-audit
-RUN mkdir -p /opt/agent-audit/eval
+RUN mkdir -p /opt/agent-audit/eval /opt/agent-audit/bin
+COPY --from=builder /build/target/release/agent-audit /opt/agent-audit/bin/agent-audit-real
+COPY eval_docker/agent-audit-guard.sh /usr/local/bin/agent-audit
 COPY eval_docker/AGENTS.md ./AGENTS.md
 COPY eval_docker/.codex ./.codex
 COPY eval_docker/start.sh /opt/agent-audit/eval/start.sh
 COPY eval_docker/codex-runner/agent-audit-run.mjs ${CODEX_RUNNER_DIR}/agent-audit-run.mjs
 
 RUN chmod +x ${CODEX_RUNNER_DIR}/agent-audit-run.mjs \
+    && chmod +x /usr/local/bin/agent-audit /opt/agent-audit/bin/agent-audit-real \
     && chmod +x /opt/agent-audit/eval/start.sh \
-    && mkdir -p /root/.codex /opt/agent-audit/runs /home/agent /home/logs \
+    && mkdir -p /root/.codex /home/agent /home/logs \
     && cp /opt/agent-audit/.codex/config.toml /root/.codex/config.toml
 
 ENTRYPOINT ["/opt/agent-audit/eval/start.sh"]
@@ -93,6 +95,7 @@ RUN bash -lc 'set -euo pipefail \
     && command -v node \
     && command -v codex \
     && command -v agent-audit \
+    && test -x /opt/agent-audit/bin/agent-audit-real \
     && command -v slither \
     && command -v solc-select \
     && command -v forge \
@@ -107,6 +110,10 @@ RUN bash -lc 'set -euo pipefail \
     && test -f /opt/agent-audit/AGENTS.md \
     && test -f /opt/agent-audit/.codex/config.toml \
     && test -f /opt/agent-audit/.codex/skills/workspace/SKILL.md \
+    && test -f /opt/agent-audit/.codex/skills/slither/SKILL.md \
+    && agent-audit --help >/dev/null \
+    && ! agent-audit fetch-source --run-id smoke >/tmp/agent-audit-guard.out 2>&1 \
+    && grep -q "disabled in EVMbench Detect" /tmp/agent-audit-guard.out \
     && grep -q "^model_provider = \"apiapi\"$" /opt/agent-audit/.codex/config.toml \
     && grep -q "^approval_policy = \"never\"$" /opt/agent-audit/.codex/config.toml'
 

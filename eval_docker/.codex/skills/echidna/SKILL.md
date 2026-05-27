@@ -1,47 +1,48 @@
 ---
 name: echidna
-description: Use Echidna when a concrete contract property merits fuzzing inside the containerized audit runtime.
+description: Use Echidna for focused local properties in the benchmark-provided EVMbench audit repository.
 ---
 
-# Audit Echidna
+# EVMbench Echidna
 
-If you need a local fork, impersonation, or low-level chain interaction first, also use `$foundry-anvil` and `$foundry-cast`.
+Use Echidna only when a concrete property helps confirm or rule out a suspected
+loss-of-funds issue in the local benchmark repository.
 
-Container variant:
-
-- Use the installed `agent-audit` binary directly.
-
-Run Echidna from `runs/<run_id>/echidna_project/build_manifest.json`'s `preferred_working_dir`.
-
-Use this workflow:
-
-1. Ensure `runs/<run_id>/echidna_project/build_manifest.json` exists. Normally `$workspace` already prepares it. If needed, rerun `agent-audit prepare-tooling --run-id <run_id>`.
-2. `cd runs/<run_id>/echidna_project`
-3. Put custom harnesses under `runs/<run_id>/sources/echidna/` or `runs/<run_id>/echidna_project/test/`.
+Start by checking whether the project already includes Echidna configuration or
+property tests:
 
 ```bash
-cd runs/<run_id>/echidna_project && echidna .
+find . -maxdepth 5 -type f \( -iname '*echidna*' -o -name 'echidna.yaml' -o -name '*.sol' \)
 ```
 
-Default artifact convention for a current run:
+Common local workflows:
 
-```text
-runs/<run_id>/artifacts/echidna_plan.json
-runs/<run_id>/artifacts/echidna_output.txt
-runs/<run_id>/artifacts/echidna_findings.json
-runs/<run_id>/sources/echidna/
+```bash
+echidna .
 ```
 
-Guidelines:
+```bash
+echidna path/to/Harness.sol --contract <HarnessContract>
+```
 
-- Keep the target narrow.
-- Make the property explicit.
-- Save the exact command, target, and property in `runs/<run_id>/artifacts/echidna_plan.json`.
-- Save raw Echidna output in `runs/<run_id>/artifacts/echidna_output.txt`.
-- If you summarize or normalize candidate findings, save them in `runs/<run_id>/artifacts/echidna_findings.json`.
-- Save any harness or helper source under `runs/<run_id>/sources/echidna/`.
-- Rerun `agent-audit aggregate-materials --run-id <run_id>` if you want the manifest to list these optional artifacts.
-- Treat Echidna output as evidence material to interpret, not as a final verdict.
+If writing a custom harness, place it in a project-appropriate test directory
+or an optional intermediate directory such as `runs/evmbench/echidna/`. Keep
+the harness narrow and based only on benchmark-local source.
+
+Save useful raw output under `LOGS_DIR`:
+
+```bash
+mkdir -p "${LOGS_DIR:-logs}"
+echidna . > "${LOGS_DIR:-logs}/echidna.txt" 2>&1
+```
+
+Audit guidance:
+
+- Keep the property explicit and tied to asset loss.
+- Treat Echidna output as evidence to interpret, not as a final verdict.
+- Cite source lines and the reproduced condition in `submission/audit.md`.
+- Do not run `agent-audit prepare-tooling` or `aggregate-materials`; those are
+  production pipeline steps.
 
 Official docs:
 

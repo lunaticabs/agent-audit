@@ -1,22 +1,53 @@
 ---
 name: slither
-description: Use Slither directly in the container shell when verified source is available.
+description: Run Slither directly against the benchmark-provided EVMbench audit repository.
 ---
 
-Run Slither with the CLI-generated `preferred_working_dir` and `preferred_target` from `runs/<run_id>/slither_project/build_manifest.json`.
+# EVMbench Slither
 
-Use this workflow:
+Run Slither from `CODEX_WORKDIR` / `AUDIT_DIR`, not from a production
+`runs/<run_id>/slither_project`.
 
-1. Ensure `runs/<run_id>/slither_project/build_manifest.json` exists. Normally `$workspace` already prepares it. If needed, rerun `agent-audit prepare-tooling --run-id <run_id>` or `agent-audit prepare-slither --run-id <run_id>`.
-2. Use `preferred_working_dir`, `preferred_target`, `solc_version`, `solc_args`, and `remappings`.
-3. If you intentionally analyze a different target, switch to that target's source root and keep the target path relative to that root.
+Start by identifying the local project shape:
 
 ```bash
-cd runs/<run_id>/<preferred_working_dir> && solc-select use <solc_version> && slither <preferred_target> --solc-working-dir . --solc-remaps "<remappings joined by spaces>" --solc-args "<solc_args>"
+pwd
+find . -maxdepth 4 -type f \( -name 'foundry.toml' -o -name 'hardhat.config.*' -o -name 'package.json' -o -name 'remappings.txt' -o -name '*.sol' \)
 ```
 
-If `remappings` is empty, omit `--solc-remaps`.
+Common local workflows:
+
+```bash
+slither .
+```
+
+```bash
+slither path/to/Contract.sol
+```
+
+If a compiler version is specified by the local project, use `solc-select`
+before running Slither:
+
+```bash
+solc-select use <solc_version> --always-install
+slither .
+```
+
+Save useful raw output under `LOGS_DIR` or a local intermediate directory:
+
+```bash
+mkdir -p "${LOGS_DIR:-logs}"
+slither . --json "${LOGS_DIR:-logs}/slither.json"
+```
+
+Audit guidance:
+
+- Treat Slither output as triage; manually confirm every finding in source.
+- Cite direct repository file and line references in `submission/audit.md`.
+- Local `runs/` or `artifacts/` files are allowed for notes and raw output.
+- Do not run `agent-audit prepare-slither`, `prepare-tooling`, or
+  `aggregate-materials`; those are production pipeline steps.
 
 Official docs:
 
-https://github.com/crytic/slither/blob/master/docs/src/Usage.md
+- https://github.com/crytic/slither/blob/master/docs/src/Usage.md

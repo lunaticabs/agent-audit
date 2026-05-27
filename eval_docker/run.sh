@@ -5,8 +5,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE_REPO="${IMAGE_REPO:-agent-audit-eval}"
 IMAGE_TAG="${IMAGE_TAG:-0.1}"
 IMAGE="${IMAGE_REPO}:${IMAGE_TAG}"
-ENV_FILE="${ROOT_DIR}/.env"
-
 AUDIT_HOST_DIR="${AUDIT_DIR:-}"
 SUBMISSION_HOST_DIR="${SUBMISSION_DIR:-${ROOT_DIR}/eval_docker/submission}"
 LOGS_HOST_DIR="${LOGS_DIR:-${ROOT_DIR}/eval_docker/logs}"
@@ -69,8 +67,8 @@ if [[ ! -d "${AUDIT_HOST_DIR}" ]]; then
   exit 2
 fi
 
-if [[ ! -f "${ENV_FILE}" && -z "${APIAPI_API_KEY:-}" ]]; then
-  echo "set APIAPI_API_KEY or create ${ENV_FILE}" >&2
+if [[ -z "${APIAPI_API_KEY:-}" ]]; then
+  echo "set APIAPI_API_KEY in the environment" >&2
   exit 2
 fi
 
@@ -87,10 +85,6 @@ docker_args=(
   -e "SUBMISSION_DIR=/home/agent/submission"
   -e "LOGS_DIR=/home/logs"
 )
-
-if [[ -f "${ENV_FILE}" ]]; then
-  docker_args+=(-v "${ENV_FILE}:/opt/agent-audit/.env:ro")
-fi
 
 for name in APIAPI_API_KEY MODEL REASONING_EFFORT TASK_ID; do
   if [[ -n "${!name:-}" ]]; then

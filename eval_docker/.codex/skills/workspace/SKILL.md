@@ -1,32 +1,48 @@
 ---
 name: workspace
-description: Create and fully prepare a run workspace for a contract address inside the containerized audit runtime.
+description: Locate and inspect the benchmark-provided EVMbench audit repository and submission path.
 ---
 
-# Audit Workspace
+# EVMbench Workspace
 
-Initialize and fully prepare a run workspace:
+This eval runtime does not use the production `agent-audit` address/chain data
+pipeline. The benchmark mounts a complete audit repository locally.
+
+Use these paths:
 
 ```bash
-agent-audit init-run --chain <chain> --address <address>
+pwd
+printf '%s\n' "${AUDIT_DIR:-}"
+printf '%s\n' "${CODEX_WORKDIR:-}"
+printf '%s\n' "${SUBMISSION_DIR:-}"
+printf '%s\n' "${LOGS_DIR:-}"
 ```
 
-What it does:
+Expected conventions:
 
-- Creates `runs/<run_id>/`
-- Creates `runs/<run_id>/input/`, `runs/<run_id>/artifacts/`, `runs/<run_id>/reports/`, and `runs/<run_id>/logs/`
-- Writes `runs/<run_id>/input/request.json`
-- Writes `runs/<run_id>/input/run_meta.json`
-- Fetches verified source into `runs/<run_id>/sources/`
-- Fetches discovered dependency source into `runs/<run_id>/sources/dependencies/`
-- Runs dependency analysis and writes `runs/<run_id>/artifacts/dependency_findings.json`
-- Prepares `runs/<run_id>/slither_project/`, `runs/<run_id>/foundry_project/`, and `runs/<run_id>/echidna_project/`
-- Writes `runs/<run_id>/artifacts/tooling_manifest.json`
-- Writes `runs/<run_id>/reports/materials_manifest.json`
+- `CODEX_WORKDIR` / `AUDIT_DIR` is the benchmark audit repository.
+- `submission/audit.md` is the report path relative to the audit repository.
+- `${SUBMISSION_DIR}/audit.md` is the official grader output.
+- `${LOGS_DIR}` is the best place for optional raw tool output.
+- Local `runs/`, `artifacts/`, or `logs/` directories are allowed as optional
+  intermediate material when you create them from benchmark-local data.
 
-Inspect first:
+Start by inspecting local instructions and scope:
 
-- `runs/<run_id>/reports/materials_manifest.json`
-- `runs/<run_id>/artifacts/source_bundle.json`
-- `runs/<run_id>/artifacts/dependency_findings.json`
-- `runs/<run_id>/artifacts/tooling_manifest.json`
+```bash
+find . -maxdepth 3 -iname 'README*' -o -iname 'AGENTS.md' -o -iname '*scope*'
+rg -n "scope|in scope|out of scope|asset|loss|vulnerability|threat" .
+```
+
+Then identify project layout and build files:
+
+```bash
+find . -maxdepth 4 -type f \( -name 'foundry.toml' -o -name 'hardhat.config.*' -o -name 'package.json' -o -name 'remappings.txt' -o -name '*.sol' -o -name '*.vy' \)
+```
+
+Do not run `agent-audit init-run`, `fetch-source`, `run-dependency`,
+`run-chain`, `run-static`, `run-dynamic`, `prepare-slither`,
+`prepare-tooling`, `aggregate-materials`, or `sync-run`. Those commands are
+production address/chain pipeline steps and are disabled for EVMbench Detect.
+Use shell tools and the local security toolchain directly against the benchmark
+repository instead.

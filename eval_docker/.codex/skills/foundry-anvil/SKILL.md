@@ -1,59 +1,43 @@
 ---
 name: foundry-anvil
-description: Use Foundry's anvil tool for local nodes and forked-chain reproduction inside the containerized audit runtime.
+description: Use Foundry anvil for local-only EVM reproduction during EVMbench Detect.
 ---
 
-# Foundry Anvil
+# EVMbench Anvil
+
+Use Anvil as a local dev node when it helps reproduce a benchmark-local issue.
+
+Common local workflows:
 
 ```bash
 anvil
 ```
 
-RPC source:
-
-- When fork mode is needed, default to `AGENT_AUDIT_RPC_URL` from the container environment.
-- Only override it when you intentionally need a different chain or provider.
-
-Common audit workflows:
-
-- start a local dev node:
-
 ```bash
-anvil
+anvil --auto-impersonate
 ```
 
-- fork a live chain:
+Then interact with it through Forge or Cast:
 
 ```bash
-anvil --fork-url "$AGENT_AUDIT_RPC_URL"
+cast block-number --rpc-url http://127.0.0.1:8545
 ```
 
-- enable automatic impersonation:
+Save useful output under `LOGS_DIR`:
 
 ```bash
-anvil --fork-url "$AGENT_AUDIT_RPC_URL" --auto-impersonate
-```
-
-Default artifact convention for a current run:
-
-```text
-runs/<run_id>/artifacts/anvil_plan.json
-runs/<run_id>/artifacts/anvil_output.txt
-runs/<run_id>/artifacts/anvil_findings.json
+mkdir -p "${LOGS_DIR:-logs}"
+anvil > "${LOGS_DIR:-logs}/anvil.txt" 2>&1
 ```
 
 Audit guidance:
 
-- Use Anvil when you need reproducible local execution against live state.
-- Prefer running Anvil in a separate terminal/session, then use `cast` or `forge` against that local RPC.
-- Fork mode is the right place to test exploit reproduction, privileged calls, or balance-sensitive paths.
-- Default Anvil accounts are public test accounts only; never treat them as secure keys.
-- Save the launch command, fork source, and intent in `runs/<run_id>/artifacts/anvil_plan.json`.
-- Save startup output or relevant logs in `runs/<run_id>/artifacts/anvil_output.txt`.
-- If you summarize any environment assumptions or reproduction notes, save them in `runs/<run_id>/artifacts/anvil_findings.json`.
-- Rerun `agent-audit aggregate-materials --run-id <run_id>` if you want the manifest to list these optional artifacts.
+- Prefer local execution from the benchmark repository.
+- Do not default to `AGENT_AUDIT_RPC_URL` or real chain forks.
+- Only use fork mode if the benchmark repository explicitly provides and
+  requires that RPC source.
+- Default Anvil keys are public local test keys only.
 
 Official docs:
 
-- Overview: https://getfoundry.sh/anvil
-- Forking with Cast and Anvil: https://getfoundry.sh/guides/forking-mainnet-with-cast-anvil/
+- https://getfoundry.sh/anvil
