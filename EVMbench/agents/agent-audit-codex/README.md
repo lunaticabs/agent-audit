@@ -22,6 +22,10 @@ instead of manually editing the EVMbench Dockerfile:
 ./EVMbench/overlay.sh --evmbench-dir /path/to/evmbench
 ```
 
+The helper writes `agent-audit-overlay/` into the Docker build context next to
+the patched Dockerfile so EVMbench's `docker_build.py` can build
+`evmbench/base:latest`.
+
 The EVMbench-facing `start.sh` in this directory is a thin wrapper. It expects
 the audit container to include the eval Docker runtime and execs:
 

@@ -68,7 +68,34 @@ rsync -a --delete \
   "${ROOT_DIR}/EVMbench/agents/agent-audit-codex/" \
   "${EVMBENCH_DIR}/evmbench/agents/agent-audit-codex/"
 
-OVERLAY_DIR="${EVMBENCH_DIR}/agent-audit-overlay"
+if [[ "${PATCH_DOCKERFILE}" -eq 1 ]]; then
+  if [[ -z "${DOCKERFILE_PATH}" ]]; then
+    if [[ -f "${EVMBENCH_DIR}/base/Dockerfile" ]]; then
+      DOCKERFILE_PATH="${EVMBENCH_DIR}/base/Dockerfile"
+    elif [[ -f "${EVMBENCH_DIR}/evmbench/Dockerfile" ]]; then
+      DOCKERFILE_PATH="${EVMBENCH_DIR}/evmbench/Dockerfile"
+    elif [[ -f "${EVMBENCH_DIR}/Dockerfile" ]]; then
+      DOCKERFILE_PATH="${EVMBENCH_DIR}/Dockerfile"
+    else
+      echo "could not auto-detect EVMbench Dockerfile" >&2
+      echo "rerun with --dockerfile <path> or --no-patch-dockerfile" >&2
+      exit 2
+    fi
+  elif [[ "${DOCKERFILE_PATH}" != /* ]]; then
+    DOCKERFILE_PATH="${EVMBENCH_DIR}/${DOCKERFILE_PATH}"
+  fi
+
+  if [[ ! -f "${DOCKERFILE_PATH}" ]]; then
+    echo "Dockerfile not found: ${DOCKERFILE_PATH}" >&2
+    exit 2
+  fi
+
+  DOCKER_CONTEXT_DIR="$(cd "$(dirname "${DOCKERFILE_PATH}")" && pwd)"
+else
+  DOCKER_CONTEXT_DIR="${EVMBENCH_DIR}"
+fi
+
+OVERLAY_DIR="${DOCKER_CONTEXT_DIR}/agent-audit-overlay"
 rm -rf "${OVERLAY_DIR}"
 mkdir -p \
   "${OVERLAY_DIR}/eval" \
@@ -88,7 +115,7 @@ cat > "${OVERLAY_DIR}/Dockerfile.fragment" <<'EOF'
 #
 # Apply these instructions to an EVMbench audit image after its base tooling is
 # installed. The build context must include the generated agent-audit-overlay/
-# directory at the repository root.
+# directory next to this Dockerfile.
 
 USER root
 
@@ -165,30 +192,12 @@ It contains:
   audit image.
 
 `Dockerfile.fragment` can be appended to the Dockerfile used to build EVMbench
-audit images, after the base audit tooling is installed. The build context must
-be the EVMbench checkout root so `COPY agent-audit-overlay/...` works.
+audit images, after the base audit tooling is installed. The generated
+`agent-audit-overlay/` directory must be inside the Docker build context, next
+to the patched Dockerfile.
 EOF
 
 if [[ "${PATCH_DOCKERFILE}" -eq 1 ]]; then
-  if [[ -z "${DOCKERFILE_PATH}" ]]; then
-    if [[ -f "${EVMBENCH_DIR}/evmbench/Dockerfile" ]]; then
-      DOCKERFILE_PATH="${EVMBENCH_DIR}/evmbench/Dockerfile"
-    elif [[ -f "${EVMBENCH_DIR}/Dockerfile" ]]; then
-      DOCKERFILE_PATH="${EVMBENCH_DIR}/Dockerfile"
-    else
-      echo "could not auto-detect EVMbench Dockerfile" >&2
-      echo "rerun with --dockerfile <path> or --no-patch-dockerfile" >&2
-      exit 2
-    fi
-  elif [[ "${DOCKERFILE_PATH}" != /* ]]; then
-    DOCKERFILE_PATH="${EVMBENCH_DIR}/${DOCKERFILE_PATH}"
-  fi
-
-  if [[ ! -f "${DOCKERFILE_PATH}" ]]; then
-    echo "Dockerfile not found: ${DOCKERFILE_PATH}" >&2
-    exit 2
-  fi
-
   BACKUP_PATH="${DOCKERFILE_PATH}.agent-audit-overlay.bak"
   if [[ ! -f "${BACKUP_PATH}" ]]; then
     cp "${DOCKERFILE_PATH}" "${BACKUP_PATH}"

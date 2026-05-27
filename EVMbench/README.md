@@ -15,11 +15,12 @@ The script copies:
 
 - `EVMbench/agents/agent-audit-codex/` into
   `/path/to/evmbench/evmbench/agents/agent-audit-codex/`
-- the eval runtime into `/path/to/evmbench/agent-audit-overlay/`
+- the eval runtime into `agent-audit-overlay/` next to the patched Dockerfile
 
 By default it also appends a marked `agent-audit-codex overlay` block to the
-EVMbench Dockerfile, usually `/path/to/evmbench/evmbench/Dockerfile`. A backup
-is written next to it as `Dockerfile.agent-audit-overlay.bak`.
+EVMbench Dockerfile, preferring `/path/to/evmbench/base/Dockerfile` when it
+exists. A backup is written next to it as
+`Dockerfile.agent-audit-overlay.bak`.
 
 If the Dockerfile is in a different location:
 
@@ -38,10 +39,12 @@ To only copy files and patch manually:
 Then append:
 
 ```text
-/path/to/evmbench/agent-audit-overlay/Dockerfile.fragment
+agent-audit-overlay/Dockerfile.fragment
 ```
 
-to the Dockerfile used by EVMbench to build audit images.
+to the Dockerfile used by EVMbench to build audit images. The
+`agent-audit-overlay/` directory must be inside that Docker build context,
+usually next to the Dockerfile.
 
 ## Run Detect
 
