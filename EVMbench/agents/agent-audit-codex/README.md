@@ -15,6 +15,13 @@ Build the eval runtime from the repository root:
 ./eval_docker/build.sh
 ```
 
+For official EVMbench image builds, use the repository-level overlay helper
+instead of manually editing the EVMbench Dockerfile:
+
+```bash
+./EVMbench/overlay.sh --evmbench-dir /path/to/evmbench
+```
+
 The EVMbench-facing `start.sh` in this directory is a thin wrapper. It expects
 the audit container to include the eval Docker runtime and execs:
 

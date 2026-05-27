@@ -49,6 +49,8 @@ EVMbench integration:
 
 - `EVMbench/agents/agent-audit-codex/start.sh` is a thin wrapper that execs
   `/opt/agent-audit/eval/start.sh`.
+- `EVMbench/overlay.sh --evmbench-dir /path/to/evmbench` copies the adapter and
+  injects the eval runtime into an EVMbench audit-image Dockerfile.
 - The eval image runs Codex in the benchmark audit directory, not in
   `/opt/agent-audit`.
 - The final Detect output is always `submission/audit.md`.
