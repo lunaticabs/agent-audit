@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import fs from "node:fs";
-import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -394,10 +393,26 @@ function resolvePrompt(args, env = process.env) {
 }
 
 async function loadCodexSdk() {
-  const requireFromRunner = createRequire(path.join(CODEX_RUNNER_DIR, "package.json"));
-  const sdkPath = requireFromRunner.resolve("@openai/codex-sdk");
+  const sdkPath = resolvePackageEntry("@openai/codex-sdk");
   const { Codex } = await import(pathToFileURL(sdkPath).href);
   return Codex;
+}
+
+function resolvePackageEntry(packageName) {
+  const packageRoot = path.join(CODEX_RUNNER_DIR, "node_modules", ...packageName.split("/"));
+  const packageJsonPath = path.join(packageRoot, "package.json");
+  const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+  const entry =
+    pkg.module ||
+    pkg.exports?.["."]?.import ||
+    pkg.exports?.["."]?.default ||
+    pkg.main;
+
+  if (typeof entry !== "string" || entry.trim() === "") {
+    throw new Error(`could not resolve entrypoint for ${packageName}`);
+  }
+
+  return path.join(packageRoot, entry);
 }
 
 function extractThreadId(event) {
