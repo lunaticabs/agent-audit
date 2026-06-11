@@ -432,6 +432,11 @@ function extractFailureMessage(event) {
   return null;
 }
 
+function isRecoverableStreamError(event) {
+  const message = extractFailureMessage(event) || "";
+  return /^Reconnecting\.\.\. \d+\/\d+ \(/.test(message);
+}
+
 function extractCompletedResponse(event) {
   if (typeof event?.finalResponse === "string" && event.finalResponse.trim() !== "") {
     return event.finalResponse;
@@ -537,7 +542,15 @@ async function runAudit(args) {
       }
       usage = event.usage ?? null;
       turnCompleted = true;
-    } else if (event.type === "turn.failed" || event.type === "error") {
+    } else if (event.type === "turn.failed") {
+      throw new Error(extractFailureMessage(event) || "Codex run failed");
+    } else if (event.type === "error") {
+      if (isRecoverableStreamError(event)) {
+        infoLog("sdk stream reconnecting", {
+          message: extractFailureMessage(event),
+        });
+        continue;
+      }
       throw new Error(extractFailureMessage(event) || "Codex run failed");
     }
   }
