@@ -8,7 +8,9 @@ pub use crate::models::step::StepStatus as ArtifactStatus;
 #[serde(rename_all = "snake_case")]
 pub enum ArtifactStep {
     FetchContractSource,
+    FetchContractBytecode,
     RunDependencyAnalysis,
+    PrepareHeimdallArtifacts,
     PrepareSlitherProject,
     PrepareToolingWorkspaces,
     PrepareFoundryProject,

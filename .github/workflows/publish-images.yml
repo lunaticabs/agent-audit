@@ -74,6 +74,32 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 
+      - name: Build Open Source Prompt Smoke Test Target
+        if: matrix.name == 'agent-audit'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          target: smoke-test
+          push: false
+          build-args: |
+            PROMPT_PROFILE=open_source
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+      - name: Build Closed Source Prompt Smoke Test Target
+        if: matrix.name == 'agent-audit'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          target: smoke-test
+          push: false
+          build-args: |
+            PROMPT_PROFILE=closed_source
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
       - name: Build And Publish Final Image
         uses: docker/build-push-action@v7
         with:

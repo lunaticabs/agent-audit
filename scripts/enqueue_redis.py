@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import re
 import socket
@@ -13,13 +14,18 @@ from typing import BinaryIO
 
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_ADDRESS_FILE = ROOT / "addresses" / "addrs.txt"
+DEFAULT_INPUT_CSV = ROOT / "addresses" / "addrs.csv"
 DEFAULT_STREAM = "agent-audit:tasks"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 6380
-DEFAULT_PROMPT_TEMPLATE = "Check AGENTS.md and audit {address} on {chain}."
+DEFAULT_PROMPT_TEMPLATE = (
+    "Check AGENTS.md and audit {address} on {chain}. "
+    "source_kind={source_kind}; is_open_source={is_open_source}. "
+    "Use the open-source workflow for open_source and the closed-source bytecode/Heimdall workflow for closed_source."
+)
 DEFAULT_TASK_PREFIX = "audit"
 ADDRESS_RE = re.compile(r"^0x[a-fA-F0-9]{40}$")
+REQUIRED_COLUMNS = {"address", "is_open_source"}
 
 
 class RedisProtocolError(RuntimeError):
@@ -27,9 +33,21 @@ class RedisProtocolError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class CsvAddress:
+    address: str
+    is_open_source: bool
+
+    @property
+    def source_kind(self) -> str:
+        return "open_source" if self.is_open_source else "closed_source"
+
+
+@dataclass(frozen=True)
 class EnqueueItem:
     index: int
     address: str
+    is_open_source: bool
+    source_kind: str
     task_id: str
     prompt: str
 
@@ -110,12 +128,14 @@ def read_line(reader: BinaryIO) -> bytes:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build full prompts from an address list and enqueue them into the Redis task stream.",
+        description="Build full prompts from a CSV address list and enqueue them into the Redis task stream.",
     )
     parser.add_argument(
+        "--input-csv",
         "--address-file",
-        default=str(DEFAULT_ADDRESS_FILE),
-        help=f"Address file to load. Default: {DEFAULT_ADDRESS_FILE}",
+        dest="input_csv",
+        default=str(DEFAULT_INPUT_CSV),
+        help=f"CSV file with address,is_open_source columns. Default: {DEFAULT_INPUT_CSV}",
     )
     parser.add_argument(
         "--chain",
@@ -147,7 +167,8 @@ def parse_args() -> argparse.Namespace:
         "--prompt-template",
         default=DEFAULT_PROMPT_TEMPLATE,
         help=(
-            "Prompt template. Available placeholders: {address}, {chain}. "
+            "Prompt template. Available placeholders: {address}, {chain}, "
+            "{source_kind}, {is_open_source}. "
             f"Default: {DEFAULT_PROMPT_TEMPLATE!r}"
         ),
     )
@@ -166,7 +187,7 @@ def parse_args() -> argparse.Namespace:
         "--max-count",
         type=int,
         default=0,
-        help="Only enqueue the first N unique addresses. Default: all",
+        help="Only enqueue the first N unique chain/address/source_kind rows. Default: all",
     )
     parser.add_argument(
         "--dry-run",
@@ -176,33 +197,50 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_addresses(path: Path, max_count: int) -> list[str]:
+def load_csv_items(path: Path, chain: str, max_count: int) -> list[CsvAddress]:
     if not path.exists():
-        raise FileNotFoundError(f"address file not found: {path}")
+        raise FileNotFoundError(f"input CSV not found: {path}")
 
-    addresses: list[str] = []
-    seen: set[str] = set()
-    with path.open("r", encoding="utf-8") as handle:
-        for line_no, raw_line in enumerate(handle, start=1):
-            text = raw_line.strip()
-            if text == "" or text.startswith("#"):
+    items: list[CsvAddress] = []
+    seen: set[tuple[str, str, str]] = set()
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(line for line in handle if not line.lstrip().startswith("#"))
+        columns = set(reader.fieldnames or [])
+        missing = REQUIRED_COLUMNS - columns
+        if missing:
+            joined = ", ".join(sorted(missing))
+            raise ValueError(f"CSV is missing required column(s): {joined}")
+
+        for line_no, row in enumerate(reader, start=2):
+            address = (row.get("address") or "").strip()
+            if not ADDRESS_RE.fullmatch(address):
+                raise ValueError(f"invalid address at {path}:{line_no}: {address}")
+            is_open_source = parse_bool(row.get("is_open_source"), path, line_no)
+            source_kind = "open_source" if is_open_source else "closed_source"
+            key = (chain.strip().lower(), address.lower(), source_kind)
+            if key in seen:
                 continue
-            if not ADDRESS_RE.fullmatch(text):
-                raise ValueError(f"invalid address at {path}:{line_no}: {text}")
-            if text in seen:
-                continue
-            seen.add(text)
-            addresses.append(text)
-            if max_count > 0 and len(addresses) >= max_count:
+            seen.add(key)
+            items.append(CsvAddress(address=address, is_open_source=is_open_source))
+            if max_count > 0 and len(items) >= max_count:
                 break
 
-    if not addresses:
-        raise RuntimeError(f"no valid addresses loaded from {path}")
-    return addresses
+    if not items:
+        raise RuntimeError(f"no valid rows loaded from {path}")
+    return items
+
+
+def parse_bool(value: str | None, path: Path, line_no: int) -> bool:
+    text = (value or "").strip().lower()
+    if text == "true":
+        return True
+    if text == "false":
+        return False
+    raise ValueError(f"invalid is_open_source at {path}:{line_no}: {value!r}")
 
 
 def build_items(
-    addresses: list[str],
+    csv_items: list[CsvAddress],
     chain: str,
     prompt_template: str,
     task_prefix: str,
@@ -212,15 +250,29 @@ def build_items(
     prefix_slug = slugify(task_prefix)
     items: list[EnqueueItem] = []
 
-    for index, address in enumerate(addresses, start=1):
-        prompt = prompt_template.format(address=address, chain=chain)
-        addr_slug = address[2:14].lower()
-        digest = hashlib.sha256(f"{chain}:{address}".encode("utf-8")).hexdigest()[:8]
-        task_id = f"{prefix_slug}-{batch_stamp}-{chain_slug}-{index:04d}-{addr_slug}-{digest}"
+    for index, row in enumerate(csv_items, start=1):
+        source_kind = row.source_kind
+        is_open_source = "true" if row.is_open_source else "false"
+        prompt = prompt_template.format(
+            address=row.address,
+            chain=chain,
+            source_kind=source_kind,
+            is_open_source=is_open_source,
+        )
+        addr_slug = row.address[2:14].lower()
+        digest = hashlib.sha256(
+            f"{chain}:{row.address}:{source_kind}".encode("utf-8")
+        ).hexdigest()[:8]
+        task_id = (
+            f"{prefix_slug}-{batch_stamp}-{chain_slug}-{index:04d}-"
+            f"{addr_slug}-{source_kind.replace('_', '-')}-{digest}"
+        )
         items.append(
             EnqueueItem(
                 index=index,
-                address=address,
+                address=row.address,
+                is_open_source=row.is_open_source,
+                source_kind=source_kind,
                 task_id=task_id,
                 prompt=prompt,
             )
@@ -241,6 +293,7 @@ def enqueue_items(
     stream: str,
     host: str,
     port: int,
+    chain: str,
     image: str,
     timeout_sec: float,
 ) -> None:
@@ -254,6 +307,14 @@ def enqueue_items(
                 item.task_id,
                 "full_prompt",
                 item.prompt,
+                "address",
+                item.address,
+                "chain",
+                chain,
+                "is_open_source",
+                "true" if item.is_open_source else "false",
+                "source_kind",
+                item.source_kind,
             ]
             if image.strip() != "":
                 command.extend(["image", image.strip()])
@@ -264,35 +325,50 @@ def enqueue_items(
                 f"[ENQ  ] index={item.index:04d} "
                 f"task_id={item.task_id} "
                 f"address={item.address} "
+                f"source_kind={item.source_kind} "
                 f"redis_id={reply}"
             )
 
 
-def print_dry_run(items: list[EnqueueItem], stream: str, host: str, port: int, image: str) -> None:
-    print(f"[DRY  ] stream={stream} host={host} port={port} count={len(items)} image={image or '-'}")
+def print_dry_run(
+    items: list[EnqueueItem],
+    stream: str,
+    host: str,
+    port: int,
+    chain: str,
+    image: str,
+) -> None:
+    print(
+        f"[DRY  ] stream={stream} host={host} port={port} "
+        f"chain={chain} count={len(items)} image={image or '-'}"
+    )
     for item in items:
-        print(f"[TASK ] index={item.index:04d} task_id={item.task_id} address={item.address}")
+        print(
+            f"[TASK ] index={item.index:04d} task_id={item.task_id} "
+            f"address={item.address} source_kind={item.source_kind} "
+            f"is_open_source={'true' if item.is_open_source else 'false'}"
+        )
         print(f"         prompt={item.prompt}")
 
 
 def main() -> int:
     args = parse_args()
-    path = Path(args.address_file).expanduser()
-    addresses = load_addresses(path, args.max_count)
+    path = Path(args.input_csv).expanduser()
+    rows = load_csv_items(path, args.chain, args.max_count)
     items = build_items(
-        addresses=addresses,
+        csv_items=rows,
         chain=args.chain,
         prompt_template=args.prompt_template,
         task_prefix=args.task_prefix,
     )
 
     print(
-        f"[LOAD ] file={path} unique_addresses={len(addresses)} "
+        f"[LOAD ] file={path} unique_rows={len(rows)} "
         f"stream={args.stream} redis={args.host}:{args.port}"
     )
 
     if args.dry_run:
-        print_dry_run(items, args.stream, args.host, args.port, args.image)
+        print_dry_run(items, args.stream, args.host, args.port, args.chain, args.image)
         return 0
 
     enqueue_items(
@@ -300,6 +376,7 @@ def main() -> int:
         stream=args.stream,
         host=args.host,
         port=args.port,
+        chain=args.chain,
         image=args.image,
         timeout_sec=args.timeout_sec,
     )

@@ -6,7 +6,7 @@ Build:
 ./docker/build.sh
 ```
 
-`./docker/build.sh` now builds only the final runtime image locally. The repository also includes a GitHub Actions workflow at [.github/workflows/publish-images.yml](/Users/lunaticabs/code/agent-audit/.github/workflows/publish-images.yml) that runs the `smoke-test` target in CI and publishes both runtime images to GHCR.
+`./docker/build.sh` now builds only the final runtime image locally. The repository also includes a GitHub Actions workflow at [.github/workflows/publish-images.yml](/Users/lunaticabs/code/agent-audit/.github/workflows/publish-images.yml) that runs the `smoke-test` target in CI, validates all runner prompt profiles, and publishes both runtime images to GHCR.
 
 By default this produces `agent-audit:0.1`.
 
@@ -15,6 +15,22 @@ Direct Docker invocation should use the repository root as the build context:
 ```bash
 docker build -f docker/Dockerfile --target smoke-test -t agent-audit:smoke-test .
 docker build -f docker/Dockerfile -t agent-audit:0.1 .
+```
+
+Prompt profile builds:
+
+```bash
+docker build -f docker/Dockerfile --build-arg PROMPT_PROFILE=both -t agent-audit:0.1 .
+docker build -f docker/Dockerfile --build-arg PROMPT_PROFILE=open_source -t agent-audit:open-source .
+docker build -f docker/Dockerfile --build-arg PROMPT_PROFILE=closed_source -t agent-audit:closed-source .
+```
+
+The Dockerfile defaults `IMAGE_PLATFORM=linux/amd64` because the pinned Trail of Bits toolbox base is amd64. Override that build arg only when using a compatible multi-arch toolbox image.
+
+If local Docker runs out of memory while compiling Rust dependencies, lower compiler parallelism:
+
+```bash
+docker build -f docker/Dockerfile --build-arg CARGO_BUILD_JOBS=1 -t agent-audit:0.1 .
 ```
 
 Use the `smoke-test` target when you specifically want the packaging checks locally. CI already does that by default.
@@ -44,12 +60,13 @@ Runtime contents:
 - `solc-select`
 - `forge` / `cast` / `anvil`
 - `echidna`
+- `heimdall`
 
 Notes:
 
 - The runtime base image is `ghcr.io/trailofbits/eth-security-toolbox/ci:nightly-20260406`, pinned by digest in [docker/Dockerfile](/Users/lunaticabs/code/agent-audit/docker/Dockerfile).
 - `agent-audit` is built in an Ubuntu 22.04 builder stage so the resulting binary is ABI-compatible with the Ubuntu 22.04 toolbox runtime.
-- The image injects a dedicated container Codex bundle from `docker/.codex/`. This includes a container-specific `config.toml` plus rewritten audit skills that use direct `agent-audit` and tool binaries instead of host-development workflows such as `cargo run` or manual `.env` sourcing.
+- The image injects dedicated container Codex prompt bundles from `docker/osprompt/` and `docker/csprompt/`. The entrypoint activates `osprompt` by default and switches to `csprompt` when `SOURCE_KIND=closed_source`.
 - The Docker entrypoint is a small Node program backed by the official TypeScript Codex SDK. The SDK still drives a local `codex` binary under the hood, so both `@openai/codex-sdk` and `@openai/codex` are installed in the image.
 - `flake.nix` and `flake.lock` are not copied into the runtime image.
 - No batch scheduler is included; the entrypoint runs exactly one Codex audit task.
@@ -77,3 +94,5 @@ docker run --rm \
 ```
 
 `TASK_ID` is optional and can be injected alongside `FULL_PROMPT` when an external scheduler wants a stable task identifier in container logs.
+
+`SOURCE_KIND` is optional and defaults to `open_source`. Set `SOURCE_KIND=closed_source` to activate the closed-source bytecode prompt profile.

@@ -55,6 +55,12 @@ if [[ -n "${TASK_ID:-}" ]]; then
   )
 fi
 
+if [[ -n "${SOURCE_KIND:-}" ]]; then
+  docker_args+=(
+    -e "SOURCE_KIND=${SOURCE_KIND}"
+  )
+fi
+
 docker_args+=(
   "${IMAGE}"
   "$@"

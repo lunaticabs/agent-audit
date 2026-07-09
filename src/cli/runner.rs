@@ -57,7 +57,13 @@ impl CliApp {
     }
 
     fn parse_init_run_input(&self, args: InitRunArgs) -> Result<InitRunInput, ExecutionError> {
-        parse_init_run_input(&self.config, &args.address, args.chain.as_deref())
+        parse_init_run_input(
+            &self.config,
+            &args.address,
+            args.chain.as_deref(),
+            args.source_kind.as_deref(),
+            args.closed_source,
+        )
     }
 }
 
@@ -75,7 +81,9 @@ impl Command {
                 Ok(CommandOutput::step(&run_id, payload))
             }
             Self::FetchSource(args) => app.execute_step(WorkspaceStep::FetchSource, &args),
+            Self::FetchBytecode(args) => app.execute_step(WorkspaceStep::FetchBytecode, &args),
             Self::RunDependency(args) => app.execute_step(WorkspaceStep::RunDependency, &args),
+            Self::PrepareHeimdall(args) => app.execute_step(WorkspaceStep::PrepareHeimdall, &args),
             Self::PrepareSlither(args) => app.execute_step(WorkspaceStep::PrepareSlither, &args),
             Self::PrepareTooling(args) => app.execute_step(WorkspaceStep::PrepareTooling, &args),
             Self::AggregateMaterials(args) => {

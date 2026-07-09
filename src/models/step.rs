@@ -15,6 +15,10 @@ pub enum StepStatus {
     SourceNotFetched,
     SourceFilesMissing,
     SourceApiNotConfigured,
+    BytecodeFetched,
+    BytecodeFetchFailed,
+    HeimdallPrepared,
+    HeimdallFailed,
 }
 
 impl StepStatus {
@@ -26,7 +30,13 @@ impl StepStatus {
     }
 
     pub const fn is_retryable_failure(self) -> bool {
-        matches!(self, Self::SourceFetchFailed | Self::ExecutedWithError)
+        matches!(
+            self,
+            Self::SourceFetchFailed
+                | Self::BytecodeFetchFailed
+                | Self::HeimdallFailed
+                | Self::ExecutedWithError
+        )
     }
 }
 
@@ -45,6 +55,10 @@ impl FromStr for StepStatus {
             "source_not_fetched" => Ok(Self::SourceNotFetched),
             "source_files_missing" => Ok(Self::SourceFilesMissing),
             "source_api_not_configured" => Ok(Self::SourceApiNotConfigured),
+            "bytecode_fetched" => Ok(Self::BytecodeFetched),
+            "bytecode_fetch_failed" => Ok(Self::BytecodeFetchFailed),
+            "heimdall_prepared" => Ok(Self::HeimdallPrepared),
+            "heimdall_failed" => Ok(Self::HeimdallFailed),
             _ => Err("unknown step status"),
         }
     }

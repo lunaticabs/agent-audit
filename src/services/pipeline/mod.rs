@@ -1,3 +1,4 @@
+mod bytecode;
 mod dependency_chain;
 mod journal;
 mod materials;

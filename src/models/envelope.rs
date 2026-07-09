@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use crate::models::command::CommandName;
 use crate::models::identity::{ChainAlias, EvmAddress, RunId};
 use crate::models::path::WorkspaceRelPath;
+use crate::models::run::SourceKind;
 use crate::models::step::StepStatus;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,9 +78,14 @@ pub struct StepPayload {
 pub struct InitRunDetails {
     pub address: EvmAddress,
     pub chain: ChainAlias,
+    pub source_kind: SourceKind,
     pub source_fetch_status: StepStatus,
     pub dependency_analysis_status: StepStatus,
     pub tooling_status: StepStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bytecode_fetch_status: Option<StepStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub heimdall_status: Option<StepStatus>,
     pub tooling_manifest_path: WorkspaceRelPath,
     pub materials_manifest_path: WorkspaceRelPath,
     pub slither_build_manifest_path: WorkspaceRelPath,
@@ -94,6 +100,10 @@ pub struct FetchSourceDetails {
     pub slither_build_manifest_path: WorkspaceRelPath,
     pub foundry_build_manifest_path: WorkspaceRelPath,
     pub echidna_build_manifest_path: WorkspaceRelPath,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bytecode_fetch_status: Option<StepStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub heimdall_status: Option<StepStatus>,
 }
 
 #[derive(Clone, Debug, Serialize)]

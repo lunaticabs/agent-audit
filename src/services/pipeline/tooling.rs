@@ -28,6 +28,25 @@ use super::support::{
 };
 
 impl AuditPipelineService {
+    pub fn prepare_slither_closed_source_skip(
+        &mut self,
+        address: &EvmAddress,
+        chain: &ChainAlias,
+    ) -> AppResult<StepStatus> {
+        let slither_root = self.workspace.root().join("slither_project");
+        self.prepare_slither_precondition(
+            address,
+            chain,
+            &slither_root,
+            PreconditionSpec {
+                status: StepStatus::ConfiguredNotExecuted,
+                note: "Closed-source run: Slither source project is intentionally not prepared.",
+                artifact_status: StepStatus::ConfiguredNotExecuted,
+                summary: "Skipped Slither project preparation for a closed-source bytecode run.",
+            },
+        )
+    }
+
     pub fn prepare_slither_project(
         &mut self,
         address: &EvmAddress,
@@ -220,6 +239,68 @@ impl AuditPipelineService {
             ArtifactKind::Prep,
             status,
             "Prepared standard working directories for supported analysis tools.",
+        );
+        Ok(status)
+    }
+
+    pub fn prepare_closed_source_tooling_skips(
+        &mut self,
+        address: &EvmAddress,
+        chain: &ChainAlias,
+    ) -> AppResult<StepStatus> {
+        let slither_status = self.prepare_slither_closed_source_skip(address, chain)?;
+        let foundry_root = self.workspace.root().join("foundry_project");
+        let foundry_status = self.prepare_foundry_precondition(
+            address,
+            chain,
+            &foundry_root,
+            PreconditionSpec {
+                status: StepStatus::ConfiguredNotExecuted,
+                note: "Closed-source run: Foundry source project is intentionally not prepared.",
+                artifact_status: StepStatus::ConfiguredNotExecuted,
+                summary: "Skipped Foundry project preparation for a closed-source bytecode run.",
+            },
+        )?;
+        let echidna_root = self.workspace.root().join("echidna_project");
+        let echidna_status = self.prepare_echidna_precondition(
+            address,
+            chain,
+            &echidna_root,
+            PreconditionSpec {
+                status: StepStatus::ConfiguredNotExecuted,
+                note: "Closed-source run: Echidna source project is intentionally not prepared.",
+                artifact_status: StepStatus::ConfiguredNotExecuted,
+                summary: "Skipped Echidna project preparation for a closed-source bytecode run.",
+            },
+        )?;
+        let status = StepStatus::ConfiguredNotExecuted;
+        let manifest_path = self.workspace.store().write_json(
+            paths::TOOLING_MANIFEST,
+            &ToolingManifest {
+                header: build_header(address, chain, self.workspace.run_id(), status),
+                source_fetch_status: StepStatus::ConfiguredNotExecuted,
+                workspaces: ToolWorkspaceManifestSet {
+                    slither: ToolWorkspaceManifest {
+                        status: slither_status,
+                        manifest_path: WorkspaceRelPath::new(paths::SLITHER_BUILD_MANIFEST),
+                    },
+                    foundry: ToolWorkspaceManifest {
+                        status: foundry_status,
+                        manifest_path: WorkspaceRelPath::new(paths::FOUNDRY_BUILD_MANIFEST),
+                    },
+                    echidna: ToolWorkspaceManifest {
+                        status: echidna_status,
+                        manifest_path: WorkspaceRelPath::new(paths::ECHIDNA_BUILD_MANIFEST),
+                    },
+                },
+            },
+        )?;
+        self.record(
+            ArtifactStep::PrepareToolingWorkspaces,
+            &manifest_path,
+            ArtifactKind::Prep,
+            status,
+            "Skipped source-level tool workspace preparation for a closed-source bytecode run.",
         );
         Ok(status)
     }

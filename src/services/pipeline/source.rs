@@ -14,7 +14,7 @@ use crate::models::finding::{
 };
 use crate::models::identity::{ChainAlias, EvmAddress};
 use crate::models::path::RelativePath;
-use crate::models::run::RunTarget;
+use crate::models::run::{RunTarget, SourceKind};
 use crate::models::source::{
     AnalysisTarget, ArtifactSourceFile, ContractMetadata, DependencyFetchStatus, DependencyRecord,
     ProxyResolution, ProxyResolutionStatus, SourceBundleArtifact, SourceFile,
@@ -27,6 +27,30 @@ use crate::workspace::paths;
 use super::AuditPipelineService;
 
 impl AuditPipelineService {
+    pub fn write_closed_source_bundle(
+        &mut self,
+        address: &EvmAddress,
+        chain: &ChainAlias,
+    ) -> AppResult<crate::models::path::WorkspaceRelPath> {
+        let target = RunTarget::new_with_source_kind(
+            address.clone(),
+            chain.clone(),
+            SourceKind::ClosedSource,
+        );
+        let bundle_path = self.workspace.store().write_json(
+            paths::SOURCE_BUNDLE,
+            &SourceBundleArtifact::closed_source(target),
+        )?;
+        self.record(
+            ArtifactStep::FetchContractBytecode,
+            &bundle_path,
+            ArtifactKind::Artifact,
+            StepStatus::ConfiguredNotExecuted,
+            "Recorded that verified source fetching is intentionally skipped for a closed-source run.",
+        );
+        Ok(bundle_path)
+    }
+
     pub fn fetch_contract_source(
         &mut self,
         address: &EvmAddress,
@@ -245,6 +269,30 @@ impl AuditPipelineService {
         );
         self.write_dependency_chain_artifacts(chain_artifacts)?;
         Ok(status)
+    }
+
+    pub fn skip_dependency_analysis_closed_source(
+        &mut self,
+        address: &EvmAddress,
+        chain: &ChainAlias,
+    ) -> AppResult<StepStatus> {
+        let target = RunTarget::new_with_source_kind(
+            address.clone(),
+            chain.clone(),
+            SourceKind::ClosedSource,
+        );
+        let findings_path = self.workspace.store().write_json(
+            paths::DEPENDENCY_FINDINGS,
+            &DependencyFindingsArtifact::new(target, StepStatus::ConfiguredNotExecuted, Vec::new()),
+        )?;
+        self.record(
+            ArtifactStep::RunDependencyAnalysis,
+            &findings_path,
+            ArtifactKind::Artifact,
+            StepStatus::ConfiguredNotExecuted,
+            "Skipped source dependency analysis because this is a closed-source bytecode run.",
+        );
+        Ok(StepStatus::ConfiguredNotExecuted)
     }
 
     fn write_dependency_chain_artifacts(
@@ -702,7 +750,7 @@ mod tests {
         FlashLoanSurfaceArtifact, OracleChecksArtifact, ProxyChecksArtifact,
     };
     use crate::models::identity::{ChainAlias, EvmAddress, RunId};
-    use crate::models::run::{RunRequest, RunTarget};
+    use crate::models::run::{RunRequest, RunTarget, SourceKind};
     use crate::workspace::RunWorkspace;
     use tempfile::TempDir;
 
@@ -732,6 +780,7 @@ mod tests {
                 &RunRequest {
                     address: target.address.clone(),
                     chain: target.chain.clone(),
+                    source_kind: SourceKind::OpenSource,
                 },
             )
             .expect("write request");

@@ -5,7 +5,7 @@ use serde_with::skip_serializing_none;
 use crate::models::discovery::{DependencyDiscoveryContext, DependencyDiscoveryReport};
 use crate::models::identity::EvmAddress;
 use crate::models::path::{RelativePath, WorkspaceRelPath};
-use crate::models::run::RunTarget;
+use crate::models::run::{RunTarget, SourceKind};
 use crate::models::step::StepStatus;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -198,6 +198,21 @@ impl SourceBundleArtifact {
                 status: ProxyResolutionStatus::NotAttempted,
                 ..ProxyResolution::default()
             }),
+            ..Self::default()
+        }
+    }
+
+    pub fn closed_source(target: RunTarget) -> Self {
+        Self {
+            target: RunTarget {
+                source_kind: SourceKind::ClosedSource,
+                ..target
+            },
+            status: StepStatus::ConfiguredNotExecuted,
+            note: Some(
+                "Closed-source run: verified source fetching is intentionally skipped; use bytecode and Heimdall artifacts instead."
+                    .to_string(),
+            ),
             ..Self::default()
         }
     }

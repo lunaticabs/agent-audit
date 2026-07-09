@@ -5,8 +5,9 @@ use crate::models::artifact::{ArtifactKind, ArtifactRecord, ArtifactStatus, Arti
 use crate::models::finding::DependencyFindingsArtifact;
 use crate::models::identity::{ChainAlias, ChainId, EvmAddress, RunId};
 use crate::models::path::WorkspaceRelPath;
+use crate::models::run::SourceKind;
 use crate::models::tooling::MaterialStatusSnapshot;
-use crate::workspace::paths;
+use crate::workspace::{load_request_context, paths};
 
 use super::AuditPipelineService;
 
@@ -29,6 +30,7 @@ struct RunTargetRef<'a> {
 struct MaterialsManifestRef<'a> {
     target: RunTargetRef<'a>,
     run_id: &'a RunId,
+    source_kind: SourceKind,
     statuses: MaterialStatusSnapshot,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     inputs: Vec<WorkspaceRelPath>,
@@ -48,6 +50,9 @@ impl AuditPipelineService {
         address: &EvmAddress,
         chain: &ChainAlias,
     ) -> AppResult<WorkspaceRelPath> {
+        let source_kind = load_request_context(&self.workspace)
+            .map(|request| request.source_kind)
+            .unwrap_or_default();
         let mut optional_tool_artifacts = self.existing_paths(&[
             "artifacts/chain_checks_plan.json",
             "artifacts/chain_checks_output.txt",
@@ -67,6 +72,14 @@ impl AuditPipelineService {
             paths::ECHIDNA_BUILD_MANIFEST,
             "echidna_project/echidna.yaml",
         ]);
+        optional_tool_artifacts.extend(self.existing_paths(&[
+            paths::HEIMDALL_DECOMPILED,
+            paths::HEIMDALL_DISASSEMBLY,
+            paths::HEIMDALL_CFG,
+            "artifacts/heimdall_decompile_stderr.txt",
+            "artifacts/heimdall_disassemble_stderr.txt",
+            "artifacts/heimdall_cfg_stderr.txt",
+        ]));
         optional_tool_artifacts.extend(self.existing_tree(&[
             "artifacts/analyzer",
             "artifacts/chain",
@@ -90,16 +103,10 @@ impl AuditPipelineService {
                     chain_id: None,
                 },
                 run_id: self.workspace.run_id(),
+                source_kind,
                 statuses: self.material_status_snapshot()?,
                 inputs: self.existing_paths(&[paths::REQUEST, paths::SOURCE_REQUEST]),
-                core_materials: self.existing_paths(&[
-                    paths::SOURCE_BUNDLE,
-                    paths::DEPENDENCY_FINDINGS,
-                    paths::DEPENDENCY_CHAIN_CHECKS,
-                    paths::PROXY_CHECKS,
-                    paths::ORACLE_CHECKS,
-                    paths::FLASH_LOAN_SURFACE,
-                ]),
+                core_materials: self.core_materials_for(source_kind),
                 optional_tool_artifacts,
                 artifact_records,
                 notes: MATERIAL_NOTES.to_vec(),
@@ -120,10 +127,40 @@ impl AuditPipelineService {
         let dependency_payload: DependencyFindingsArtifact = super::support::read_json_if_exists(
             &self.workspace.paths().resolve(paths::DEPENDENCY_FINDINGS),
         )?;
+        let bytecode_payload: crate::models::bytecode::BytecodeArtifact =
+            super::support::read_json_if_exists(&self.workspace.paths().resolve(paths::BYTECODE))?;
+        let heimdall_payload: crate::models::bytecode::HeimdallManifest =
+            super::support::read_json_if_exists(
+                &self.workspace.paths().resolve(paths::HEIMDALL_MANIFEST),
+            )?;
         Ok(MaterialStatusSnapshot {
             source_fetch_status: source_payload.status,
             dependency_analysis_status: dependency_payload.status,
+            bytecode_fetch_status: bytecode_payload.header.status,
+            heimdall_status: heimdall_payload.header.status,
         })
+    }
+
+    fn core_materials_for(&self, source_kind: SourceKind) -> Vec<WorkspaceRelPath> {
+        match source_kind {
+            SourceKind::OpenSource => self.existing_paths(&[
+                paths::SOURCE_BUNDLE,
+                paths::DEPENDENCY_FINDINGS,
+                paths::DEPENDENCY_CHAIN_CHECKS,
+                paths::PROXY_CHECKS,
+                paths::ORACLE_CHECKS,
+                paths::FLASH_LOAN_SURFACE,
+            ]),
+            SourceKind::ClosedSource => self.existing_paths(&[
+                paths::SOURCE_BUNDLE,
+                paths::BYTECODE,
+                paths::RUNTIME_BYTECODE,
+                paths::HEIMDALL_MANIFEST,
+                paths::SELECTOR_INDEX,
+                paths::STORAGE_PROBE_PLAN,
+                paths::DEPENDENCY_FINDINGS,
+            ]),
+        }
     }
 }
 
@@ -136,7 +173,7 @@ mod tests {
         FlashLoanSurfaceArtifact, OracleChecksArtifact, ProxyChecksArtifact,
     };
     use crate::models::identity::{ChainAlias, EvmAddress, RunId};
-    use crate::models::run::{RunRequest, RunTarget};
+    use crate::models::run::{RunRequest, RunTarget, SourceKind};
     use crate::models::source::SourceBundleArtifact;
     use crate::models::step::StepStatus;
     use crate::services::pipeline::AuditPipelineService;
@@ -165,6 +202,7 @@ mod tests {
                 &RunRequest {
                     address: target.address.clone(),
                     chain: target.chain.clone(),
+                    source_kind: SourceKind::OpenSource,
                 },
             )
             .expect("write request");

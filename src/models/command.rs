@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 pub enum CommandName {
     InitRun,
     FetchSource,
+    FetchBytecode,
     RunDependency,
+    PrepareHeimdall,
     PrepareSlither,
     PrepareTooling,
     AggregateMaterials,
@@ -19,7 +21,9 @@ impl CommandName {
         match self {
             Self::InitRun => "init-run",
             Self::FetchSource => "fetch-source",
+            Self::FetchBytecode => "fetch-bytecode",
             Self::RunDependency => "run-dependency",
+            Self::PrepareHeimdall => "prepare-heimdall",
             Self::PrepareSlither => "prepare-slither",
             Self::PrepareTooling => "prepare-tooling",
             Self::AggregateMaterials => "aggregate-materials",

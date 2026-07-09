@@ -4,6 +4,7 @@ use serde_json::Value;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::path::PathBuf;
 use std::thread;
 use tempfile::TempDir;
 
@@ -55,6 +56,109 @@ fn aggregate_materials_missing_run_returns_precondition_error() {
 
     let payload: Value = serde_json::from_slice(&output).expect("valid json output");
     assert_eq!(payload["error"]["code"], "RUN_NOT_FOUND");
+}
+
+#[test]
+fn init_run_closed_source_without_rpc_writes_skip_artifacts() {
+    let project = temp_project();
+
+    let output = Command::cargo_bin("agent-audit")
+        .expect("binary exists")
+        .current_dir(project.path())
+        .args([
+            "init-run",
+            "--address",
+            "0x1234567890abcdef1234567890abcdef12345678",
+            "--source-kind",
+            "closed-source",
+        ])
+        .assert()
+        .code(30)
+        .stdout(predicate::str::contains(
+            "\"source_kind\": \"closed_source\"",
+        ))
+        .get_output()
+        .stdout
+        .clone();
+
+    let payload: Value = serde_json::from_slice(&output).expect("valid json output");
+    let run_dir = payload["payload"]["run_dir"]
+        .as_str()
+        .expect("run_dir in payload");
+    let request: Value = serde_json::from_str(
+        &fs::read_to_string(PathBuf::from(run_dir).join("input/request.json"))
+            .expect("read request"),
+    )
+    .expect("valid request");
+    assert_eq!(request["source_kind"], "closed_source");
+    assert!(
+        PathBuf::from(run_dir)
+            .join("artifacts/bytecode.json")
+            .exists()
+    );
+    assert!(
+        PathBuf::from(run_dir)
+            .join("artifacts/heimdall_manifest.json")
+            .exists()
+    );
+    assert!(
+        PathBuf::from(run_dir)
+            .join("reports/materials_manifest.json")
+            .exists()
+    );
+    assert!(
+        !PathBuf::from(run_dir)
+            .join("artifacts/source_provider_response.json")
+            .exists()
+    );
+}
+
+#[test]
+fn fetch_bytecode_closed_source_writes_bytecode_artifacts() {
+    let project = temp_project();
+    let rpc = spawn_mock_rpc_server();
+    fs::write(
+        project.path().join(".env"),
+        format!(
+            "AGENT_AUDIT_DEFAULT_CHAIN=eth\nAGENT_AUDIT_RUNS_DIR=runs\nAGENT_AUDIT_RPC_URL={}\n",
+            rpc
+        ),
+    )
+    .expect("write env");
+
+    let run_dir = project.path().join("runs/run-1");
+    fs::create_dir_all(run_dir.join("input")).expect("input dir");
+    fs::create_dir_all(run_dir.join("artifacts")).expect("artifacts dir");
+    fs::create_dir_all(run_dir.join("reports")).expect("reports dir");
+    fs::create_dir_all(run_dir.join("logs")).expect("logs dir");
+    fs::write(
+        run_dir.join("input/request.json"),
+        serde_json::to_string_pretty(&serde_json::json!({
+            "address": "0x1234567890abcdef1234567890abcdef12345678",
+            "chain": "eth",
+            "source_kind": "closed_source"
+        }))
+        .expect("request json"),
+    )
+    .expect("write request");
+
+    Command::cargo_bin("agent-audit")
+        .expect("binary exists")
+        .current_dir(project.path())
+        .args(["fetch-bytecode", "--run-id", "run-1"])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("\"status\": \"completed\""));
+
+    let bytecode: Value = serde_json::from_str(
+        &fs::read_to_string(run_dir.join("artifacts/bytecode.json")).expect("read bytecode"),
+    )
+    .expect("valid bytecode");
+    assert_eq!(bytecode["status"], "bytecode_fetched");
+    assert_eq!(bytecode["byte_length"], 11);
+    assert!(run_dir.join("artifacts/runtime_bytecode.hex").exists());
+    assert!(run_dir.join("artifacts/selector_index.json").exists());
+    assert!(run_dir.join("artifacts/storage_probe_plan.json").exists());
 }
 
 #[test]
@@ -163,6 +267,7 @@ fn spawn_mock_rpc_server() -> String {
                         .to_string(),
                 ),
                 "eth_call" => Value::String("0x".to_string()),
+                "eth_getCode" => Value::String("0x600063deadbeef14600057".to_string()),
                 _ => Value::Null,
             };
             let response = serde_json::json!({

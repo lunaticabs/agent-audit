@@ -92,6 +92,18 @@ fn decision_for_step(
             },
             exit_code: EXIT_FATAL,
         },
+        StepStatus::BytecodeFetchFailed => EnvelopeDecision {
+            ok: false,
+            status: CommandStatus::RetryableError,
+            retryable: true,
+            error: None,
+            next_action: NextAction::RetrySameCommand {
+                command: retry_command_for_step(command, run_id_text),
+                retry_after_sec: 5,
+                max_retries: 3,
+            },
+            exit_code: EXIT_RETRYABLE,
+        },
         _ => completed_decision(),
     }
 }
@@ -190,6 +202,8 @@ fn completed_decision() -> EnvelopeDecision {
 fn retry_command_for_step(command: CommandName, run_id_text: &str) -> String {
     if command == CommandName::InitRun {
         format!("agent-audit fetch-source --run-id {run_id_text}")
+    } else if command == CommandName::PrepareHeimdall {
+        format!("agent-audit prepare-heimdall --run-id {run_id_text}")
     } else {
         format!("agent-audit {} --run-id {run_id_text}", command.as_str())
     }
@@ -199,6 +213,9 @@ fn prerequisite_command_for_step(command: CommandName, run_id_text: &str) -> Str
     match command {
         CommandName::RunDependency | CommandName::PrepareSlither | CommandName::PrepareTooling => {
             format!("agent-audit fetch-source --run-id {run_id_text}")
+        }
+        CommandName::PrepareHeimdall => {
+            format!("agent-audit fetch-bytecode --run-id {run_id_text}")
         }
         _ => init_run_placeholder_command(),
     }

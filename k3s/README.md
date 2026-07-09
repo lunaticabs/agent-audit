@@ -130,7 +130,7 @@ k3s kubectl -n agent-audit get deploy,pods
 
 ## Submit Tasks
 
-Each Redis message contains a `task_id`, one complete prompt, and an optional image override. The dispatcher does not assemble prompts and does not write task state back into Redis.
+Each Redis message contains a `task_id`, one complete prompt, source-kind metadata, and an optional image override. The dispatcher does not assemble prompts and does not write task state back into Redis.
 
 Example:
 
@@ -139,6 +139,10 @@ k3s kubectl -n agent-audit exec deploy/agent-audit-redis -- \
   redis-cli XADD agent-audit:tasks '*' \
     task_id audit-20260505-001 \
     full_prompt 'Check AGENTS.md and audit 0x0000000000000000000000000000000000000000 on eth. Focus on upgradeability and authz.' \
+    address 0x0000000000000000000000000000000000000000 \
+    chain eth \
+    is_open_source true \
+    source_kind open_source \
     image registry.example.com/agent-audit:0.1
 ```
 
@@ -151,7 +155,7 @@ k3s kubectl -n agent-audit port-forward svc/agent-audit-redis 6380:6379
 ```bash
 python3 scripts/enqueue_redis.py \
   --chain eth \
-  --address-file scripts/addresses/addrs.txt \
+  --input-csv scripts/addresses/addrs.csv \
   --host 127.0.0.1 \
   --port 6380 \
   --image ghcr.io/lunaticabs/agent-audit:main
@@ -159,11 +163,12 @@ python3 scripts/enqueue_redis.py \
 
 Defaults:
 
-- one address per line
-- blank lines and `#` comments ignored
+- CSV columns: `address,is_open_source`
+- `is_open_source` accepts `true` or `false`, case-insensitive
+- comment lines beginning with `#` are ignored
 - address text is preserved exactly as written, including case
-- only exact duplicate lines are skipped
-- default prompt template: `Check AGENTS.md and audit {address} on {chain}.`
+- duplicate `chain + address + source_kind` rows are skipped
+- default prompt template includes `{address}`, `{chain}`, `{source_kind}`, and `{is_open_source}`
 - auto-generated unique task IDs in the form `audit-<timestamp>-<chain>-<index>-...`
 
 Preview without sending:
@@ -189,7 +194,7 @@ Use `Job.status` and `Pod.status` as the source of truth for runtime state. Redi
 ## Operational Notes
 
 - `task_id` is the idempotency key. The dispatcher derives a stable Job name from it and will not create duplicates when the Job already exists.
-- `FULL_PROMPT` is injected into the Job pod as an environment variable. The runner image no longer accepts `address/chain/instructions` fields.
+- `FULL_PROMPT` and `SOURCE_KIND` are injected into the Job pod as environment variables. Old messages without source-kind fields default to `open_source`.
 - `runs/` lives on an `emptyDir` mounted at `/opt/agent-audit/runs`, which is sufficient for a single-node one-shot Job lifecycle.
 - `ttlSecondsAfterFinished` is enabled so finished Jobs and Pods clean themselves up automatically.
 - Runner Job settings such as image, TTL, resources, pull policy, and `runs/` volume size live in [runner-configmap.yaml](/Users/lunaticabs/code/agent-audit/k3s/runner-configmap.yaml).

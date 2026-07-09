@@ -84,6 +84,7 @@ pub fn fetch_verified_source(
             address: address.clone(),
             chain: chain.clone(),
             chain_id: Some(chain_id),
+            source_kind: crate::models::run::SourceKind::OpenSource,
         },
         provider: SourceProviderMetadata {
             kind: "etherscan-compatible".to_string(),

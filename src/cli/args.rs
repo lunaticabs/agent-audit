@@ -14,7 +14,9 @@ pub(crate) struct Cli {
 pub(crate) enum Command {
     InitRun(InitRunArgs),
     FetchSource(RunIdArgs),
+    FetchBytecode(RunIdArgs),
     RunDependency(RunIdArgs),
+    PrepareHeimdall(RunIdArgs),
     PrepareSlither(RunIdArgs),
     PrepareTooling(RunIdArgs),
     AggregateMaterials(RunIdArgs),
@@ -27,6 +29,10 @@ pub(crate) struct InitRunArgs {
     pub(crate) address: String,
     #[arg(long)]
     pub(crate) chain: Option<String>,
+    #[arg(long = "source-kind")]
+    pub(crate) source_kind: Option<String>,
+    #[arg(long = "closed-source")]
+    pub(crate) closed_source: bool,
 }
 
 #[derive(Args)]

@@ -18,6 +18,8 @@ pub struct RunArtifactHeader {
 pub struct MaterialStatusSnapshot {
     pub source_fetch_status: StepStatus,
     pub dependency_analysis_status: StepStatus,
+    pub bytecode_fetch_status: StepStatus,
+    pub heimdall_status: StepStatus,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -203,6 +205,8 @@ mod tests {
         let snapshot = MaterialStatusSnapshot::default();
         assert_eq!(snapshot.source_fetch_status, StepStatus::NotPrepared);
         assert_eq!(snapshot.dependency_analysis_status, StepStatus::NotPrepared);
+        assert_eq!(snapshot.bytecode_fetch_status, StepStatus::NotPrepared);
+        assert_eq!(snapshot.heimdall_status, StepStatus::NotPrepared);
     }
 
     #[test]

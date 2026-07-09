@@ -136,6 +136,7 @@ struct StreamMessage {
 struct TaskMessage {
     task_id: String,
     full_prompt: String,
+    source_kind: SourceKind,
     image: Option<String>,
 }
 
@@ -143,6 +144,12 @@ struct TaskMessage {
 struct InvalidTaskMessage {
     task_id: Option<String>,
     message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourceKind {
+    OpenSource,
+    ClosedSource,
 }
 
 #[derive(Debug, Error)]
@@ -317,9 +324,10 @@ impl Dispatcher {
             let job = build_job(&self.config, &message.task, &job_name);
             self.jobs.create(&PostParams::default(), &job).await?;
             eprintln!(
-                "created job task_id={} job_name={} image={} message_id={}",
+                "created job task_id={} job_name={} source_kind={} image={} message_id={}",
                 message.task.task_id,
                 job_name,
+                message.task.source_kind.as_str(),
                 message
                     .task
                     .image
@@ -379,11 +387,78 @@ impl TaskMessage {
             });
         }
 
+        let source_kind = parse_task_source_kind(
+            entry.get::<String>("source_kind").as_deref(),
+            entry.get::<String>("is_open_source").as_deref(),
+        )
+        .map_err(|message| InvalidTaskMessage {
+            task_id: Some(task_id.clone()),
+            message,
+        })?;
+
         Ok(Self {
             task_id,
             full_prompt,
+            source_kind,
             image: trimmed_option(entry.get("image")),
         })
+    }
+}
+
+impl SourceKind {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::OpenSource => "open_source",
+            Self::ClosedSource => "closed_source",
+        }
+    }
+
+    const fn from_is_open_source(value: bool) -> Self {
+        if value {
+            Self::OpenSource
+        } else {
+            Self::ClosedSource
+        }
+    }
+}
+
+fn parse_task_source_kind(
+    source_kind: Option<&str>,
+    is_open_source: Option<&str>,
+) -> std::result::Result<SourceKind, String> {
+    let parsed_kind = match source_kind {
+        Some(raw) => Some(parse_source_kind(raw)?),
+        None => None,
+    };
+    let parsed_bool = match is_open_source {
+        Some(raw) => Some(SourceKind::from_is_open_source(parse_bool(raw)?)),
+        None => None,
+    };
+    match (parsed_kind, parsed_bool) {
+        (Some(kind), Some(from_bool)) if kind != from_bool => Err(format!(
+            "source_kind={} conflicts with is_open_source={}",
+            kind.as_str(),
+            from_bool == SourceKind::OpenSource
+        )),
+        (Some(kind), _) => Ok(kind),
+        (_, Some(kind)) => Ok(kind),
+        (None, None) => Ok(SourceKind::OpenSource),
+    }
+}
+
+fn parse_source_kind(value: &str) -> std::result::Result<SourceKind, String> {
+    match value.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+        "open_source" => Ok(SourceKind::OpenSource),
+        "closed_source" => Ok(SourceKind::ClosedSource),
+        _ => Err(format!("invalid source_kind: {value:?}")),
+    }
+}
+
+fn parse_bool(value: &str) -> std::result::Result<bool, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(format!("invalid is_open_source value: {value:?}")),
     }
 }
 
@@ -423,6 +498,11 @@ fn build_job(config: &DispatcherConfig, task: &TaskMessage, job_name: &str) -> J
         EnvVar {
             name: "TASK_ID".to_string(),
             value: Some(task.task_id.clone()),
+            ..Default::default()
+        },
+        EnvVar {
+            name: "SOURCE_KIND".to_string(),
+            value: Some(task.source_kind.as_str().to_string()),
             ..Default::default()
         },
     ];
@@ -629,6 +709,75 @@ mod tests {
                 .expect_err("blank full_prompt should fail");
         assert_eq!(invalid.task_id.as_deref(), Some("audit-1"));
         assert_eq!(invalid.message, "full_prompt must not be blank");
+    }
+
+    #[test]
+    fn task_message_defaults_to_open_source_for_old_messages() {
+        let task =
+            TaskMessage::from_entry(&entry(&[("task_id", "audit-1"), ("full_prompt", "audit")]))
+                .expect("valid old message");
+        assert_eq!(task.source_kind, SourceKind::OpenSource);
+    }
+
+    #[test]
+    fn task_message_accepts_closed_source_kind() {
+        let task = TaskMessage::from_entry(&entry(&[
+            ("task_id", "audit-1"),
+            ("full_prompt", "audit"),
+            ("source_kind", "closed_source"),
+        ]))
+        .expect("valid closed-source message");
+        assert_eq!(task.source_kind, SourceKind::ClosedSource);
+    }
+
+    #[test]
+    fn task_message_rejects_conflicting_source_kind_fields() {
+        let invalid = TaskMessage::from_entry(&entry(&[
+            ("task_id", "audit-1"),
+            ("full_prompt", "audit"),
+            ("source_kind", "closed_source"),
+            ("is_open_source", "true"),
+        ]))
+        .expect_err("conflict should fail");
+        assert!(invalid.message.contains("conflicts"));
+    }
+
+    #[test]
+    fn build_job_sets_source_kind_env() {
+        let config = DispatcherConfig {
+            namespace: "agent-audit".to_string(),
+            redis_stream: "agent-audit:tasks".to_string(),
+            redis_group: "group".to_string(),
+            redis_consumer: "consumer".to_string(),
+            runner_image: "runner:latest".to_string(),
+            runner_env_secret: "runner-env".to_string(),
+            runner_image_pull_secret: None,
+            runner_job_pull_policy: "IfNotPresent".to_string(),
+            runner_job_ttl_seconds: 60,
+            redis_block_ms: 1000,
+            runner_job_cpu_request: None,
+            runner_job_cpu_limit: None,
+            runner_job_memory_request: None,
+            runner_job_memory_limit: None,
+            runner_runs_volume_size_limit: None,
+        };
+        let task = TaskMessage {
+            task_id: "audit-1".to_string(),
+            full_prompt: "audit".to_string(),
+            source_kind: SourceKind::ClosedSource,
+            image: None,
+        };
+        let job = build_job(&config, &task, "agent-audit-test");
+        let env = job
+            .spec
+            .as_ref()
+            .and_then(|spec| spec.template.spec.as_ref())
+            .and_then(|spec| spec.containers.first())
+            .and_then(|container| container.env.as_ref())
+            .expect("env");
+        assert!(env.iter().any(|item| {
+            item.name == "SOURCE_KIND" && item.value.as_deref() == Some("closed_source")
+        }));
     }
 
     #[test]

@@ -164,16 +164,20 @@ k3s kubectl -n agent-audit exec deploy/agent-audit-redis -- \
   redis-cli XADD agent-audit:tasks '*' \
     task_id audit-20260505-001 \
     full_prompt 'Check AGENTS.md and audit 0x0000000000000000000000000000000000000000 on eth.' \
+    address 0x0000000000000000000000000000000000000000 \
+    chain eth \
+    is_open_source true \
+    source_kind open_source \
     image ghcr.io/lunaticabs/agent-audit:main
 ```
 
-批量提交地址列表：
+批量提交 CSV 地址列表：
 
 ```bash
 k3s kubectl -n agent-audit port-forward svc/agent-audit-redis 6380:6379
 python3 scripts/enqueue_redis.py \
   --chain eth \
-  --address-file scripts/addresses/addrs.txt \
+  --input-csv scripts/addresses/addrs.csv \
   --host 127.0.0.1 \
   --port 6380 \
   --image ghcr.io/lunaticabs/agent-audit:main

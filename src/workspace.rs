@@ -13,7 +13,7 @@ use time::OffsetDateTime;
 use crate::error::{AppError, AppResult};
 use crate::models::identity::{ChainAlias, EvmAddress, RunId};
 use crate::models::path::WorkspaceRelPath;
-use crate::models::run::{RunMeta, RunRequest, RunTarget};
+use crate::models::run::{RunMeta, RunRequest, RunTarget, SourceKind};
 use crate::serde_ext::to_pretty_json;
 
 pub mod paths {
@@ -23,6 +23,14 @@ pub mod paths {
     pub const ARTIFACT_INDEX: &str = "artifacts/artifact_index.json";
     pub const SOURCE_BUNDLE: &str = "artifacts/source_bundle.json";
     pub const SOURCE_PROVIDER_RESPONSE: &str = "artifacts/source_provider_response.json";
+    pub const BYTECODE: &str = "artifacts/bytecode.json";
+    pub const RUNTIME_BYTECODE: &str = "artifacts/runtime_bytecode.hex";
+    pub const HEIMDALL_MANIFEST: &str = "artifacts/heimdall_manifest.json";
+    pub const HEIMDALL_DECOMPILED: &str = "artifacts/heimdall_decompiled.sol";
+    pub const HEIMDALL_DISASSEMBLY: &str = "artifacts/heimdall_disassembly.txt";
+    pub const HEIMDALL_CFG: &str = "artifacts/heimdall_cfg.dot";
+    pub const SELECTOR_INDEX: &str = "artifacts/selector_index.json";
+    pub const STORAGE_PROBE_PLAN: &str = "artifacts/storage_probe_plan.json";
     pub const DEPENDENCY_FINDINGS: &str = "artifacts/dependency_findings.json";
     pub const DEPENDENCY_CHAIN_CHECKS: &str = "artifacts/dependency_chain_checks.json";
     pub const PROXY_CHECKS: &str = "artifacts/proxy_checks.json";
@@ -33,7 +41,9 @@ pub mod paths {
     pub const FINAL_REPORT: &str = "reports/final_report.json";
     pub const INIT_RUN_LOG: &str = "logs/init_run_result.json";
     pub const FETCH_SOURCE_LOG: &str = "logs/fetch_source_result.json";
+    pub const FETCH_BYTECODE_LOG: &str = "logs/fetch_bytecode_result.json";
     pub const RUN_DEPENDENCY_LOG: &str = "logs/run_dependency_result.json";
+    pub const PREPARE_HEIMDALL_LOG: &str = "logs/prepare_heimdall_result.json";
     pub const PREPARE_SLITHER_LOG: &str = "logs/prepare_slither_result.json";
     pub const PREPARE_TOOLING_LOG: &str = "logs/prepare_tooling_result.json";
     pub const AGGREGATE_MATERIALS_LOG: &str = "logs/aggregate_materials_result.json";
@@ -186,11 +196,28 @@ impl RunLock {
 }
 
 impl RunWorkspace {
+    #[allow(dead_code)]
     pub fn create(
         project_root: &Path,
         runs_dir: &Path,
         address: &EvmAddress,
         chain: &ChainAlias,
+    ) -> AppResult<Self> {
+        Self::create_with_source_kind(
+            project_root,
+            runs_dir,
+            address,
+            chain,
+            SourceKind::OpenSource,
+        )
+    }
+
+    pub fn create_with_source_kind(
+        project_root: &Path,
+        runs_dir: &Path,
+        address: &EvmAddress,
+        chain: &ChainAlias,
+        source_kind: SourceKind,
     ) -> AppResult<Self> {
         fs::create_dir_all(runs_dir)?;
         loop {
@@ -199,16 +226,42 @@ impl RunWorkspace {
             if root.exists() {
                 continue;
             }
-            return Self::create_at_root(project_root, &root, &run_id, address, chain);
+            return Self::create_at_root_with_source_kind(
+                project_root,
+                &root,
+                &run_id,
+                address,
+                chain,
+                source_kind,
+            );
         }
     }
 
+    #[allow(dead_code)]
     pub fn create_at_root(
         project_root: &Path,
         root: &Path,
         run_id: &RunId,
         address: &EvmAddress,
         chain: &ChainAlias,
+    ) -> AppResult<Self> {
+        Self::create_at_root_with_source_kind(
+            project_root,
+            root,
+            run_id,
+            address,
+            chain,
+            SourceKind::OpenSource,
+        )
+    }
+
+    pub fn create_at_root_with_source_kind(
+        project_root: &Path,
+        root: &Path,
+        run_id: &RunId,
+        address: &EvmAddress,
+        chain: &ChainAlias,
+        source_kind: SourceKind,
     ) -> AppResult<Self> {
         let workspace = Self::from_root(project_root, root, run_id);
         workspace.ensure_dirs()?;
@@ -218,7 +271,11 @@ impl RunWorkspace {
                 run_id: run_id.clone(),
                 id_scheme: "sha256-base64url-v1".to_string(),
                 created_at: OffsetDateTime::now_utc(),
-                target: RunTarget::new(address.clone(), chain.clone()),
+                target: RunTarget::new_with_source_kind(
+                    address.clone(),
+                    chain.clone(),
+                    source_kind,
+                ),
             },
         )?;
         Ok(workspace)
@@ -354,6 +411,7 @@ mod tests {
                     address: EvmAddress::new("0x1234567890abcdef1234567890abcdef12345678")
                         .expect("valid address"),
                     chain: ChainAlias::new("eth").expect("valid chain"),
+                    source_kind: SourceKind::OpenSource,
                 },
             )
             .expect("write request");

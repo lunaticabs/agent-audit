@@ -9,6 +9,7 @@ const DEFAULT_CODEX_HOME = "/root/.codex";
 const CODEX_RUNNER_DIR = "/opt/agent-audit/codex-runner";
 const CODEX_BIN = path.join(CODEX_RUNNER_DIR, "node_modules", ".bin", "codex");
 const ENV_FILE = path.join(IMAGE_PROJECT_ROOT, ".env");
+const PROMPTS_ROOT = path.join(IMAGE_PROJECT_ROOT, "prompts");
 const MAX_STRING_LENGTH = 2_000;
 
 function usage() {
@@ -278,13 +279,15 @@ function ensureRuntime() {
 
   const projectRoot = process.env.AGENT_AUDIT_PROJECT_ROOT;
   const codexHome = process.env.CODEX_HOME;
+  const promptProfile = selectPromptProfile(process.env.SOURCE_KIND);
+  const activePrompt = activatePromptProfile(projectRoot, codexHome, promptProfile);
   const bundledConfig = path.join(projectRoot, ".codex", "config.toml");
   const codexConfig = path.join(codexHome, "config.toml");
 
   fs.mkdirSync(path.join(projectRoot, "runs"), { recursive: true });
   fs.mkdirSync(codexHome, { recursive: true });
 
-  if (!fs.existsSync(codexConfig) && fs.existsSync(bundledConfig)) {
+  if (fs.existsSync(bundledConfig)) {
     fs.copyFileSync(bundledConfig, codexConfig);
   }
 
@@ -298,7 +301,49 @@ function ensureRuntime() {
     projectRoot,
     codexHome,
     codexConfig,
+    sourceKind: activePrompt.sourceKind,
+    promptProfile: activePrompt.profileName,
   };
+}
+
+function selectPromptProfile(rawSourceKind) {
+  const sourceKind = normalizeSourceKind(rawSourceKind);
+  return {
+    sourceKind,
+    profileName: sourceKind === "closed_source" ? "csprompt" : "osprompt",
+  };
+}
+
+function normalizeSourceKind(rawValue) {
+  const value =
+    typeof rawValue === "string" && rawValue.trim() !== ""
+      ? rawValue.trim().toLowerCase().replace(/-/g, "_")
+      : "open_source";
+  if (value === "open_source" || value === "closed_source") {
+    return value;
+  }
+  throw new Error(`invalid SOURCE_KIND: ${rawValue}`);
+}
+
+function activatePromptProfile(projectRoot, codexHome, promptProfile) {
+  const profileRoot = path.join(PROMPTS_ROOT, promptProfile.profileName);
+  const profileAgents = path.join(profileRoot, "AGENTS.md");
+  const profileCodex = path.join(profileRoot, ".codex");
+  const profileConfig = path.join(profileCodex, "config.toml");
+  if (!fs.existsSync(profileAgents)) {
+    throw new Error(`prompt AGENTS.md not found: ${profileAgents}`);
+  }
+  if (!fs.existsSync(profileConfig)) {
+    throw new Error(`prompt config.toml not found: ${profileConfig}`);
+  }
+
+  fs.mkdirSync(projectRoot, { recursive: true });
+  fs.mkdirSync(codexHome, { recursive: true });
+  fs.copyFileSync(profileAgents, path.join(projectRoot, "AGENTS.md"));
+  fs.rmSync(path.join(projectRoot, ".codex"), { recursive: true, force: true });
+  fs.cpSync(profileCodex, path.join(projectRoot, ".codex"), { recursive: true });
+  fs.copyFileSync(profileConfig, path.join(codexHome, "config.toml"));
+  return promptProfile;
 }
 
 function resolvePrompt(args, env = process.env) {
@@ -379,6 +424,8 @@ async function runAudit(args) {
     cwd: runtime.projectRoot,
     codex_home: runtime.codexHome,
     codex_config: runtime.codexConfig,
+    source_kind: runtime.sourceKind,
+    prompt_profile: runtime.promptProfile,
   });
   infoLog("loaded environment", {
     dotenv_path: ENV_FILE,

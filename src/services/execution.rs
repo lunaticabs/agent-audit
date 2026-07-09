@@ -7,7 +7,7 @@ use crate::models::envelope::{
 };
 use crate::models::identity::{ChainAlias, EvmAddress, RunId};
 use crate::models::path::WorkspaceRelPath;
-use crate::models::run::RunRequest;
+use crate::models::run::{RunRequest, SourceKind};
 use crate::models::step::StepStatus;
 use crate::output::EXIT_OK;
 use crate::services::pipeline::AuditPipelineService;
@@ -25,6 +25,7 @@ pub type ExecutionResult<T> = Result<T, ExecutionError>;
 pub struct InitRunInput {
     pub address: EvmAddress,
     pub chain: ChainAlias,
+    pub source_kind: SourceKind,
 }
 
 pub struct ExecutionError {
@@ -49,13 +50,30 @@ impl ExecutionError {
 }
 
 pub fn execute_init_run(config: &AppConfig, input: InitRunInput) -> ExecutionResult<StepPayload> {
-    let InitRunInput { address, chain } = input;
-    let workspace = RunWorkspace::create(&config.project_root, &config.runs_dir, &address, &chain)
-        .map_err(ExecutionError::without_run_id)?;
+    let InitRunInput {
+        address,
+        chain,
+        source_kind,
+    } = input;
+    let workspace = RunWorkspace::create_with_source_kind(
+        &config.project_root,
+        &config.runs_dir,
+        &address,
+        &chain,
+        source_kind,
+    )
+    .map_err(ExecutionError::without_run_id)?;
     let run_id = workspace.run_id().clone();
     workspace
         .store()
-        .write_json(paths::REQUEST, &RunRequest { address, chain })
+        .write_json(
+            paths::REQUEST,
+            &RunRequest {
+                address,
+                chain,
+                source_kind,
+            },
+        )
         .map_err(|source| ExecutionError::with_run_id(run_id.clone(), source))?;
 
     let mut run = LockedRunContext::from_workspace(config, INIT_RUN_COMMAND, workspace)
@@ -68,6 +86,8 @@ pub fn parse_init_run_input(
     config: &AppConfig,
     address: &str,
     chain: Option<&str>,
+    source_kind: Option<&str>,
+    closed_source: bool,
 ) -> ExecutionResult<InitRunInput> {
     let address = address
         .parse::<EvmAddress>()
@@ -78,7 +98,12 @@ pub fn parse_init_run_input(
             .map_err(ExecutionError::without_run_id)?,
         None => config.default_chain.clone(),
     };
-    Ok(InitRunInput { address, chain })
+    let source_kind = parse_source_kind(source_kind, closed_source)?;
+    Ok(InitRunInput {
+        address,
+        chain,
+        source_kind,
+    })
 }
 
 pub fn parse_run_id(raw: &str) -> ExecutionResult<RunId> {
@@ -165,7 +190,9 @@ impl LockedRunContext {
 #[derive(Clone, Copy)]
 pub enum WorkspaceStep {
     FetchSource,
+    FetchBytecode,
     RunDependency,
+    PrepareHeimdall,
     PrepareSlither,
     PrepareTooling,
     AggregateMaterials,
@@ -175,7 +202,9 @@ impl WorkspaceStep {
     pub const fn command_name(self) -> CommandName {
         match self {
             Self::FetchSource => CommandName::FetchSource,
+            Self::FetchBytecode => CommandName::FetchBytecode,
             Self::RunDependency => CommandName::RunDependency,
+            Self::PrepareHeimdall => CommandName::PrepareHeimdall,
             Self::PrepareSlither => CommandName::PrepareSlither,
             Self::PrepareTooling => CommandName::PrepareTooling,
             Self::AggregateMaterials => CommandName::AggregateMaterials,
@@ -185,7 +214,9 @@ impl WorkspaceStep {
     const fn log_path(self) -> &'static str {
         match self {
             Self::FetchSource => paths::FETCH_SOURCE_LOG,
+            Self::FetchBytecode => paths::FETCH_BYTECODE_LOG,
             Self::RunDependency => paths::RUN_DEPENDENCY_LOG,
+            Self::PrepareHeimdall => paths::PREPARE_HEIMDALL_LOG,
             Self::PrepareSlither => paths::PREPARE_SLITHER_LOG,
             Self::PrepareTooling => paths::PREPARE_TOOLING_LOG,
             Self::AggregateMaterials => paths::AGGREGATE_MATERIALS_LOG,
@@ -195,7 +226,9 @@ impl WorkspaceStep {
     fn execute(self, run: &mut RunExecutionContext) -> AppResult<StepPayload> {
         let outcome = match self {
             Self::FetchSource => self.fetch_source(run)?,
+            Self::FetchBytecode => self.fetch_bytecode(run)?,
             Self::RunDependency => self.run_dependency(run)?,
+            Self::PrepareHeimdall => self.prepare_heimdall(run)?,
             Self::PrepareSlither => self.prepare_slither(run)?,
             Self::PrepareTooling => self.prepare_tooling(run)?,
             Self::AggregateMaterials => self.aggregate_materials(run)?,
@@ -211,6 +244,32 @@ impl WorkspaceStep {
     }
 
     fn fetch_source(self, run: &mut RunExecutionContext) -> AppResult<StepOutcome> {
+        if run.request.source_kind == SourceKind::ClosedSource {
+            let bytecode_status = run.pipeline.fetch_contract_bytecode(
+                &run.request.address,
+                &run.request.chain,
+                run.request.source_kind,
+            )?;
+            let heimdall_status = run.pipeline.prepare_heimdall_artifacts(
+                &run.request.address,
+                &run.request.chain,
+                run.request.source_kind,
+            )?;
+            return Ok(StepOutcome::new(closed_fetch_source_status(
+                bytecode_status,
+                heimdall_status,
+            ))
+            .with_fetch_source(FetchSourceDetails {
+                tooling_status: StepStatus::ConfiguredNotExecuted,
+                tooling_manifest_path: WorkspaceRelPath::new(paths::TOOLING_MANIFEST),
+                slither_build_manifest_path: WorkspaceRelPath::new(paths::SLITHER_BUILD_MANIFEST),
+                foundry_build_manifest_path: WorkspaceRelPath::new(paths::FOUNDRY_BUILD_MANIFEST),
+                echidna_build_manifest_path: WorkspaceRelPath::new(paths::ECHIDNA_BUILD_MANIFEST),
+                bytecode_fetch_status: Some(bytecode_status),
+                heimdall_status: Some(heimdall_status),
+            }));
+        }
+
         let status = run
             .pipeline
             .fetch_contract_source(&run.request.address, &run.request.chain)?;
@@ -225,21 +284,49 @@ impl WorkspaceStep {
                 slither_build_manifest_path: WorkspaceRelPath::new(paths::SLITHER_BUILD_MANIFEST),
                 foundry_build_manifest_path: WorkspaceRelPath::new(paths::FOUNDRY_BUILD_MANIFEST),
                 echidna_build_manifest_path: WorkspaceRelPath::new(paths::ECHIDNA_BUILD_MANIFEST),
+                bytecode_fetch_status: None,
+                heimdall_status: None,
             }),
         )
     }
 
+    fn fetch_bytecode(self, run: &mut RunExecutionContext) -> AppResult<StepOutcome> {
+        let status = run.pipeline.fetch_contract_bytecode(
+            &run.request.address,
+            &run.request.chain,
+            run.request.source_kind,
+        )?;
+        Ok(StepOutcome::new(status))
+    }
+
     fn run_dependency(self, run: &mut RunExecutionContext) -> AppResult<StepOutcome> {
-        let status = run
-            .pipeline
-            .run_dependency_analysis(&run.request.address, &run.request.chain)?;
+        let status = if run.request.source_kind == SourceKind::ClosedSource {
+            run.pipeline
+                .skip_dependency_analysis_closed_source(&run.request.address, &run.request.chain)?
+        } else {
+            run.pipeline
+                .run_dependency_analysis(&run.request.address, &run.request.chain)?
+        };
+        Ok(StepOutcome::new(status))
+    }
+
+    fn prepare_heimdall(self, run: &mut RunExecutionContext) -> AppResult<StepOutcome> {
+        let status = run.pipeline.prepare_heimdall_artifacts(
+            &run.request.address,
+            &run.request.chain,
+            run.request.source_kind,
+        )?;
         Ok(StepOutcome::new(status))
     }
 
     fn prepare_slither(self, run: &mut RunExecutionContext) -> AppResult<StepOutcome> {
-        let status = run
-            .pipeline
-            .prepare_slither_project(&run.request.address, &run.request.chain)?;
+        let status = if run.request.source_kind == SourceKind::ClosedSource {
+            run.pipeline
+                .prepare_slither_closed_source_skip(&run.request.address, &run.request.chain)?
+        } else {
+            run.pipeline
+                .prepare_slither_project(&run.request.address, &run.request.chain)?
+        };
 
         Ok(
             StepOutcome::new(status).with_prepare_slither(PrepareSlitherDetails {
@@ -250,9 +337,13 @@ impl WorkspaceStep {
     }
 
     fn prepare_tooling(self, run: &mut RunExecutionContext) -> AppResult<StepOutcome> {
-        let status = run
-            .pipeline
-            .prepare_tooling_workspaces(&run.request.address, &run.request.chain)?;
+        let status = if run.request.source_kind == SourceKind::ClosedSource {
+            run.pipeline
+                .prepare_closed_source_tooling_skips(&run.request.address, &run.request.chain)?
+        } else {
+            run.pipeline
+                .prepare_tooling_workspaces(&run.request.address, &run.request.chain)?
+        };
         Ok(StepOutcome::new(status))
     }
 
@@ -330,6 +421,13 @@ impl StepOutcome {
 }
 
 fn execute_full_prepare(run: &mut RunExecutionContext) -> AppResult<StepPayload> {
+    match run.request.source_kind {
+        SourceKind::OpenSource => execute_open_source_full_prepare(run),
+        SourceKind::ClosedSource => execute_closed_source_full_prepare(run),
+    }
+}
+
+fn execute_open_source_full_prepare(run: &mut RunExecutionContext) -> AppResult<StepPayload> {
     let chain = run.request.chain.clone();
     let address = run.request.address.clone();
     let source_status = run.pipeline.fetch_contract_source(&address, &chain)?;
@@ -350,9 +448,12 @@ fn execute_full_prepare(run: &mut RunExecutionContext) -> AppResult<StepPayload>
         .with_init_run(InitRunDetails {
             address,
             chain,
+            source_kind: SourceKind::OpenSource,
             source_fetch_status: source_status,
             dependency_analysis_status: dependency_status,
             tooling_status,
+            bytecode_fetch_status: None,
+            heimdall_status: None,
             tooling_manifest_path: WorkspaceRelPath::new(paths::TOOLING_MANIFEST),
             materials_manifest_path,
             slither_build_manifest_path: WorkspaceRelPath::new(paths::SLITHER_BUILD_MANIFEST),
@@ -360,6 +461,67 @@ fn execute_full_prepare(run: &mut RunExecutionContext) -> AppResult<StepPayload>
             echidna_build_manifest_path: WorkspaceRelPath::new(paths::ECHIDNA_BUILD_MANIFEST),
         }),
     )
+}
+
+fn execute_closed_source_full_prepare(run: &mut RunExecutionContext) -> AppResult<StepPayload> {
+    let chain = run.request.chain.clone();
+    let address = run.request.address.clone();
+    let bytecode_status =
+        run.pipeline
+            .fetch_contract_bytecode(&address, &chain, SourceKind::ClosedSource)?;
+    let heimdall_status =
+        run.pipeline
+            .prepare_heimdall_artifacts(&address, &chain, SourceKind::ClosedSource)?;
+    let dependency_status = run
+        .pipeline
+        .skip_dependency_analysis_closed_source(&address, &chain)?;
+    let tooling_status = run
+        .pipeline
+        .prepare_closed_source_tooling_skips(&address, &chain)?;
+    let materials_manifest_path = run.pipeline.aggregate_materials(&address, &chain)?;
+
+    persist_step_payload(
+        &run.pipeline.workspace,
+        INIT_RUN_COMMAND,
+        paths::INIT_RUN_LOG,
+        &run.pipeline,
+        StepOutcome::new(closed_prepare_status(bytecode_status, heimdall_status)).with_init_run(
+            InitRunDetails {
+                address,
+                chain,
+                source_kind: SourceKind::ClosedSource,
+                source_fetch_status: StepStatus::ConfiguredNotExecuted,
+                dependency_analysis_status: dependency_status,
+                tooling_status,
+                bytecode_fetch_status: Some(bytecode_status),
+                heimdall_status: Some(heimdall_status),
+                tooling_manifest_path: WorkspaceRelPath::new(paths::TOOLING_MANIFEST),
+                materials_manifest_path,
+                slither_build_manifest_path: WorkspaceRelPath::new(paths::SLITHER_BUILD_MANIFEST),
+                foundry_build_manifest_path: WorkspaceRelPath::new(paths::FOUNDRY_BUILD_MANIFEST),
+                echidna_build_manifest_path: WorkspaceRelPath::new(paths::ECHIDNA_BUILD_MANIFEST),
+            },
+        ),
+    )
+}
+
+fn parse_source_kind(
+    source_kind: Option<&str>,
+    closed_source: bool,
+) -> ExecutionResult<SourceKind> {
+    let parsed = match source_kind {
+        Some(value) => value
+            .parse::<SourceKind>()
+            .map_err(ExecutionError::without_run_id)?,
+        None if closed_source => SourceKind::ClosedSource,
+        None => SourceKind::OpenSource,
+    };
+    if closed_source && parsed != SourceKind::ClosedSource {
+        return Err(ExecutionError::without_run_id(crate::error::msg(
+            "--closed-source conflicts with --source-kind open-source",
+        )));
+    }
+    Ok(parsed)
 }
 
 fn persist_step_payload(
@@ -387,6 +549,23 @@ fn full_prepare_status(
     }
     if tooling_status != StepStatus::Prepared {
         return tooling_status;
+    }
+    StepStatus::Prepared
+}
+
+fn closed_fetch_source_status(
+    bytecode_status: StepStatus,
+    heimdall_status: StepStatus,
+) -> StepStatus {
+    closed_prepare_status(bytecode_status, heimdall_status)
+}
+
+fn closed_prepare_status(bytecode_status: StepStatus, heimdall_status: StepStatus) -> StepStatus {
+    if bytecode_status != StepStatus::BytecodeFetched {
+        return bytecode_status;
+    }
+    if heimdall_status != StepStatus::HeimdallPrepared {
+        return heimdall_status;
     }
     StepStatus::Prepared
 }
