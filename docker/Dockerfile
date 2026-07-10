@@ -30,6 +30,35 @@ COPY xtask ./xtask
 
 RUN cargo build --release --bin agent-audit
 
+FROM --platform=${IMAGE_PLATFORM} docker.io/library/ubuntu:22.04 AS heimdall-builder
+
+USER root
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PATH=/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ARG HEIMDALL_REV=13ae7cb02959feca08bcaafb10c9d66a28037f77
+ARG HEIMDALL_RUST_VERSION=1.91.0
+ARG HEIMDALL_CARGO_BUILD_JOBS=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+        git \
+        libssl-dev \
+        pkg-config \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain "${HEIMDALL_RUST_VERSION}"
+
+RUN CARGO_BUILD_JOBS="${HEIMDALL_CARGO_BUILD_JOBS}" cargo install \
+    --git https://github.com/Jon-Becker/heimdall-rs \
+    --rev "${HEIMDALL_REV}" \
+    --locked \
+    heimdall-cli
+
 FROM --platform=${IMAGE_PLATFORM} ${TOOLBOX_IMAGE} AS runtime
 
 USER root
@@ -40,10 +69,6 @@ ENV CODEX_RUNNER_DIR=/opt/agent-audit/codex-runner
 # ENV UV_CACHE_DIR=/tmp/uv-cache
 # ENV PATH=/root/.crytic/bin:/root/.vyper/bin:/root/.foundry/bin:${PATH}
 ARG NODE_MAJOR=22
-ARG TARGETARCH
-ARG HEIMDALL_VERSION=0.9.3
-ARG HEIMDALL_LINUX_AMD64_SHA256=8d58c97f56d584d5d0737d0d0895fc8c68b7b8b2b680f2a7842245789f0b4868
-ARG HEIMDALL_LINUX_ARM64_SHA256=ef1d236e5e194e1722e12552b66303d3172e0c4cc267b096f7bc8a053f168df8
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -54,18 +79,6 @@ RUN apt-get update \
         gnupg \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
-
-RUN set -eux; \
-    case "${TARGETARCH:-amd64}" in \
-        amd64) heimdall_asset="heimdall-linux-amd64"; heimdall_sha="${HEIMDALL_LINUX_AMD64_SHA256}" ;; \
-        arm64) heimdall_asset="heimdall-linux-arm64"; heimdall_sha="${HEIMDALL_LINUX_ARM64_SHA256}" ;; \
-        *) echo "unsupported Heimdall target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
-    esac; \
-    curl -fsSL \
-        "https://github.com/Jon-Becker/heimdall-rs/releases/download/${HEIMDALL_VERSION}/${heimdall_asset}" \
-        -o /usr/local/bin/heimdall; \
-    echo "${heimdall_sha}  /usr/local/bin/heimdall" | sha256sum -c -; \
-    chmod +x /usr/local/bin/heimdall
 
 RUN mkdir -p /etc/apt/keyrings \
     && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
@@ -89,6 +102,7 @@ ENV PATH=${CODEX_RUNNER_DIR}/node_modules/.bin:${PATH}
 WORKDIR /opt/agent-audit
 
 COPY --from=builder /build/target/release/agent-audit /usr/local/bin/agent-audit
+COPY --from=heimdall-builder /root/.cargo/bin/heimdall /usr/local/bin/heimdall
 COPY docker/AGENTS.md ./AGENTS.md
 COPY docker/.codex ./.codex
 COPY docker/codex-runner/agent-audit-run.mjs ${CODEX_RUNNER_DIR}/agent-audit-run.mjs
