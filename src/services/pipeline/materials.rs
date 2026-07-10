@@ -53,6 +53,7 @@ impl AuditPipelineService {
             "artifacts/chain_checks_output.txt",
             "artifacts/chain_checks_findings.json",
             "artifacts/chain_index.json",
+            paths::BYTECODE_TARGETS,
             "artifacts/static_plan.json",
             "artifacts/slither_raw.json",
             "artifacts/static_findings.json",
@@ -66,10 +67,13 @@ impl AuditPipelineService {
             "foundry_project/remappings.txt",
             paths::ECHIDNA_BUILD_MANIFEST,
             "echidna_project/echidna.yaml",
+            paths::HEIMDALL_BUILD_MANIFEST,
         ]);
         optional_tool_artifacts.extend(self.existing_tree(&[
             "artifacts/analyzer",
             "artifacts/chain",
+            "artifacts/bytecode",
+            "artifacts/heimdall",
             "foundry_project/src",
             "foundry_project/test",
             "foundry_project/script",
@@ -171,6 +175,23 @@ mod tests {
         (temp, workspace, target)
     }
 
+    fn test_config(workspace: &RunWorkspace, target: &RunTarget) -> AppConfig {
+        AppConfig {
+            project_root: workspace.project_root.clone(),
+            runs_dir: workspace.project_root.join("runs"),
+            default_chain: target.chain.clone(),
+            source_api_base: None,
+            source_api_key: None,
+            source_api_headers: std::collections::BTreeMap::new(),
+            rpc_url: None,
+            mongo_uri: None,
+            mongo_db: "agent_audit".to_string(),
+            mongo_runs_meta_collection: "runs_meta".to_string(),
+            mongo_runs_files_collection: "runs_files".to_string(),
+            mongo_max_inline_file_bytes: 8 * 1024 * 1024,
+        }
+    }
+
     #[test]
     fn aggregate_materials_includes_dependency_chain_artifacts() {
         let (_temp, workspace, target) = test_workspace();
@@ -220,8 +241,29 @@ mod tests {
                 &FlashLoanSurfaceArtifact::new(target.clone(), ChainCheckStatus::Executed),
             )
             .expect("flash checks");
+        workspace
+            .store()
+            .write_json(
+                paths::BYTECODE_TARGETS,
+                &serde_json::json!({ "targets": [] }),
+            )
+            .expect("bytecode targets");
+        workspace
+            .store()
+            .write_text(
+                "artifacts/bytecode/eth/0x1234567890abcdef1234567890abcdef12345678.hex",
+                "0x6000\n",
+            )
+            .expect("bytecode artifact");
+        workspace
+            .store()
+            .write_text(
+                "artifacts/heimdall/eth/0x1234567890abcdef1234567890abcdef12345678/decompile/stdout.txt",
+                "",
+            )
+            .expect("heimdall artifact");
 
-        let config = AppConfig::load(Some(workspace.project_root.clone())).expect("config");
+        let config = test_config(&workspace, &target);
         let mut service = AuditPipelineService::new(config, workspace);
         let manifest = service
             .aggregate_materials(&target.address, &target.chain)
@@ -233,5 +275,12 @@ mod tests {
         assert!(text.contains(paths::PROXY_CHECKS));
         assert!(text.contains(paths::ORACLE_CHECKS));
         assert!(text.contains(paths::FLASH_LOAN_SURFACE));
+        assert!(text.contains(paths::BYTECODE_TARGETS));
+        assert!(
+            text.contains("artifacts/bytecode/eth/0x1234567890abcdef1234567890abcdef12345678.hex")
+        );
+        assert!(text.contains(
+            "artifacts/heimdall/eth/0x1234567890abcdef1234567890abcdef12345678/decompile/stdout.txt"
+        ));
     }
 }

@@ -124,7 +124,7 @@ fn build_dependency_chain_artifacts(
     rpc_url: Option<&Url>,
     workspace_root: &Path,
 ) -> DependencyChainArtifacts {
-    if !bundle.is_fetched() {
+    if !bundle.is_fetched() && !bundle.is_source_unavailable() {
         return skipped_chain_artifacts(
             fallback_target.clone(),
             ChainCheckStatus::SourceNotFetched,

@@ -42,8 +42,10 @@ After that:
 - inspect `runs/<run_id>/slither_project/build_manifest.json`
 - inspect `runs/<run_id>/foundry_project/build_manifest.json`
 - inspect `runs/<run_id>/echidna_project/build_manifest.json`
+- if `source_bundle.json` says `source_unavailable`, or a proxy implementation/dependency is source-unavailable, inspect `runs/<run_id>/artifacts/bytecode_targets.json` and `runs/<run_id>/artifacts/heimdall/build_manifest.json`
 - decide whether to use tools like Slither, Echidna, Forge, Cast, or Anvil
-- if you run direct tools, save their artifacts under the same `runs/<run_id>/artifacts/` tree
+- run Heimdall through the CLI-prepared `artifacts/heimdall/<chain>/<address>/<action>/run.sh` scripts so command text, stdout, stderr, exit code, and failure text are saved deterministically
+- if you run other direct tools, save their artifacts under the same `runs/<run_id>/artifacts/` tree
 - reuse `$aggregate-materials` if you want the manifest to list those optional artifacts
 
 Finally:
@@ -58,6 +60,8 @@ After that, run `$done` once to sync the run evidence into MongoDB.
 
 Any reported finding must be backed by a concrete artifact in `runs/<run_id>/`.
 Do not report a finding unless you can cite the exact supporting artifact file(s).
+
+For closed-source targets or closed proxy implementations, prioritize bytecode review of upgradeability, `delegatecall`, access control, external calls, and storage/write patterns. Heimdall output is heuristic evidence; do not treat reconstructed Solidity or Yul as verified source.
 
 Acceptable support includes:
 

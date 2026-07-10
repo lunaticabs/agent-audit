@@ -96,6 +96,7 @@ AGENT_AUDIT_RUNS_DIR
 - Slither, `solc-select`
 - Foundry: `forge`, `cast`, `anvil`
 - Echidna
+- Heimdall for bytecode-oriented review of unverified contracts
 - Container-specific `.codex` configuration and audit skills
 
 Build:
@@ -125,6 +126,8 @@ The production runner accepts exactly one complete prompt:
 - or `--prompt "..."` argument
 
 The container does not assemble business fields such as `address`, `chain`, or `instructions`. The caller must include the target, chain, audit requirements, and output requirements in the prompt. After startup, the Codex agent reads `AGENTS.md`, calls the `agent-audit` CLI and security tools as needed, then completes the audit and archival flow.
+
+When verified source is unavailable, the CLI records review targets in `runs/<run_id>/artifacts/bytecode_targets.json` and runtime bytecode under `runs/<run_id>/artifacts/bytecode/`. `prepare-tooling` also creates managed Heimdall command workspaces under `runs/<run_id>/artifacts/heimdall/` so command text, stdout, stderr, exit code, failure text, and output directories are saved deterministically; material aggregation includes those paths when present.
 
 See [`docker/README.md`](docker/README.md) for details.
 

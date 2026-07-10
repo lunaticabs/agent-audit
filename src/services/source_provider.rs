@@ -14,13 +14,26 @@ use crate::models::source::{
     SourceMetadata, SourceProviderMetadata, VerifiedSourceMetadata,
 };
 
+#[derive(Clone, Debug)]
+pub enum SourceProviderFetch {
+    Verified(SourceBundle),
+    SourceUnavailable(SourceUnavailableBundle),
+}
+
+#[derive(Clone, Debug)]
+pub struct SourceUnavailableBundle {
+    pub provider_payload: Value,
+    pub normalized_payload: VerifiedSourceMetadata,
+    pub reason: String,
+}
+
 pub fn fetch_verified_source(
     base_url: &Url,
     api_key: Option<&str>,
     headers: &BTreeMap<String, String>,
     address: &EvmAddress,
     chain: &ChainAlias,
-) -> AppResult<SourceBundle> {
+) -> AppResult<SourceProviderFetch> {
     let chain_id = chain_id_for_alias(chain)?;
     let endpoint = normalize_api_endpoint(base_url)?;
     let mut url = endpoint.clone();
@@ -64,11 +77,41 @@ pub fn fetch_verified_source(
         .unwrap_or_default();
     let result = payload.get("result").and_then(Value::as_array);
     let Some(result) = result else {
+        if let Some(reason) = source_unavailable_payload_reason(&payload) {
+            return Ok(SourceProviderFetch::SourceUnavailable(
+                source_unavailable_bundle(
+                    payload.clone(),
+                    address,
+                    chain,
+                    chain_id,
+                    &endpoint,
+                    message,
+                    0,
+                    None,
+                    reason,
+                ),
+            ));
+        }
         return Err(msg(format!(
             "source API returned an unusable payload: status={status:?} message={message:?}"
         )));
     };
     if status != "1" || result.is_empty() {
+        if let Some(reason) = source_unavailable_payload_reason(&payload) {
+            return Ok(SourceProviderFetch::SourceUnavailable(
+                source_unavailable_bundle(
+                    payload.clone(),
+                    address,
+                    chain,
+                    chain_id,
+                    &endpoint,
+                    message,
+                    result.len(),
+                    None,
+                    reason,
+                ),
+            ));
+        }
         return Err(msg(format!(
             "source API returned an unusable payload: status={status:?} message={message:?}"
         )));
@@ -78,8 +121,63 @@ pub fn fetch_verified_source(
         .and_then(Value::as_object)
         .ok_or_else(|| msg("source API returned an unexpected result shape"))?;
 
+    if let Some(reason) = source_unavailable_result_reason(primary) {
+        return Ok(SourceProviderFetch::SourceUnavailable(
+            source_unavailable_bundle(
+                payload.clone(),
+                address,
+                chain,
+                chain_id,
+                &endpoint,
+                message,
+                result.len(),
+                Some(primary),
+                reason,
+            ),
+        ));
+    }
+
     let (files, source_layout, source_meta) = parse_source_code_result(primary)?;
-    let normalized = VerifiedSourceMetadata {
+    let normalized = normalized_metadata(
+        address,
+        chain,
+        chain_id,
+        &endpoint,
+        message,
+        result.len(),
+        primary,
+        source_layout,
+        source_meta,
+        files
+            .iter()
+            .map(|item| ArtifactSourceFile {
+                path: item.path.clone(),
+                length: item.content.len(),
+                original_path: None,
+            })
+            .collect(),
+    );
+
+    Ok(SourceProviderFetch::Verified(SourceBundle {
+        provider_payload: payload,
+        normalized_payload: normalized,
+        files,
+    }))
+}
+
+fn normalized_metadata(
+    address: &EvmAddress,
+    chain: &ChainAlias,
+    chain_id: crate::models::identity::ChainId,
+    endpoint: &Url,
+    message: &str,
+    result_count: usize,
+    primary: &Map<String, Value>,
+    source_layout: String,
+    source_meta: SourceMetadata,
+    files: Vec<ArtifactSourceFile>,
+) -> VerifiedSourceMetadata {
+    VerifiedSourceMetadata {
         target: RunTarget {
             address: address.clone(),
             chain: chain.clone(),
@@ -89,7 +187,7 @@ pub fn fetch_verified_source(
             kind: "etherscan-compatible".to_string(),
             endpoint: endpoint.to_string(),
             message: message.to_string(),
-            result_count: result.len(),
+            result_count,
         },
         contract: ContractMetadata {
             name: string_field(primary, "ContractName"),
@@ -112,21 +210,39 @@ pub fn fetch_verified_source(
         abi: parse_json_string(primary.get("ABI").and_then(Value::as_str)),
         source_layout,
         source_meta,
-        files: files
-            .iter()
-            .map(|item| ArtifactSourceFile {
-                path: item.path.clone(),
-                length: item.content.len(),
-                original_path: None,
-            })
-            .collect(),
-    };
-
-    Ok(SourceBundle {
-        provider_payload: payload,
-        normalized_payload: normalized,
         files,
-    })
+    }
+}
+
+fn source_unavailable_bundle(
+    provider_payload: Value,
+    address: &EvmAddress,
+    chain: &ChainAlias,
+    chain_id: crate::models::identity::ChainId,
+    endpoint: &Url,
+    message: &str,
+    result_count: usize,
+    primary: Option<&Map<String, Value>>,
+    reason: String,
+) -> SourceUnavailableBundle {
+    let empty = Map::new();
+    let primary = primary.unwrap_or(&empty);
+    SourceUnavailableBundle {
+        provider_payload,
+        normalized_payload: normalized_metadata(
+            address,
+            chain,
+            chain_id,
+            endpoint,
+            message,
+            result_count,
+            primary,
+            String::new(),
+            SourceMetadata::default(),
+            Vec::new(),
+        ),
+        reason,
+    }
 }
 
 pub fn parse_json_string(raw: Option<&str>) -> Value {
@@ -138,6 +254,40 @@ pub fn parse_json_string(raw: Option<&str>) -> Value {
         return Value::Null;
     }
     serde_json::from_str(text).unwrap_or(Value::Null)
+}
+
+fn source_unavailable_payload_reason(payload: &Value) -> Option<String> {
+    let mut haystack = Vec::new();
+    for key in ["message", "result"] {
+        if let Some(text) = payload.get(key).and_then(Value::as_str) {
+            haystack.push(text);
+        }
+    }
+    source_unavailable_reason_from_text(&haystack.join(" "))
+}
+
+fn source_unavailable_result_reason(result: &Map<String, Value>) -> Option<String> {
+    let raw_source = string_field(result, "SourceCode");
+    let raw_abi = string_field(result, "ABI");
+    if raw_source.trim().is_empty() {
+        return Some("source API returned no source code for this address".to_string());
+    }
+    source_unavailable_reason_from_text(&format!("{raw_source} {raw_abi}"))
+}
+
+fn source_unavailable_reason_from_text(text: &str) -> Option<String> {
+    let lowered = text.to_lowercase();
+    if lowered.contains("source code not verified")
+        || lowered.contains("contract source code not verified")
+        || lowered.contains("source not verified")
+        || lowered.contains("not verified")
+    {
+        return Some("source code is not verified on the provider".to_string());
+    }
+    if lowered.contains("no records found") || lowered.contains("source code not available") {
+        return Some("source API returned no verified source record for this address".to_string());
+    }
+    None
 }
 
 fn normalize_api_endpoint(base_url: &Url) -> AppResult<Url> {
@@ -322,7 +472,36 @@ pub fn merge_unique_lists(groups: &[&[String]]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
+    #[test]
+    fn empty_source_code_is_source_unavailable() {
+        let object = json!({
+            "SourceCode": "",
+            "ABI": "Contract source code not verified",
+            "ContractName": ""
+        })
+        .as_object()
+        .expect("object")
+        .clone();
+
+        let reason = source_unavailable_result_reason(&object).expect("unavailable");
+
+        assert!(reason.contains("no source code"));
+    }
+
+    #[test]
+    fn no_records_payload_is_source_unavailable() {
+        let payload = json!({
+            "status": "0",
+            "message": "NOTOK",
+            "result": "No records found"
+        });
+
+        let reason = source_unavailable_payload_reason(&payload).expect("unavailable");
+
+        assert!(reason.contains("no verified source record"));
+    }
     #[test]
     fn parse_optional_address_field_accepts_valid_implementation() {
         let object = Map::from_iter([(

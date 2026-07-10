@@ -23,12 +23,14 @@ pub mod paths {
     pub const ARTIFACT_INDEX: &str = "artifacts/artifact_index.json";
     pub const SOURCE_BUNDLE: &str = "artifacts/source_bundle.json";
     pub const SOURCE_PROVIDER_RESPONSE: &str = "artifacts/source_provider_response.json";
+    pub const BYTECODE_TARGETS: &str = "artifacts/bytecode_targets.json";
     pub const DEPENDENCY_FINDINGS: &str = "artifacts/dependency_findings.json";
     pub const DEPENDENCY_CHAIN_CHECKS: &str = "artifacts/dependency_chain_checks.json";
     pub const PROXY_CHECKS: &str = "artifacts/proxy_checks.json";
     pub const ORACLE_CHECKS: &str = "artifacts/oracle_checks.json";
     pub const FLASH_LOAN_SURFACE: &str = "artifacts/flash_loan_surface.json";
     pub const TOOLING_MANIFEST: &str = "artifacts/tooling_manifest.json";
+    pub const HEIMDALL_BUILD_MANIFEST: &str = "artifacts/heimdall/build_manifest.json";
     pub const MATERIALS_MANIFEST: &str = "reports/materials_manifest.json";
     pub const FINAL_REPORT: &str = "reports/final_report.json";
     pub const INIT_RUN_LOG: &str = "logs/init_run_result.json";

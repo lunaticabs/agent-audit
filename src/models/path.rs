@@ -87,6 +87,14 @@ impl WorkspaceRelPath {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    pub fn join(&self, child: impl AsRef<str>) -> Self {
+        if self.0 == "." {
+            Self::new(child)
+        } else {
+            Self::new(format!("{}/{}", self.0, child.as_ref()))
+        }
+    }
 }
 
 impl Default for WorkspaceRelPath {
@@ -178,5 +186,11 @@ mod tests {
     fn workspace_rel_path_strips_parent_segments() {
         let path = WorkspaceRelPath::new("../artifacts/./result.json");
         assert_eq!(path.as_str(), "artifacts/result.json");
+    }
+
+    #[test]
+    fn workspace_rel_path_joins_child_segments() {
+        let path = WorkspaceRelPath::new("artifacts/heimdall").join("build_manifest.json");
+        assert_eq!(path.as_str(), "artifacts/heimdall/build_manifest.json");
     }
 }

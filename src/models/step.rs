@@ -11,6 +11,7 @@ pub enum StepStatus {
     ConfiguredNotExecuted,
     ExecutedWithError,
     SourceFetched,
+    SourceUnavailable,
     SourceFetchFailed,
     SourceNotFetched,
     SourceFilesMissing,
@@ -41,6 +42,7 @@ impl FromStr for StepStatus {
             "configured_not_executed" => Ok(Self::ConfiguredNotExecuted),
             "executed_with_error" => Ok(Self::ExecutedWithError),
             "source_fetched" => Ok(Self::SourceFetched),
+            "source_unavailable" => Ok(Self::SourceUnavailable),
             "source_fetch_failed" => Ok(Self::SourceFetchFailed),
             "source_not_fetched" => Ok(Self::SourceNotFetched),
             "source_files_missing" => Ok(Self::SourceFilesMissing),
@@ -68,6 +70,12 @@ mod tests {
                 .parse::<StepStatus>()
                 .expect("parse status"),
             StepStatus::ConfiguredNotExecuted
+        );
+        assert_eq!(
+            "source_unavailable"
+                .parse::<StepStatus>()
+                .expect("parse status"),
+            StepStatus::SourceUnavailable
         );
         assert_eq!(
             "executed_with_error"

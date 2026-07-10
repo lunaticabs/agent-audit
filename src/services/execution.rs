@@ -225,6 +225,7 @@ impl WorkspaceStep {
                 slither_build_manifest_path: WorkspaceRelPath::new(paths::SLITHER_BUILD_MANIFEST),
                 foundry_build_manifest_path: WorkspaceRelPath::new(paths::FOUNDRY_BUILD_MANIFEST),
                 echidna_build_manifest_path: WorkspaceRelPath::new(paths::ECHIDNA_BUILD_MANIFEST),
+                heimdall_build_manifest_path: WorkspaceRelPath::new(paths::HEIMDALL_BUILD_MANIFEST),
             }),
         )
     }
@@ -358,6 +359,7 @@ fn execute_full_prepare(run: &mut RunExecutionContext) -> AppResult<StepPayload>
             slither_build_manifest_path: WorkspaceRelPath::new(paths::SLITHER_BUILD_MANIFEST),
             foundry_build_manifest_path: WorkspaceRelPath::new(paths::FOUNDRY_BUILD_MANIFEST),
             echidna_build_manifest_path: WorkspaceRelPath::new(paths::ECHIDNA_BUILD_MANIFEST),
+            heimdall_build_manifest_path: WorkspaceRelPath::new(paths::HEIMDALL_BUILD_MANIFEST),
         }),
     )
 }
