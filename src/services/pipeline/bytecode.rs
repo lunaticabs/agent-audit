@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fs;
 use std::process::Command;
 use std::time::Duration;
 
@@ -25,6 +26,9 @@ use super::support::read_json_if_exists;
 
 const BYTECODE_BLOCK_TAG: &str = "latest";
 const PREVIEW_CHARS: usize = 600;
+const HEIMDALL_DECOMPILE_NAME: &str = "heimdall_decompiled";
+const HEIMDALL_DISASSEMBLE_NAME: &str = "heimdall_disassembly";
+const HEIMDALL_CFG_NAME: &str = "heimdall_cfg";
 
 impl AuditPipelineService {
     pub fn fetch_contract_bytecode(
@@ -143,36 +147,28 @@ impl AuditPipelineService {
                 args: vec![
                     "decompile".to_string(),
                     input_path.clone(),
-                    "--output".to_string(),
-                    "print".to_string(),
                     "--include-sol".to_string(),
                     "--skip-resolving".to_string(),
                     "--default".to_string(),
                 ],
+                output_name: HEIMDALL_DECOMPILE_NAME,
+                generated_file: "heimdall_decompiled-decompiled.sol",
                 stdout_path: paths::HEIMDALL_DECOMPILED,
                 stderr_path: "artifacts/heimdall_decompile_stderr.txt",
             },
             HeimdallCommandSpec {
                 kind: "disassemble",
-                args: vec![
-                    "disassemble".to_string(),
-                    input_path.clone(),
-                    "--output".to_string(),
-                    "print".to_string(),
-                    "--default".to_string(),
-                ],
+                args: vec!["disassemble".to_string(), input_path.clone()],
+                output_name: HEIMDALL_DISASSEMBLE_NAME,
+                generated_file: "heimdall_disassembly-disassembled.asm",
                 stdout_path: paths::HEIMDALL_DISASSEMBLY,
                 stderr_path: "artifacts/heimdall_disassemble_stderr.txt",
             },
             HeimdallCommandSpec {
                 kind: "cfg",
-                args: vec![
-                    "cfg".to_string(),
-                    input_path,
-                    "--output".to_string(),
-                    "print".to_string(),
-                    "--default".to_string(),
-                ],
+                args: vec!["cfg".to_string(), input_path, "--default".to_string()],
+                output_name: HEIMDALL_CFG_NAME,
+                generated_file: "heimdall_cfg-cfg.dot",
                 stdout_path: paths::HEIMDALL_CFG,
                 stderr_path: "artifacts/heimdall_cfg_stderr.txt",
             },
@@ -392,8 +388,25 @@ impl AuditPipelineService {
         &mut self,
         spec: HeimdallCommandSpec,
     ) -> AppResult<HeimdallCommandRecord> {
-        let output = Command::new("heimdall").args(&spec.args).output();
-        let (exit_status, stdout, stderr) = match output {
+        let output_dir = self
+            .workspace
+            .paths()
+            .resolve(format!("artifacts/.heimdall/{}", spec.kind));
+        if output_dir.exists() {
+            fs::remove_dir_all(&output_dir)?;
+        }
+        fs::create_dir_all(&output_dir)?;
+        let output_dir_text = output_dir.to_string_lossy().to_string();
+        let mut args = spec.args;
+        args.extend([
+            "--output".to_string(),
+            output_dir_text,
+            "--name".to_string(),
+            spec.output_name.to_string(),
+        ]);
+
+        let output = Command::new("heimdall").args(&args).output();
+        let (mut exit_status, stdout, mut stderr) = match output {
             Ok(output) => (
                 output.status.code(),
                 String::from_utf8_lossy(&output.stdout).to_string(),
@@ -402,10 +415,28 @@ impl AuditPipelineService {
             Err(error) => (None, String::new(), error.to_string()),
         };
 
+        let generated_path = output_dir.join(spec.generated_file);
+        let primary_output = match fs::read_to_string(&generated_path) {
+            Ok(contents) => contents,
+            Err(error) => {
+                if exit_status == Some(0) {
+                    exit_status = Some(1);
+                    if !stderr.trim().is_empty() {
+                        stderr.push('\n');
+                    }
+                    stderr.push_str(&format!(
+                        "failed to read Heimdall generated output {}: {error}",
+                        generated_path.display()
+                    ));
+                }
+                stdout
+            }
+        };
+
         let stdout_path = self
             .workspace
             .store()
-            .write_text(spec.stdout_path, &stdout)?;
+            .write_text(spec.stdout_path, &primary_output)?;
         let stderr_path = self
             .workspace
             .store()
@@ -419,7 +450,7 @@ impl AuditPipelineService {
             } else {
                 StepStatus::ExecutedWithError
             },
-            "Stored Heimdall stdout output.",
+            "Stored Heimdall primary output.",
         );
         self.record(
             ArtifactStep::PrepareHeimdallArtifacts,
@@ -436,12 +467,12 @@ impl AuditPipelineService {
         Ok(HeimdallCommandRecord {
             kind: spec.kind.to_string(),
             command: std::iter::once("heimdall".to_string())
-                .chain(spec.args)
+                .chain(args)
                 .collect(),
             exit_status,
             stdout_path: Some(stdout_path),
             stderr_path: Some(stderr_path),
-            stdout_preview: non_empty_preview(&stdout),
+            stdout_preview: non_empty_preview(&primary_output),
             stderr_preview: non_empty_preview(&stderr),
         })
     }
@@ -458,6 +489,8 @@ impl AuditPipelineService {
 struct HeimdallCommandSpec {
     kind: &'static str,
     args: Vec<String>,
+    output_name: &'static str,
+    generated_file: &'static str,
     stdout_path: &'static str,
     stderr_path: &'static str,
 }
