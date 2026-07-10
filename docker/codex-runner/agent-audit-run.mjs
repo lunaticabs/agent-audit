@@ -8,6 +8,7 @@ const IMAGE_PROJECT_ROOT = "/opt/agent-audit";
 const DEFAULT_CODEX_HOME = "/root/.codex";
 const CODEX_RUNNER_DIR = "/opt/agent-audit/codex-runner";
 const CODEX_BIN = path.join(CODEX_RUNNER_DIR, "node_modules", ".bin", "codex");
+const BUNDLED_CODEX_CONFIG = path.join(IMAGE_PROJECT_ROOT, "codex-config.toml");
 const ENV_FILE = path.join(IMAGE_PROJECT_ROOT, ".env");
 const MAX_STRING_LENGTH = 2_000;
 
@@ -278,14 +279,13 @@ function ensureRuntime() {
 
   const projectRoot = process.env.AGENT_AUDIT_PROJECT_ROOT;
   const codexHome = process.env.CODEX_HOME;
-  const bundledConfig = path.join(projectRoot, ".codex", "config.toml");
   const codexConfig = path.join(codexHome, "config.toml");
 
   fs.mkdirSync(path.join(projectRoot, "runs"), { recursive: true });
   fs.mkdirSync(codexHome, { recursive: true });
 
-  if (!fs.existsSync(codexConfig) && fs.existsSync(bundledConfig)) {
-    fs.copyFileSync(bundledConfig, codexConfig);
+  if (!fs.existsSync(codexConfig) && fs.existsSync(BUNDLED_CODEX_CONFIG)) {
+    fs.copyFileSync(BUNDLED_CODEX_CONFIG, codexConfig);
   }
 
   if (!fs.existsSync(CODEX_BIN)) {

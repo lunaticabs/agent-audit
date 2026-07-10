@@ -104,12 +104,13 @@ WORKDIR /opt/agent-audit
 COPY --from=builder /build/target/release/agent-audit /usr/local/bin/agent-audit
 COPY --from=heimdall-builder /root/.cargo/bin/heimdall /usr/local/bin/heimdall
 COPY docker/AGENTS.md ./AGENTS.md
-COPY docker/.codex ./.codex
+COPY docker/.codex/config.toml ./codex-config.toml
+COPY docker/.codex/skills ./.codex/skills
 COPY docker/codex-runner/agent-audit-run.mjs ${CODEX_RUNNER_DIR}/agent-audit-run.mjs
 
 RUN chmod +x ${CODEX_RUNNER_DIR}/agent-audit-run.mjs \
     && mkdir -p /root/.codex /opt/agent-audit/runs \
-    && cp /opt/agent-audit/.codex/config.toml /root/.codex/config.toml
+    && cp /opt/agent-audit/codex-config.toml /root/.codex/config.toml
 
 ENTRYPOINT ["node", "/opt/agent-audit/codex-runner/agent-audit-run.mjs"]
 
@@ -132,10 +133,12 @@ RUN bash -lc 'set -euo pipefail \
     && test -d /opt/agent-audit/codex-runner/node_modules/@openai/codex-sdk \
     && node /opt/agent-audit/codex-runner/agent-audit-run.mjs --help >/dev/null \
     && test -f /opt/agent-audit/AGENTS.md \
-    && test -f /opt/agent-audit/.codex/config.toml \
+    && test ! -f /opt/agent-audit/.codex/config.toml \
+    && test -f /opt/agent-audit/codex-config.toml \
+    && test -f /root/.codex/config.toml \
     && test -f /opt/agent-audit/.codex/skills/workspace/SKILL.md \
     && test -f /opt/agent-audit/.codex/skills/closed-source-evm/SKILL.md \
-    && grep -q "^model_provider = \"apiapi\"$" /opt/agent-audit/.codex/config.toml \
-    && grep -q "^approval_policy = \"never\"$" /opt/agent-audit/.codex/config.toml'
+    && grep -q "^model_provider = \"apiapi\"$" /root/.codex/config.toml \
+    && grep -q "^approval_policy = \"never\"$" /root/.codex/config.toml'
 
 FROM runtime AS final
