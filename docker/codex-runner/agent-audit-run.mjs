@@ -281,15 +281,10 @@ function ensureRuntime() {
   const codexHome = process.env.CODEX_HOME;
   const promptProfile = selectPromptProfile(process.env.SOURCE_KIND);
   const activePrompt = activatePromptProfile(projectRoot, codexHome, promptProfile);
-  const bundledConfig = path.join(projectRoot, ".codex", "config.toml");
   const codexConfig = path.join(codexHome, "config.toml");
 
   fs.mkdirSync(path.join(projectRoot, "runs"), { recursive: true });
   fs.mkdirSync(codexHome, { recursive: true });
-
-  if (fs.existsSync(bundledConfig)) {
-    fs.copyFileSync(bundledConfig, codexConfig);
-  }
 
   if (!fs.existsSync(CODEX_BIN)) {
     throw new Error(`codex binary not found at ${CODEX_BIN}`);
@@ -343,6 +338,7 @@ function activatePromptProfile(projectRoot, codexHome, promptProfile) {
   fs.rmSync(path.join(projectRoot, ".codex"), { recursive: true, force: true });
   fs.cpSync(profileCodex, path.join(projectRoot, ".codex"), { recursive: true });
   fs.copyFileSync(profileConfig, path.join(codexHome, "config.toml"));
+  fs.rmSync(path.join(projectRoot, ".codex", "config.toml"), { force: true });
   return promptProfile;
 }
 

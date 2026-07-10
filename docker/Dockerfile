@@ -126,7 +126,8 @@ RUN case "${PROMPT_PROFILE}" in \
     && cp -a "/opt/agent-audit/prompts/${active_prompt}/.codex" /opt/agent-audit/.codex \
     && chmod +x ${CODEX_RUNNER_DIR}/agent-audit-run.mjs \
     && mkdir -p /root/.codex /opt/agent-audit/runs \
-    && cp /opt/agent-audit/.codex/config.toml /root/.codex/config.toml
+    && cp /opt/agent-audit/.codex/config.toml /root/.codex/config.toml \
+    && rm -f /opt/agent-audit/.codex/config.toml
 
 ENTRYPOINT ["node", "/opt/agent-audit/codex-runner/agent-audit-run.mjs"]
 
@@ -150,10 +151,11 @@ RUN bash -lc 'set -euo pipefail \
     && test -d /opt/agent-audit/codex-runner/node_modules/@openai/codex-sdk \
     && node /opt/agent-audit/codex-runner/agent-audit-run.mjs --help >/dev/null \
     && test -f /opt/agent-audit/AGENTS.md \
-    && test -f /opt/agent-audit/.codex/config.toml \
+    && test ! -e /opt/agent-audit/.codex/config.toml \
+    && test -f /root/.codex/config.toml \
     && case "${PROMPT_PROFILE}" in both) test -d /opt/agent-audit/prompts/osprompt && test -d /opt/agent-audit/prompts/csprompt ;; open_source) test -d /opt/agent-audit/prompts/osprompt && test ! -e /opt/agent-audit/prompts/csprompt ;; closed_source) test -d /opt/agent-audit/prompts/csprompt && test ! -e /opt/agent-audit/prompts/osprompt ;; esac \
     && if [ "${PROMPT_PROFILE}" = "closed_source" ]; then test -f /opt/agent-audit/.codex/skills/closed-workspace/SKILL.md && test -f /opt/agent-audit/.codex/skills/heimdall/SKILL.md; else test -f /opt/agent-audit/.codex/skills/workspace/SKILL.md; fi \
-    && grep -q "^model_provider = \"apiapi\"$" /opt/agent-audit/.codex/config.toml \
-    && grep -q "^approval_policy = \"never\"$" /opt/agent-audit/.codex/config.toml'
+    && grep -q "^model_provider = \"apiapi\"$" /root/.codex/config.toml \
+    && grep -q "^approval_policy = \"never\"$" /root/.codex/config.toml'
 
 FROM runtime AS final
