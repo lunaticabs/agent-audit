@@ -124,6 +124,8 @@ docker run --rm \
 
 容器不会自行拼接 `address`、`chain`、`instructions`。调度方需要提前把目标、链、审计要求和输出要求写进 prompt。容器启动后，Codex agent 会读取 `AGENTS.md`，按需要调用 `agent-audit` CLI 和安全工具，最终完成审计与归档。
 
+当 verified source 不可用时，CLI 会把闭源审计目标记录到 `runs/<run_id>/artifacts/bytecode_targets.json`，并在 RPC 已配置时把 runtime bytecode 保存到 `runs/<run_id>/artifacts/bytecode/`。`prepare-tooling` 仍会准备面向 fork harness 的 bytecode-only Foundry/Echidna 工作区，并创建 `runs/<run_id>/artifacts/heimdall/` 下的受管理 Heimdall 命令工作区。
+
 更多细节见 [`docker/README.md`](docker/README.md)。
 
 ## 3. `k3s/`: 容器级并行部署

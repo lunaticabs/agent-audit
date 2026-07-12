@@ -60,4 +60,6 @@ Prioritize:
 - external calls and value transfers
 - storage writes and authorization-sensitive state changes
 
+For economic-security coverage, use the `$close-source-fuzzing` workflow early. Closed-source review should not conclude from selector matching or decompiler inspection alone when fork-backed Foundry or Echidna fuzzing can check concrete balance, token, debt, collateral, approval, and accounting properties.
+
 Treat Heimdall decompiler output as heuristic evidence. Do not treat pseudocode or reconstructed Solidity/Yul as verified source. A confirmed finding still needs a concrete run artifact reference, such as `bytecode_targets.json`, runtime bytecode, `proxy_checks.json`, Heimdall output, or a reproducible command/test artifact.

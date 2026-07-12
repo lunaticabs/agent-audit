@@ -61,7 +61,7 @@ After that, run `$done` once to sync the run evidence into MongoDB.
 Any reported finding must be backed by a concrete artifact in `runs/<run_id>/`.
 Do not report a finding unless you can cite the exact supporting artifact file(s).
 
-For closed-source targets or closed proxy implementations, prioritize bytecode review of upgradeability, `delegatecall`, access control, external calls, and storage/write patterns. Heimdall output is heuristic evidence; do not treat reconstructed Solidity or Yul as verified source.
+For closed-source targets or closed proxy implementations, prioritize bytecode review of upgradeability, `delegatecall`, access control, external calls, and storage/write patterns. Also use `$close-source-fuzzing` early: fork-backed Foundry or Echidna fuzzing for balance, token, debt, collateral, approval, and accounting properties is a primary economic-security check, not optional polish. Heimdall output is heuristic evidence; do not treat reconstructed Solidity or Yul as verified source.
 
 Acceptable support includes:
 

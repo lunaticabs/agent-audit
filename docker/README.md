@@ -52,7 +52,7 @@ Notes:
 - `agent-audit` is built in an Ubuntu 22.04 builder stage so the resulting binary is ABI-compatible with the Ubuntu 22.04 toolbox runtime.
 - The image injects a dedicated container Codex bundle from `docker/.codex/`. Skills are copied into the project `.codex/` directory, while the container-specific `config.toml` is installed as user-level Codex config under `/root/.codex/config.toml` so provider settings are not treated as unsupported project-local config.
 - Heimdall is built from the pinned `Jon-Becker/heimdall-rs` `0.9.3` commit in an Ubuntu 22.04 builder stage. The upstream release binaries currently require a newer glibc than the pinned toolbox runtime provides, so the image builds Heimdall in a matching ABI environment.
-- Closed-source or unverified contracts are listed in `runs/<run_id>/artifacts/bytecode_targets.json`; runtime bytecode is saved under `runs/<run_id>/artifacts/bytecode/`, and `prepare-tooling` creates managed Heimdall command workspaces under `runs/<run_id>/artifacts/heimdall/`.
+- Closed-source or unverified contracts are listed in `runs/<run_id>/artifacts/bytecode_targets.json`; runtime bytecode is saved under `runs/<run_id>/artifacts/bytecode/`, and `prepare-tooling` creates bytecode-only Foundry/Echidna scaffolds plus managed Heimdall command workspaces under `runs/<run_id>/artifacts/heimdall/`.
 - The Docker entrypoint is a small Node program backed by the official TypeScript Codex SDK. The SDK still drives a local `codex` binary under the hood, so both `@openai/codex-sdk` and `@openai/codex` are installed in the image.
 - `flake.nix` and `flake.lock` are not copied into the runtime image.
 - No batch scheduler is included; the entrypoint runs exactly one Codex audit task.

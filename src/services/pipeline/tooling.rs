@@ -435,6 +435,9 @@ impl AuditPipelineService {
     ) -> AppResult<StepStatus> {
         let foundry_root = self.workspace.root().join("foundry_project");
         if !bundle_payload.is_fetched() {
+            if bundle_payload.is_source_unavailable() {
+                return self.prepare_closed_source_foundry_project(address, chain, &foundry_root);
+            }
             let (status, note, summary) = source_unavailable_tooling_precondition(
                 bundle_payload,
                 "Foundry",
@@ -554,6 +557,77 @@ impl AuditPipelineService {
         Ok(StepStatus::Prepared)
     }
 
+    fn prepare_closed_source_foundry_project(
+        &mut self,
+        address: &EvmAddress,
+        chain: &ChainAlias,
+        foundry_root: &Path,
+    ) -> AppResult<StepStatus> {
+        recreate_dir(foundry_root)?;
+        self.workspace
+            .store()
+            .write_text("foundry_project/src/.gitkeep", "")?;
+        self.workspace
+            .store()
+            .write_text("foundry_project/test/.gitkeep", "")?;
+        self.workspace
+            .store()
+            .write_text("foundry_project/script/.gitkeep", "")?;
+        self.workspace
+            .store()
+            .write_text("foundry_project/lib/.gitkeep", "")?;
+        self.workspace
+            .store()
+            .write_text("foundry_project/node_modules/.gitkeep", "")?;
+        let remappings_path = self
+            .workspace
+            .store()
+            .write_text("foundry_project/remappings.txt", "")?;
+        let foundry_toml_path = self.workspace.store().write_text(
+            "foundry_project/foundry.toml",
+            &render_closed_source_foundry_toml(),
+        )?;
+        self.record(
+            ArtifactStep::PrepareFoundryProject,
+            &remappings_path,
+            ArtifactKind::Prep,
+            ArtifactStatus::Executed,
+            "Prepared empty Foundry remappings for bytecode-only audit work.",
+        );
+        self.record(
+            ArtifactStep::PrepareFoundryProject,
+            &foundry_toml_path,
+            ArtifactKind::Prep,
+            ArtifactStatus::Executed,
+            "Prepared a bytecode-only Foundry config.",
+        );
+        let manifest_path = self.workspace.store().write_json(
+            paths::FOUNDRY_BUILD_MANIFEST,
+            &FoundryBuildManifest {
+                header: build_header(address, chain, self.workspace.run_id(), StepStatus::Prepared),
+                project_root: Some(WorkspaceRelPath::new("foundry_project")),
+                remappings_path: Some(remappings_path),
+                foundry_toml_path: Some(foundry_toml_path),
+                preferred_working_dir: Some(WorkspaceRelPath::new("foundry_project")),
+                test_dir: Some(WorkspaceRelPath::new("foundry_project/test")),
+                script_dir: Some(WorkspaceRelPath::new("foundry_project/script")),
+                note: Some(
+                    "Verified source is unavailable; this is a bytecode-only Foundry scaffold for fork tests, low-level-call harnesses, and economic fuzzing."
+                        .to_string(),
+                ),
+                ..FoundryBuildManifest::default()
+            },
+        )?;
+        self.record(
+            ArtifactStep::PrepareFoundryProject,
+            &manifest_path,
+            ArtifactKind::Prep,
+            ArtifactStatus::Executed,
+            "Prepared a bytecode-only Foundry project manifest.",
+        );
+        Ok(StepStatus::Prepared)
+    }
+
     fn prepare_foundry_precondition(
         &mut self,
         address: &EvmAddress,
@@ -588,6 +662,9 @@ impl AuditPipelineService {
     ) -> AppResult<StepStatus> {
         let echidna_root = self.workspace.root().join("echidna_project");
         if !bundle_payload.is_fetched() {
+            if bundle_payload.is_source_unavailable() {
+                return self.prepare_closed_source_echidna_project(address, chain, &echidna_root);
+            }
             let (status, note, summary) = source_unavailable_tooling_precondition(
                 bundle_payload,
                 "Echidna",
@@ -687,6 +764,58 @@ impl AuditPipelineService {
             ArtifactKind::Prep,
             ArtifactStatus::Executed,
             "Prepared a deterministic Echidna project manifest.",
+        );
+        Ok(StepStatus::Prepared)
+    }
+
+    fn prepare_closed_source_echidna_project(
+        &mut self,
+        address: &EvmAddress,
+        chain: &ChainAlias,
+        echidna_root: &Path,
+    ) -> AppResult<StepStatus> {
+        recreate_dir(echidna_root)?;
+        self.workspace
+            .store()
+            .write_text("echidna_project/src/.gitkeep", "")?;
+        self.workspace
+            .store()
+            .write_text("echidna_project/test/.gitkeep", "")?;
+        self.workspace
+            .store()
+            .write_text("echidna_project/lib/.gitkeep", "")?;
+        let config_path = self.workspace.store().write_text(
+            "echidna_project/echidna.yaml",
+            &render_closed_source_echidna_yaml(),
+        )?;
+        self.record(
+            ArtifactStep::PrepareEchidnaProject,
+            &config_path,
+            ArtifactKind::Prep,
+            ArtifactStatus::Executed,
+            "Prepared a bytecode-only Echidna config scaffold.",
+        );
+        let manifest_path = self.workspace.store().write_json(
+            paths::ECHIDNA_BUILD_MANIFEST,
+            &EchidnaBuildManifest {
+                header: build_header(address, chain, self.workspace.run_id(), StepStatus::Prepared),
+                project_root: Some(WorkspaceRelPath::new("echidna_project")),
+                config_path: Some(config_path),
+                preferred_working_dir: Some(WorkspaceRelPath::new("echidna_project")),
+                harness_dir: Some(WorkspaceRelPath::new("echidna_project/test")),
+                note: Some(
+                    "Verified source is unavailable; this is a bytecode-only Echidna scaffold for fork-backed property harnesses and economic fuzzing."
+                        .to_string(),
+                ),
+                ..EchidnaBuildManifest::default()
+            },
+        )?;
+        self.record(
+            ArtifactStep::PrepareEchidnaProject,
+            &manifest_path,
+            ArtifactKind::Prep,
+            ArtifactStatus::Executed,
+            "Prepared a bytecode-only Echidna project manifest.",
         );
         Ok(StepStatus::Prepared)
     }
@@ -1337,6 +1466,22 @@ fn render_foundry_toml(settings: &ToolProjectSettings, remappings: &[String]) ->
     lines.join("\n")
 }
 
+fn render_closed_source_foundry_toml() -> String {
+    [
+        "[profile.default]",
+        "src = \"src\"",
+        "test = \"test\"",
+        "script = \"script\"",
+        "out = \"out\"",
+        "libs = [\"lib\", \"node_modules\"]",
+        "optimizer = false",
+        "optimizer_runs = 200",
+        "fs_permissions = [{ access = \"read-write\", path = \"../artifacts\" }]",
+        "",
+    ]
+    .join("\n")
+}
+
 fn render_echidna_yaml(settings: &ToolProjectSettings) -> String {
     let mut lines = vec![
         "testMode: \"property\"".to_string(),
@@ -1348,6 +1493,19 @@ fn render_echidna_yaml(settings: &ToolProjectSettings) -> String {
     lines.push(format!("prefix: \"{}\"", settings.prepared_target));
     lines.push(String::new());
     lines.join("\n")
+}
+
+fn render_closed_source_echidna_yaml() -> String {
+    [
+        "testMode: \"property\"",
+        "format: \"text\"",
+        "corpusDir: \"corpus\"",
+        "srcDir: \"src\"",
+        "testDir: \"test\"",
+        "prefix: \"echidna_\"",
+        "",
+    ]
+    .join("\n")
 }
 
 fn slither_source_root_for_target(
@@ -1650,6 +1808,54 @@ mod tests {
             .expect("prepare tooling");
 
         assert_eq!(status, StepStatus::SourceUnavailable);
+        let foundry_manifest: FoundryBuildManifest = super::super::support::read_json_if_exists(
+            &service
+                .workspace
+                .paths()
+                .resolve(paths::FOUNDRY_BUILD_MANIFEST),
+        )
+        .expect("foundry manifest");
+        assert_eq!(foundry_manifest.header.status, StepStatus::Prepared);
+        assert_eq!(
+            foundry_manifest.preferred_working_dir,
+            Some(WorkspaceRelPath::new("foundry_project"))
+        );
+        assert_eq!(
+            foundry_manifest.foundry_toml_path,
+            Some(WorkspaceRelPath::new("foundry_project/foundry.toml"))
+        );
+        assert!(
+            service
+                .workspace
+                .paths()
+                .resolve("foundry_project/foundry.toml")
+                .exists()
+        );
+
+        let echidna_manifest: EchidnaBuildManifest = super::super::support::read_json_if_exists(
+            &service
+                .workspace
+                .paths()
+                .resolve(paths::ECHIDNA_BUILD_MANIFEST),
+        )
+        .expect("echidna manifest");
+        assert_eq!(echidna_manifest.header.status, StepStatus::Prepared);
+        assert_eq!(
+            echidna_manifest.preferred_working_dir,
+            Some(WorkspaceRelPath::new("echidna_project"))
+        );
+        assert_eq!(
+            echidna_manifest.config_path,
+            Some(WorkspaceRelPath::new("echidna_project/echidna.yaml"))
+        );
+        assert!(
+            service
+                .workspace
+                .paths()
+                .resolve("echidna_project/echidna.yaml")
+                .exists()
+        );
+
         let manifest: HeimdallBuildManifest = super::super::support::read_json_if_exists(
             &service
                 .workspace

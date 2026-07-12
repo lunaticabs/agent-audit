@@ -138,6 +138,7 @@ RUN bash -lc 'set -euo pipefail \
     && test -f /root/.codex/config.toml \
     && test -f /opt/agent-audit/.codex/skills/workspace/SKILL.md \
     && test -f /opt/agent-audit/.codex/skills/closed-source-evm/SKILL.md \
+    && test -f /opt/agent-audit/.codex/skills/close-source-fuzzing/SKILL.md \
     && grep -q "^model_provider = \"apiapi\"$" /root/.codex/config.toml \
     && grep -q "^approval_policy = \"never\"$" /root/.codex/config.toml'
 
