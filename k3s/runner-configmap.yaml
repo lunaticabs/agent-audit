@@ -4,7 +4,7 @@ metadata:
   name: agent-audit-runner-config
   namespace: agent-audit
 data:
-  DISPATCHER_RUNNER_IMAGE: ghcr.io/lunaticabs/agent-audit:main
+  DISPATCHER_RUNNER_IMAGE: ghcr.io/lunaticabs/agent-audit:decompile
   DISPATCHER_RUNNER_ENV_SECRET: agent-audit-runner-env
   DISPATCHER_RUNNER_IMAGE_PULL_SECRET: ""
   DISPATCHER_RUNNER_JOB_PULL_POLICY: IfNotPresent
