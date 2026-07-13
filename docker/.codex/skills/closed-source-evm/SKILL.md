@@ -66,6 +66,18 @@ General fuzzing workflow:
 
 Use both selector-aware fuzzing and blind low-level-call fuzzing. 4byte results are hints, not verified ABI: the same selector can map to multiple signatures or no useful signature.
 
+## Mandatory Completion Gate
+
+Before writing `reports/final_report.json`, decide whether closed-source fuzzing was required:
+
+- Required when `bytecode_targets.json` contains a source-unavailable target, implementation, or dependency and RPC is configured.
+- Blocked when RPC is missing, runtime bytecode is missing, the fork cannot be created, or the fuzz harness cannot compile/run.
+- Optional only when there is no closed-source bytecode target in scope.
+
+If fuzzing is required, do not write `status: "completed"`, `result: "no_confirmed_findings"`, or equivalent final language unless the report cites fuzzing artifacts from this run, including a harness source file, exact command/output, and either findings or a no-counterexample result with scope limits.
+
+If fuzzing is required but not completed, the final report must use an incomplete or inconclusive result such as `incomplete_missing_closed_source_fuzzing` and must explain the blocker. Do not bury skipped fuzzing as a normal limitation while still presenting the audit as complete.
+
 ## Tools And Commands
 
 Use the CLI-prepared workspaces. If needed, rerun:

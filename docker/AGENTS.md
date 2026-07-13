@@ -61,7 +61,7 @@ After that, run `$done` once to sync the run evidence into MongoDB.
 Any reported finding must be backed by a concrete artifact in `runs/<run_id>/`.
 Do not report a finding unless you can cite the exact supporting artifact file(s).
 
-For closed-source targets, closed proxy implementations, or bytecode-only dependencies, use `$closed-source-evm` and follow that skill's audit goals, fuzzing workflow, tool commands, artifact rules, and reporting requirements. Heimdall output is heuristic evidence; do not treat reconstructed Solidity or Yul as verified source.
+For closed-source targets, closed proxy implementations, or bytecode-only dependencies, use `$closed-source-evm` and follow that skill's audit goals, fuzzing workflow, tool commands, artifact rules, mandatory completion gate, and reporting requirements. If closed-source fuzzing is required but missing, do not write `status: "completed"`, `result: "no_confirmed_findings"`, or equivalent final language; report the audit as incomplete or inconclusive and explain the blocker. Heimdall output is heuristic evidence; do not treat reconstructed Solidity or Yul as verified source.
 
 Acceptable support includes:
 
