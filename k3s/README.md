@@ -46,7 +46,7 @@ Set image addresses in two places before applying if you later switch away from 
 - runner image in [runner-configmap.yaml](/Users/lunaticabs/code/agent-audit/k3s/runner-configmap.yaml)
 - dispatcher image in [dispatcher-deployment.yaml](/Users/lunaticabs/code/agent-audit/k3s/dispatcher-deployment.yaml)
 
-These manifests currently use the moving `main` tag with `imagePullPolicy: IfNotPresent`. This avoids repeated registry lookups and reduces node-side image churn. For tighter release control, replace those tags with a concrete `sha-...` tag or image digest.
+These manifests use moving branch tags with `imagePullPolicy: Always` for the dispatcher and runner Jobs, so nodes pull the latest published image for each run. For tighter release control, replace those tags with a concrete `sha-...` tag or image digest.
 
 If you want to check the currently configured image references:
 
