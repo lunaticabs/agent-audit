@@ -1,5 +1,5 @@
 model_provider = "apiapi"
-model = "gpt-5.5"
+model = "gpt-5.4"
 model_reasoning_effort = "xhigh"
 wire_api = "responses"
 sandbox_mode = "danger-full-access"
