@@ -31,6 +31,7 @@ struct SyncMaterial {
 struct RunSyncMeta {
     target: Bson,
     created_at: SystemTime,
+    block_number: Option<String>,
     has_final_report: bool,
 }
 
@@ -61,9 +62,11 @@ pub fn sync_run_to_mongo(config: &AppConfig, workspace: &RunWorkspace) -> AppRes
 }
 
 fn load_run_sync_meta(workspace: &RunWorkspace) -> AppResult<RunSyncMeta> {
+    let run_meta = read_run_meta(workspace);
     Ok(RunSyncMeta {
         target: read_target(workspace)?,
-        created_at: read_created_at(workspace),
+        created_at: read_created_at(run_meta.as_ref()),
+        block_number: run_meta.and_then(|payload| payload.block_number),
         has_final_report: workspace.paths().resolve(paths::FINAL_REPORT).exists(),
     })
 }
@@ -202,6 +205,7 @@ fn upsert_run_meta(
         "created_at",
         BsonDateTime::from_system_time(meta.created_at),
     );
+    meta_doc.insert("block_number", meta.block_number);
     meta_doc.insert("target", meta.target);
     meta_doc.insert("file_count", file_count as i64);
     meta_doc.insert("total_size_bytes", total_size_bytes as i64);
@@ -292,12 +296,14 @@ fn read_target(workspace: &RunWorkspace) -> AppResult<Bson> {
     Ok(bson::serialize_to_bson(&target)?)
 }
 
-fn read_created_at(workspace: &RunWorkspace) -> SystemTime {
+fn read_run_meta(workspace: &RunWorkspace) -> Option<RunMeta> {
     let path = workspace.paths().resolve(paths::RUN_META);
-    let Ok(text) = fs::read_to_string(path) else {
-        return SystemTime::now();
-    };
-    let Ok(payload) = serde_json::from_str::<RunMeta>(&text) else {
+    let text = fs::read_to_string(path).ok()?;
+    serde_json::from_str::<RunMeta>(&text).ok()
+}
+
+fn read_created_at(payload: Option<&RunMeta>) -> SystemTime {
+    let Some(payload) = payload else {
         return SystemTime::now();
     };
     let timestamp = payload.created_at.unix_timestamp();
@@ -346,12 +352,13 @@ mod tests {
     #[test]
     fn build_file_doc_falls_back_to_text_for_invalid_json() {
         let temp = TempDir::new().expect("temp dir");
-        let workspace = RunWorkspace::create_at_root(
+        let workspace = RunWorkspace::create_at_root_with_block_number(
             temp.path(),
             &temp.path().join("runs/run-1"),
             &RunId::new("run-1").expect("run id"),
             &EvmAddress::new("0x1234567890abcdef1234567890abcdef12345678").expect("address"),
             &ChainAlias::new("eth").expect("chain"),
+            None,
         )
         .expect("workspace");
 

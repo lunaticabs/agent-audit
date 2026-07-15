@@ -65,7 +65,7 @@ agent-audit sync-run --run-id <run_id>
 
 Core responsibilities:
 
-- Create the `runs/<run_id>/` workspace plus `input/request.json` and `input/run_meta.json`.
+- Create the `runs/<run_id>/` workspace plus `input/request.json` and `input/run_meta.json`, including run creation time and the current block number when RPC is configured.
 - Fetch target contract source code through settings such as `AGENT_AUDIT_SOURCE_API_BASE`.
 - Run dependency discovery and dependency analysis, writing `artifacts/dependency_*.json`.
 - Prepare Slither, Foundry, and Echidna tool workspaces and build manifests.

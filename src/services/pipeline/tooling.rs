@@ -1706,12 +1706,13 @@ mod tests {
             EvmAddress::new("0x1234567890abcdef1234567890abcdef12345678").expect("address"),
             ChainAlias::new("eth").expect("chain"),
         );
-        let workspace = RunWorkspace::create_at_root(
+        let workspace = RunWorkspace::create_at_root_with_block_number(
             temp.path(),
             &temp.path().join("runs/run-1"),
             &RunId::new("run-1").expect("run id"),
             &target.address,
             &target.chain,
+            None,
         )
         .expect("workspace");
         (temp, workspace, target)

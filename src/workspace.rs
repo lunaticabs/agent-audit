@@ -188,11 +188,12 @@ impl RunLock {
 }
 
 impl RunWorkspace {
-    pub fn create(
+    pub fn create_with_block_number(
         project_root: &Path,
         runs_dir: &Path,
         address: &EvmAddress,
         chain: &ChainAlias,
+        block_number: Option<String>,
     ) -> AppResult<Self> {
         fs::create_dir_all(runs_dir)?;
         loop {
@@ -201,16 +202,24 @@ impl RunWorkspace {
             if root.exists() {
                 continue;
             }
-            return Self::create_at_root(project_root, &root, &run_id, address, chain);
+            return Self::create_at_root_with_block_number(
+                project_root,
+                &root,
+                &run_id,
+                address,
+                chain,
+                block_number.clone(),
+            );
         }
     }
 
-    pub fn create_at_root(
+    pub fn create_at_root_with_block_number(
         project_root: &Path,
         root: &Path,
         run_id: &RunId,
         address: &EvmAddress,
         chain: &ChainAlias,
+        block_number: Option<String>,
     ) -> AppResult<Self> {
         let workspace = Self::from_root(project_root, root, run_id);
         workspace.ensure_dirs()?;
@@ -220,6 +229,7 @@ impl RunWorkspace {
                 run_id: run_id.clone(),
                 id_scheme: "sha256-base64url-v1".to_string(),
                 created_at: OffsetDateTime::now_utc(),
+                block_number,
                 target: RunTarget::new(address.clone(), chain.clone()),
             },
         )?;
@@ -339,12 +349,13 @@ mod tests {
     fn write_json_persists_pretty_json_with_trailing_newline() {
         let project = TempDir::new().expect("create temp dir");
         let runs_dir = project.path().join("runs");
-        let workspace = RunWorkspace::create_at_root(
+        let workspace = RunWorkspace::create_at_root_with_block_number(
             project.path(),
             &runs_dir.join("run-1"),
             &RunId::new("run-1").expect("valid run id"),
             &EvmAddress::new("0x1234567890abcdef1234567890abcdef12345678").expect("valid address"),
             &ChainAlias::new("eth").expect("valid chain"),
+            None,
         )
         .expect("create workspace");
 
@@ -365,5 +376,47 @@ mod tests {
             fs::read_to_string(workspace.paths().resolve(paths::REQUEST)).expect("read request");
         assert!(written.ends_with('\n'));
         assert!(written.contains("\n  \"address\": "));
+    }
+
+    #[test]
+    fn run_meta_persists_block_number_when_available() {
+        let project = TempDir::new().expect("create temp dir");
+        let runs_dir = project.path().join("runs");
+        let workspace = RunWorkspace::create_at_root_with_block_number(
+            project.path(),
+            &runs_dir.join("run-1"),
+            &RunId::new("run-1").expect("valid run id"),
+            &EvmAddress::new("0x1234567890abcdef1234567890abcdef12345678").expect("valid address"),
+            &ChainAlias::new("eth").expect("valid chain"),
+            Some("12345".to_string()),
+        )
+        .expect("create workspace");
+
+        let written =
+            fs::read_to_string(workspace.paths().resolve(paths::RUN_META)).expect("read run meta");
+        let meta: RunMeta = serde_json::from_str(&written).expect("parse run meta");
+
+        assert_eq!(meta.block_number.as_deref(), Some("12345"));
+    }
+
+    #[test]
+    fn create_persists_null_block_number_without_rpc_snapshot() {
+        let project = TempDir::new().expect("create temp dir");
+        let runs_dir = project.path().join("runs");
+        let workspace = RunWorkspace::create_with_block_number(
+            project.path(),
+            &runs_dir,
+            &EvmAddress::new("0x1234567890abcdef1234567890abcdef12345678").expect("valid address"),
+            &ChainAlias::new("eth").expect("valid chain"),
+            None,
+        )
+        .expect("create workspace");
+
+        let written =
+            fs::read_to_string(workspace.paths().resolve(paths::RUN_META)).expect("read run meta");
+        let meta: RunMeta = serde_json::from_str(&written).expect("parse run meta");
+
+        assert!(written.contains("\"block_number\": null"));
+        assert_eq!(meta.block_number, None);
     }
 }

@@ -16,7 +16,7 @@ What it does:
 - Creates `runs/<run_id>/`
 - Creates `runs/<run_id>/input/`, `runs/<run_id>/artifacts/`, `runs/<run_id>/reports/`, and `runs/<run_id>/logs/`
 - Writes `runs/<run_id>/input/request.json`
-- Writes `runs/<run_id>/input/run_meta.json`
+- Writes `runs/<run_id>/input/run_meta.json`, including `created_at` and the current `block_number` when RPC is configured
 - Fetches verified source into `runs/<run_id>/sources/`
 - Fetches discovered dependency source into `runs/<run_id>/sources/dependencies/`
 - If verified source is unavailable, writes `runs/<run_id>/artifacts/bytecode_targets.json`

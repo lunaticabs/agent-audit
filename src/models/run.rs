@@ -25,6 +25,8 @@ pub struct RunMeta {
     pub id_scheme: String,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
+    #[serde(default)]
+    pub block_number: Option<String>,
     pub target: RunTarget,
 }
 
