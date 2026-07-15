@@ -17,7 +17,7 @@ DEFAULT_ADDRESS_FILE = ROOT / "addresses" / "addrs.txt"
 DEFAULT_STREAM = "agent-audit:tasks"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 6380
-DEFAULT_PROMPT_TEMPLATE = "Check AGENTS.md and audit {address} on {chain}."
+DEFAULT_PROMPT_TEMPLATE = "Check AGENTS.md and audit {address} on {chain}. DO FUZZING FOR CLOSED SOURCE CONTRACT!!! DO FUZZING FOR CLOSED SOURCE CONTRACT!!!"
 DEFAULT_TASK_PREFIX = "audit"
 ADDRESS_RE = re.compile(r"^0x[a-fA-F0-9]{40}$")
 
