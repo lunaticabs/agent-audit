@@ -956,11 +956,7 @@ fn heimdall_command_vector(
         "$AGENT_AUDIT_RPC_URL".to_string(),
     ];
     if action == HeimdallAction::Decompile {
-        command.extend([
-            "--default".to_string(),
-            "--include-sol".to_string(),
-            "--include-yul".to_string(),
-        ]);
+        command.extend(["--default".to_string(), "--include-yul".to_string()]);
     }
     command.extend(["--output".to_string(), output_dir.to_string()]);
     if action == HeimdallAction::Decompile {
@@ -1088,7 +1084,7 @@ fn heimdall_shell_command(command: &HeimdallCommandWorkspace) -> String {
         shell_quote(address)
     );
     if command.action == HeimdallAction::Decompile {
-        line.push_str(" --default --include-sol --include-yul");
+        line.push_str(" --default --include-yul");
     }
     line.push_str(&format!(
         " --output {}",
@@ -1873,6 +1869,14 @@ mod tests {
             .find(|command| command.action == HeimdallAction::Decompile)
             .expect("decompile command");
         assert_eq!(decompile.status, StepStatus::Prepared);
+        assert!(
+            decompile
+                .command
+                .iter()
+                .any(|arg| arg == "$AGENT_AUDIT_RPC_URL")
+        );
+        assert!(decompile.command.iter().any(|arg| arg == "--include-yul"));
+        assert!(!decompile.command.iter().any(|arg| arg == "--include-sol"));
 
         let run_script_path = service
             .workspace
@@ -1888,6 +1892,8 @@ mod tests {
         assert!(script.contains("stdout.txt"));
         assert!(script.contains("exit_code.txt"));
         assert!(script.contains("AGENT_AUDIT_RPC_URL"));
+        assert!(script.contains("--include-yul"));
+        assert!(!script.contains("--include-sol --include-yul"));
 
         let tooling_manifest: ToolingManifest = super::super::support::read_json_if_exists(
             &service.workspace.paths().resolve(paths::TOOLING_MANIFEST),

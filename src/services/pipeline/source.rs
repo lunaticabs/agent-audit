@@ -1276,7 +1276,7 @@ mod tests {
     }
 
     fn spawn_mock_rpc_server(implementation: Option<&EvmAddress>) -> String {
-        let implementation_word = implementation.map(|address| eip1967_address_word(address));
+        let implementation_word = implementation.map(eip1967_address_word);
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind mock rpc");
         let address = listener.local_addr().expect("local addr");
         std::thread::spawn(move || {

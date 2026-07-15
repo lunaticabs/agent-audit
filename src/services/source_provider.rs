@@ -6,7 +6,7 @@ use serde_json::{Map, Value};
 use url::Url;
 
 use crate::error::{AppResult, msg};
-use crate::models::identity::{ChainAlias, EvmAddress, chain_id_for_alias};
+use crate::models::identity::{ChainAlias, ChainId, EvmAddress, chain_id_for_alias};
 use crate::models::path::RelativePath;
 use crate::models::run::RunTarget;
 use crate::models::source::{
@@ -25,6 +25,15 @@ pub struct SourceUnavailableBundle {
     pub provider_payload: Value,
     pub normalized_payload: VerifiedSourceMetadata,
     pub reason: String,
+}
+
+struct SourceProviderContext<'a> {
+    address: &'a EvmAddress,
+    chain: &'a ChainAlias,
+    chain_id: ChainId,
+    endpoint: &'a Url,
+    message: &'a str,
+    result_count: usize,
 }
 
 pub fn fetch_verified_source(
@@ -77,39 +86,35 @@ pub fn fetch_verified_source(
         .unwrap_or_default();
     let result = payload.get("result").and_then(Value::as_array);
     let Some(result) = result else {
+        let context = SourceProviderContext {
+            address,
+            chain,
+            chain_id,
+            endpoint: &endpoint,
+            message,
+            result_count: 0,
+        };
         if let Some(reason) = source_unavailable_payload_reason(&payload) {
             return Ok(SourceProviderFetch::SourceUnavailable(
-                source_unavailable_bundle(
-                    payload.clone(),
-                    address,
-                    chain,
-                    chain_id,
-                    &endpoint,
-                    message,
-                    0,
-                    None,
-                    reason,
-                ),
+                source_unavailable_bundle(payload.clone(), &context, None, reason),
             ));
         }
         return Err(msg(format!(
             "source API returned an unusable payload: status={status:?} message={message:?}"
         )));
     };
+    let context = SourceProviderContext {
+        address,
+        chain,
+        chain_id,
+        endpoint: &endpoint,
+        message,
+        result_count: result.len(),
+    };
     if status != "1" || result.is_empty() {
         if let Some(reason) = source_unavailable_payload_reason(&payload) {
             return Ok(SourceProviderFetch::SourceUnavailable(
-                source_unavailable_bundle(
-                    payload.clone(),
-                    address,
-                    chain,
-                    chain_id,
-                    &endpoint,
-                    message,
-                    result.len(),
-                    None,
-                    reason,
-                ),
+                source_unavailable_bundle(payload.clone(), &context, None, reason),
             ));
         }
         return Err(msg(format!(
@@ -123,28 +128,13 @@ pub fn fetch_verified_source(
 
     if let Some(reason) = source_unavailable_result_reason(primary) {
         return Ok(SourceProviderFetch::SourceUnavailable(
-            source_unavailable_bundle(
-                payload.clone(),
-                address,
-                chain,
-                chain_id,
-                &endpoint,
-                message,
-                result.len(),
-                Some(primary),
-                reason,
-            ),
+            source_unavailable_bundle(payload.clone(), &context, Some(primary), reason),
         ));
     }
 
     let (files, source_layout, source_meta) = parse_source_code_result(primary)?;
     let normalized = normalized_metadata(
-        address,
-        chain,
-        chain_id,
-        &endpoint,
-        message,
-        result.len(),
+        &context,
         primary,
         source_layout,
         source_meta,
@@ -166,12 +156,7 @@ pub fn fetch_verified_source(
 }
 
 fn normalized_metadata(
-    address: &EvmAddress,
-    chain: &ChainAlias,
-    chain_id: crate::models::identity::ChainId,
-    endpoint: &Url,
-    message: &str,
-    result_count: usize,
+    context: &SourceProviderContext<'_>,
     primary: &Map<String, Value>,
     source_layout: String,
     source_meta: SourceMetadata,
@@ -179,15 +164,15 @@ fn normalized_metadata(
 ) -> VerifiedSourceMetadata {
     VerifiedSourceMetadata {
         target: RunTarget {
-            address: address.clone(),
-            chain: chain.clone(),
-            chain_id: Some(chain_id),
+            address: context.address.clone(),
+            chain: context.chain.clone(),
+            chain_id: Some(context.chain_id),
         },
         provider: SourceProviderMetadata {
             kind: "etherscan-compatible".to_string(),
-            endpoint: endpoint.to_string(),
-            message: message.to_string(),
-            result_count,
+            endpoint: context.endpoint.to_string(),
+            message: context.message.to_string(),
+            result_count: context.result_count,
         },
         contract: ContractMetadata {
             name: string_field(primary, "ContractName"),
@@ -216,12 +201,7 @@ fn normalized_metadata(
 
 fn source_unavailable_bundle(
     provider_payload: Value,
-    address: &EvmAddress,
-    chain: &ChainAlias,
-    chain_id: crate::models::identity::ChainId,
-    endpoint: &Url,
-    message: &str,
-    result_count: usize,
+    context: &SourceProviderContext<'_>,
     primary: Option<&Map<String, Value>>,
     reason: String,
 ) -> SourceUnavailableBundle {
@@ -230,12 +210,7 @@ fn source_unavailable_bundle(
     SourceUnavailableBundle {
         provider_payload,
         normalized_payload: normalized_metadata(
-            address,
-            chain,
-            chain_id,
-            endpoint,
-            message,
-            result_count,
+            context,
             primary,
             String::new(),
             SourceMetadata::default(),
