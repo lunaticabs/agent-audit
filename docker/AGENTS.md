@@ -52,8 +52,6 @@ Finally:
 
 If you think you have identified the real vulnerabilities, or the contract is safe, write a JSON report and save it under `runs/<run_id>/reports/final_report.json`.
 
-At the beginning of `runs/<run_id>/reports/final_report.json`, include a top-level `audit_metadata` object as the first field. Copy `created_at` and `block_number` exactly from `runs/<run_id>/input/run_meta.json` into that object before any findings or conclusions.
-
 When writing `runs/<run_id>/reports/final_report.json`, if a confirmed finding belongs to one of the ten priority vulnerability classes above, set its severity to `very high`.
 
 After that, run `$done` once to sync the run evidence into MongoDB.

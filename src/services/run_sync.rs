@@ -41,7 +41,7 @@ pub fn sync_run_to_mongo(config: &AppConfig, workspace: &RunWorkspace) -> AppRes
     };
 
     let meta = load_run_sync_meta(workspace)?;
-    let materials = collect_sync_materials(config, workspace)?;
+    let materials = collect_sync_materials(config, workspace, &meta)?;
     let total_size_bytes = materials.iter().map(|item| item.size_bytes).sum::<usize>();
     let file_count = materials.len();
 
@@ -74,6 +74,7 @@ fn load_run_sync_meta(workspace: &RunWorkspace) -> AppResult<RunSyncMeta> {
 fn collect_sync_materials(
     config: &AppConfig,
     workspace: &RunWorkspace,
+    meta: &RunSyncMeta,
 ) -> AppResult<Vec<SyncMaterial>> {
     let mut materials = Vec::new();
     for entry in walkdir::WalkDir::new(workspace.root()).sort_by_file_name() {
@@ -88,6 +89,7 @@ fn collect_sync_materials(
         materials.push(build_sync_material(
             config,
             workspace,
+            meta,
             entry.path(),
             rel_path,
         )?);
@@ -108,6 +110,7 @@ fn should_skip_rel_path(rel_path: &WorkspaceRelPath) -> bool {
 fn build_sync_material(
     config: &AppConfig,
     workspace: &RunWorkspace,
+    meta: &RunSyncMeta,
     full_path: &std::path::Path,
     rel_path: WorkspaceRelPath,
 ) -> AppResult<SyncMaterial> {
@@ -120,13 +123,14 @@ fn build_sync_material(
     }
 
     Ok(SyncMaterial {
-        doc: build_file_doc(workspace, &rel_path, full_path, &raw, size_bytes)?,
+        doc: build_file_doc(workspace, meta, &rel_path, full_path, &raw, size_bytes)?,
         size_bytes,
     })
 }
 
 fn build_file_doc(
     workspace: &RunWorkspace,
+    meta: &RunSyncMeta,
     rel_path: &WorkspaceRelPath,
     full_path: &std::path::Path,
     raw: &[u8],
@@ -144,6 +148,13 @@ fn build_file_doc(
     } else {
         doc.insert("kind", "text");
         doc.insert("content_text", String::from_utf8_lossy(raw).to_string());
+    }
+    if rel_path.as_str() == paths::FINAL_REPORT {
+        doc.insert(
+            "created_at",
+            BsonDateTime::from_system_time(meta.created_at),
+        );
+        doc.insert("block_number", meta.block_number.clone());
     }
     Ok(doc)
 }
@@ -364,6 +375,7 @@ mod tests {
 
         let doc = build_file_doc(
             &workspace,
+            &test_sync_meta(None),
             &WorkspaceRelPath::new("artifacts/bad.json"),
             &temp.path().join("bad.json"),
             b"{not-json}",
@@ -377,5 +389,58 @@ mod tests {
                 .expect("content")
                 .contains("not-json")
         );
+    }
+
+    #[test]
+    fn build_final_report_doc_includes_run_metadata_with_json_content() {
+        let temp = TempDir::new().expect("temp dir");
+        let workspace = RunWorkspace::create_at_root_with_block_number(
+            temp.path(),
+            &temp.path().join("runs/run-1"),
+            &RunId::new("run-1").expect("run id"),
+            &EvmAddress::new("0x1234567890abcdef1234567890abcdef12345678").expect("address"),
+            &ChainAlias::new("eth").expect("chain"),
+            Some("12345".to_string()),
+        )
+        .expect("workspace");
+        let created_at = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let meta = RunSyncMeta {
+            target: Bson::Null,
+            created_at,
+            block_number: Some("12345".to_string()),
+            has_final_report: true,
+        };
+
+        let doc = build_file_doc(
+            &workspace,
+            &meta,
+            &WorkspaceRelPath::new(paths::FINAL_REPORT),
+            &temp.path().join("final_report.json"),
+            br#"{"status":"completed","findings":[]}"#,
+            36,
+        )
+        .expect("doc");
+
+        assert_eq!(doc.get_str("kind").expect("kind"), "json");
+        assert_eq!(doc.get_str("block_number").expect("block_number"), "12345");
+        assert_eq!(
+            doc.get_datetime("created_at")
+                .expect("created_at")
+                .to_system_time(),
+            created_at
+        );
+        let Bson::Document(content) = doc.get("content_json").expect("content_json") else {
+            panic!("content_json should be a document");
+        };
+        assert_eq!(content.get_str("status").expect("status"), "completed");
+    }
+
+    fn test_sync_meta(block_number: Option<String>) -> RunSyncMeta {
+        RunSyncMeta {
+            target: Bson::Null,
+            created_at: UNIX_EPOCH,
+            block_number,
+            has_final_report: false,
+        }
     }
 }
