@@ -13,7 +13,7 @@ Environment:
   AUDIT_DIR or CODEX_WORKDIR       benchmark-provided audit repository
   SUBMISSION_DIR                   output directory containing audit.md
   LOGS_DIR                         log directory
-  MODEL                            Codex model, default z-ai/glm-5.2
+  MODEL                            Codex model, default gpt-5.4
   REASONING_EFFORT                 Codex reasoning effort, default xhigh
 
 The entrypoint writes the Detect report to ${SUBMISSION_DIR}/audit.md.
@@ -65,7 +65,7 @@ CODEX_HOME="${CODEX_HOME:-${AGENT_DIR}/.codex}"
 TASK_ID="${TASK_ID:-${RUN_ID:-${JOB_ID:-evmbench-detect}}}"
 CODEX_RUNNER_DIR="${CODEX_RUNNER_DIR:-${AGENT_AUDIT_PROJECT_ROOT}/codex-runner}"
 CODEX_BIN="${CODEX_BIN:-${CODEX_RUNNER_DIR}/node_modules/.bin/codex}"
-MODEL="${MODEL:-z-ai/glm-5.2}"
+MODEL="${MODEL:-gpt-5.4}"
 REASONING_EFFORT="${REASONING_EFFORT:-xhigh}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -101,15 +101,15 @@ fi
 if [[ ! -f "${CODEX_HOME}/config.toml" ]]; then
   cat > "${CODEX_HOME}/config.toml" <<'EOF'
 model_provider = "apiapi"
-model = "z-ai/glm-5.2"
+model = "gpt-5.4"
 model_reasoning_effort = "xhigh"
 wire_api = "responses"
 sandbox_mode = "danger-full-access"
 approval_policy = "never"
 
 [model_providers.apiapi]
-name = "openrouter"
-base_url = "https://openrouter.ai/api/v1"
+name = "apiapi"
+base_url = "https://apiapi.chat/v1"
 env_key = "APIAPI_API_KEY"
 
 [shell_environment_policy]

@@ -58,14 +58,9 @@ rg -n "ghcr.io/.*/agent-audit" k3s
 
 Copy [runner-secret.example.yaml](/Users/lunaticabs/code/agent-audit/k3s/runner-secret.example.yaml) to `k3s/runner-secret.yaml` and fill in:
 
-- `APIAPI_API_KEY` with the OpenRouter API key
+- `APIAPI_API_KEY`
 - every required `AGENT_AUDIT_*`
 - `AGENT_AUDIT_MONGO_URI`
-
-The runner image keeps the `apiapi` Codex provider id for script and smoke-test
-compatibility, but the provider entry points at OpenRouter and uses
-`z-ai/glm-5.2` over `wire_api = "responses"`. Configure the OpenRouter account
-to allow only Z.AI as the upstream provider.
 
 Copy [dispatcher-secret.example.yaml](/Users/lunaticabs/code/agent-audit/k3s/dispatcher-secret.example.yaml) to `k3s/dispatcher-secret.yaml`. For the default in-cluster Redis service, `redis://agent-audit-redis:6379/0` is enough.
 

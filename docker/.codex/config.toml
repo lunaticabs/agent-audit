@@ -1,13 +1,13 @@
 model_provider = "apiapi"
-model = "z-ai/glm-5.2"
+model = "gpt-5.4"
 model_reasoning_effort = "xhigh"
 wire_api = "responses"
 sandbox_mode = "danger-full-access"
 approval_policy = "never"
 
 [model_providers.apiapi]
-name = "openrouter"
-base_url = "https://openrouter.ai/api/v1"
+name = "apiapi"
+base_url = "https://llmx.chat/v1"
 env_key = "APIAPI_API_KEY"
 
 [shell_environment_policy]

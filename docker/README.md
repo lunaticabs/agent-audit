@@ -27,12 +27,6 @@ Run:
 
 `docker/run.sh` expects the repository-local `.env` to exist and mounts it read-only as `/opt/agent-audit/.env`. Put both `APIAPI_API_KEY` and the required `AGENT_AUDIT_*` settings there so the packaged Codex SDK entrypoint and the bundled CLI share one configuration source.
 
-`APIAPI_API_KEY` is intentionally retained as the environment variable name, but
-its value should now be an OpenRouter API key. The bundled Codex config uses
-OpenRouter with `wire_api = "responses"` and model `z-ai/glm-5.2`; restrict the
-OpenRouter upstream provider to Z.AI in the OpenRouter account settings rather
-than in runner code.
-
 The container no longer understands business fields such as `address`, `chain`, or `instructions`. It accepts one complete prompt only:
 
 - `FULL_PROMPT` environment variable

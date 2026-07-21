@@ -71,9 +71,5 @@ uv run python -m evmbench.nano.entrypoint \
   runner.concurrency=1
 ```
 
-Keep `APIAPI_API_KEY` as the injected variable name, but use an OpenRouter API
-key there. The bundled eval config targets `z-ai/glm-5.2` through OpenRouter,
-and the OpenRouter account should restrict upstream routing to Z.AI.
-
 For a full Detect run, replace `evmbench.audit_split=debug` with the target
 split, for example `evmbench.audit_split=detect-tasks`.

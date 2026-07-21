@@ -30,11 +30,6 @@ APIAPI_API_KEY=... \
 ./eval_docker/run.sh --audit-dir /path/to/audit
 ```
 
-`APIAPI_API_KEY` is still the expected variable name for compatibility. Store an
-OpenRouter API key there; the bundled Codex config uses OpenRouter with model
-`z-ai/glm-5.2` and `wire_api = "responses"`. Limit upstream routing to Z.AI in
-the OpenRouter account settings.
-
 The report is written to `eval_docker/submission/audit.md` unless
 `--submission-dir` is provided.
 
