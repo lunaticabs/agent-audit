@@ -2,7 +2,7 @@ common: &common_settings
   start: agent-audit-codex/start.sh
   instruction_file_name: AGENTS.md
   gateway_sni_hosts:
-    - apiapi.chat
+    - openrouter.ai
     - api.openai.com
     - chatgpt.com
 
@@ -10,7 +10,7 @@ agent-audit-codex:
   <<: *common_settings
   env_vars:
     APIAPI_API_KEY: ${{ secrets.APIAPI_API_KEY }}
-    MODEL: gpt-5.4
+    MODEL: z-ai/glm-5.2
     REASONING_EFFORT: xhigh
     AGENT_AUDIT_PROJECT_ROOT: /opt/agent-audit
     AGENT_AUDIT_EVAL_ENTRYPOINT: /opt/agent-audit/eval/start.sh
