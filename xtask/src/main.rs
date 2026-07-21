@@ -7,7 +7,8 @@ usage:
   cargo xtask check
   cargo xtask fmt
   cargo xtask clippy
-  cargo xtask test";
+  cargo xtask test
+  cargo xtask addrs [--source <url-or-path>] [--output <path>] [--sender <address>]";
 
 fn main() {
     if let Err(message) = run() {
@@ -21,12 +22,13 @@ fn run() -> Result<(), String> {
     command.run()
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 enum XtaskCommand {
     Check,
     Fmt,
     Clippy,
     Test,
+    Addrs(Vec<String>),
 }
 
 impl XtaskCommand {
@@ -39,6 +41,7 @@ impl XtaskCommand {
             "fmt" => Self::Fmt,
             "clippy" => Self::Clippy,
             "test" => Self::Test,
+            "addrs" => return Ok(Self::Addrs(args.collect())),
             _ => return Err(format!("unknown xtask command `{raw}`\n{USAGE}")),
         };
         if let Some(unexpected) = args.next() {
@@ -55,6 +58,7 @@ impl XtaskCommand {
             Self::Fmt => run_single_step(&cargo, &workspace_root, CheckStep::FMT),
             Self::Clippy => run_single_step(&cargo, &workspace_root, CheckStep::CLIPPY),
             Self::Test => run_single_step(&cargo, &workspace_root, CheckStep::TEST),
+            Self::Addrs(args) => run_siglog_addresses(&cargo, &workspace_root, &args),
         }
     }
 }
@@ -101,6 +105,32 @@ fn run_step(cargo: &str, workspace_root: &Path, step: CheckStep) -> Result<StepO
     } else {
         StepOutcome::Failed(format_exit_status(status))
     })
+}
+
+fn run_siglog_addresses(
+    cargo: &str,
+    workspace_root: &Path,
+    tool_args: &[String],
+) -> Result<(), String> {
+    let manifest_path = workspace_root.join("scripts/siglog-addresses/Cargo.toml");
+    println!("running siglog-addresses in {}", workspace_root.display());
+    let status = Command::new(cargo)
+        .args(["run", "--manifest-path"])
+        .arg(manifest_path)
+        .arg("--")
+        .args(tool_args)
+        .current_dir(workspace_root)
+        .status()
+        .map_err(|err| format!("failed to start `siglog-addresses`: {err}"))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "siglog-addresses failed ({})",
+            format_exit_status(status)
+        ))
+    }
 }
 
 fn workspace_root() -> PathBuf {
@@ -182,6 +212,37 @@ mod tests {
         assert_eq!(
             XtaskCommand::parse(["test".to_string()].into_iter()).expect("parse test"),
             XtaskCommand::Test
+        );
+    }
+
+    #[test]
+    fn parse_recognizes_addrs_command_without_args() {
+        assert_eq!(
+            XtaskCommand::parse(["addrs".to_string()].into_iter()).expect("parse addrs"),
+            XtaskCommand::Addrs(Vec::new())
+        );
+    }
+
+    #[test]
+    fn parse_recognizes_addrs_command_with_forwarded_args() {
+        assert_eq!(
+            XtaskCommand::parse(
+                [
+                    "addrs".to_string(),
+                    "--sender".to_string(),
+                    "0x9eD59587af8D7E156707539B9A4a22e7B3Cac1a0".to_string(),
+                    "--output".to_string(),
+                    "/tmp/addrs.txt".to_string(),
+                ]
+                .into_iter(),
+            )
+            .expect("parse addrs"),
+            XtaskCommand::Addrs(vec![
+                "--sender".to_string(),
+                "0x9eD59587af8D7E156707539B9A4a22e7B3Cac1a0".to_string(),
+                "--output".to_string(),
+                "/tmp/addrs.txt".to_string(),
+            ])
         );
     }
 
