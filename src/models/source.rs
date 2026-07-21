@@ -42,6 +42,8 @@ pub struct VerifiedSourceMetadata {
 pub struct SourceBundleArtifact {
     pub target: RunTarget,
     pub status: StepStatus,
+    pub source_availability: SourceAvailabilityStatus,
+    pub source_unavailable_reason: Option<String>,
     pub note: Option<String>,
     pub error: Option<String>,
     pub error_debug: Option<String>,
@@ -137,6 +139,8 @@ pub struct DependencyRecord {
     pub role: String,
     pub name: String,
     pub address: EvmAddress,
+    pub source_availability: SourceAvailabilityStatus,
+    pub source_unavailable_reason: Option<String>,
     pub provider: Option<SourceProviderMetadata>,
     pub contract: Option<ContractMetadata>,
     pub compiler: Option<CompilerMetadata>,
@@ -161,6 +165,7 @@ pub enum ProxyResolutionStatus {
     #[default]
     NotAttempted,
     ProviderFlagOnly,
+    Eip1967Slots,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -169,6 +174,16 @@ pub enum DependencyFetchStatus {
     #[default]
     FetchFailed,
     Fetched,
+    SourceUnavailable,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceAvailabilityStatus {
+    #[default]
+    Unknown,
+    Verified,
+    Unavailable,
 }
 
 impl SourceBundleArtifact {
@@ -202,6 +217,33 @@ impl SourceBundleArtifact {
         }
     }
 
+    pub fn source_unavailable(metadata: VerifiedSourceMetadata, reason: String) -> Self {
+        let VerifiedSourceMetadata {
+            target,
+            provider,
+            contract,
+            compiler,
+            abi,
+            source_layout,
+            source_meta,
+            files,
+        } = metadata;
+        Self {
+            target,
+            status: StepStatus::SourceUnavailable,
+            source_availability: SourceAvailabilityStatus::Unavailable,
+            source_unavailable_reason: Some(reason),
+            provider: Some(provider),
+            contract: Some(contract),
+            compiler: Some(compiler),
+            abi,
+            source_layout,
+            source_meta: Some(source_meta),
+            files,
+            ..Self::default()
+        }
+    }
+
     pub fn from_verified_source(metadata: VerifiedSourceMetadata) -> Self {
         let VerifiedSourceMetadata {
             target,
@@ -216,6 +258,7 @@ impl SourceBundleArtifact {
         Self {
             target,
             status: StepStatus::SourceFetched,
+            source_availability: SourceAvailabilityStatus::Verified,
             provider: Some(provider),
             contract: Some(contract),
             compiler: Some(compiler),
@@ -229,6 +272,11 @@ impl SourceBundleArtifact {
 
     pub fn is_fetched(&self) -> bool {
         self.status == StepStatus::SourceFetched
+    }
+
+    pub fn is_source_unavailable(&self) -> bool {
+        self.status == StepStatus::SourceUnavailable
+            || self.source_availability == SourceAvailabilityStatus::Unavailable
     }
 }
 
@@ -247,6 +295,11 @@ impl AnalysisTarget {
 impl DependencyRecord {
     pub fn is_fetched(&self) -> bool {
         self.status == DependencyFetchStatus::Fetched
+    }
+
+    pub fn is_source_unavailable(&self) -> bool {
+        self.status == DependencyFetchStatus::SourceUnavailable
+            || self.source_availability == SourceAvailabilityStatus::Unavailable
     }
 }
 

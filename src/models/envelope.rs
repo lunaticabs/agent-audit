@@ -85,6 +85,7 @@ pub struct InitRunDetails {
     pub slither_build_manifest_path: WorkspaceRelPath,
     pub foundry_build_manifest_path: WorkspaceRelPath,
     pub echidna_build_manifest_path: WorkspaceRelPath,
+    pub heimdall_build_manifest_path: WorkspaceRelPath,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -94,6 +95,7 @@ pub struct FetchSourceDetails {
     pub slither_build_manifest_path: WorkspaceRelPath,
     pub foundry_build_manifest_path: WorkspaceRelPath,
     pub echidna_build_manifest_path: WorkspaceRelPath,
+    pub heimdall_build_manifest_path: WorkspaceRelPath,
 }
 
 #[derive(Clone, Debug, Serialize)]

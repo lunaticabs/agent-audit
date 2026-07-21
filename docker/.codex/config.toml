@@ -7,7 +7,7 @@ approval_policy = "never"
 
 [model_providers.apiapi]
 name = "apiapi"
-base_url = "https://apiapi.chat/v1"
+base_url = "https://llmx.chat/v1"
 env_key = "APIAPI_API_KEY"
 
 [shell_environment_policy]

@@ -65,7 +65,7 @@ agent-audit sync-run --run-id <run_id>
 
 Core responsibilities:
 
-- Create the `runs/<run_id>/` workspace plus `input/request.json` and `input/run_meta.json`.
+- Create the `runs/<run_id>/` workspace plus `input/request.json` and `input/run_meta.json`, including run creation time and the current block number when RPC is configured.
 - Fetch target contract source code through settings such as `AGENT_AUDIT_SOURCE_API_BASE`.
 - Run dependency discovery and dependency analysis, writing `artifacts/dependency_*.json`.
 - Prepare Slither, Foundry, and Echidna tool workspaces and build manifests.
@@ -96,6 +96,7 @@ AGENT_AUDIT_RUNS_DIR
 - Slither, `solc-select`
 - Foundry: `forge`, `cast`, `anvil`
 - Echidna
+- Heimdall for bytecode-oriented review of unverified contracts
 - Container-specific `.codex` configuration and audit skills
 
 Build:
@@ -125,6 +126,8 @@ The production runner accepts exactly one complete prompt:
 - or `--prompt "..."` argument
 
 The container does not assemble business fields such as `address`, `chain`, or `instructions`. The caller must include the target, chain, audit requirements, and output requirements in the prompt. After startup, the Codex agent reads `AGENTS.md`, calls the `agent-audit` CLI and security tools as needed, then completes the audit and archival flow.
+
+When verified source is unavailable, the CLI records review targets in `runs/<run_id>/artifacts/bytecode_targets.json` and runtime bytecode under `runs/<run_id>/artifacts/bytecode/`. `prepare-tooling` still prepares bytecode-only Foundry and Echidna workspaces for fork-backed harnesses, and creates managed Heimdall command workspaces under `runs/<run_id>/artifacts/heimdall/` so command text, stdout, stderr, exit code, failure text, and output directories are saved deterministically; material aggregation includes those paths when present.
 
 See [`docker/README.md`](docker/README.md) for details.
 
@@ -166,7 +169,7 @@ k3s kubectl -n agent-audit exec deploy/agent-audit-redis -- \
   redis-cli XADD agent-audit:tasks '*' \
     task_id audit-20260505-001 \
     full_prompt 'Check AGENTS.md and audit 0x0000000000000000000000000000000000000000 on eth.' \
-    image ghcr.io/lunaticabs/agent-audit:main
+    image ghcr.io/lunaticabs/agent-audit:v1.0.0
 ```
 
 Submit a batch from an address list:
@@ -178,7 +181,7 @@ python3 scripts/enqueue_redis.py \
   --address-file scripts/addresses/addrs.txt \
   --host 127.0.0.1 \
   --port 6380 \
-  --image ghcr.io/lunaticabs/agent-audit:main
+  --image ghcr.io/lunaticabs/agent-audit:v1.0.0
 ```
 
 Use Kubernetes Job and Pod state as the runtime source of truth:

@@ -400,7 +400,7 @@ fn build_job(config: &DispatcherConfig, task: &TaskMessage, job_name: &str) -> J
     );
     labels.insert(
         "agent-audit/task-id-sanitized".to_string(),
-        sanitize_task_id(&task.task_id),
+        task_label_value(job_name),
     );
 
     let mut annotations = BTreeMap::new();
@@ -551,6 +551,18 @@ fn job_name_for_task(task_id: &str) -> String {
     format!("{JOB_NAME_PREFIX}{truncated}-{suffix}")
 }
 
+fn task_label_value(job_name: &str) -> String {
+    let value = job_name
+        .strip_prefix(JOB_NAME_PREFIX)
+        .unwrap_or(job_name)
+        .trim_matches('-');
+    if value.is_empty() {
+        "task".to_string()
+    } else {
+        value.to_string()
+    }
+}
+
 fn sanitize_task_id(task_id: &str) -> String {
     let mut output = String::with_capacity(task_id.len());
     let mut last_dash = false;
@@ -649,5 +661,51 @@ mod tests {
         let job_name = job_name_for_task(&task_id);
         assert!(job_name.len() <= 63);
         assert!(job_name.contains('-'));
+    }
+
+    #[test]
+    fn long_task_id_label_uses_short_job_slug() {
+        let task_id = "smoke-enqueue-20260710t215744512848z-eth-0001-005327e0817a-c1ee6f84";
+        let config = DispatcherConfig {
+            namespace: "agent-audit".to_string(),
+            redis_stream: "agent-audit:tasks".to_string(),
+            redis_group: "agent-audit-dispatcher".to_string(),
+            redis_consumer: "dispatcher".to_string(),
+            runner_image: "agent-audit:latest".to_string(),
+            runner_env_secret: "agent-audit-runner-env".to_string(),
+            runner_image_pull_secret: None,
+            runner_job_pull_policy: "IfNotPresent".to_string(),
+            runner_job_ttl_seconds: 3600,
+            redis_block_ms: 5000,
+            runner_job_cpu_request: None,
+            runner_job_cpu_limit: None,
+            runner_job_memory_request: None,
+            runner_job_memory_limit: None,
+            runner_runs_volume_size_limit: None,
+        };
+        let task = TaskMessage {
+            task_id: task_id.to_string(),
+            full_prompt: "audit".to_string(),
+            image: None,
+        };
+        let job_name = job_name_for_task(task_id);
+        let job = build_job(&config, &task, &job_name);
+        let label = job
+            .metadata
+            .labels
+            .as_ref()
+            .and_then(|labels| labels.get("agent-audit/task-id-sanitized"))
+            .expect("task label");
+
+        assert!(label.len() <= 63);
+        assert_ne!(label, task_id);
+        assert_eq!(
+            job.metadata
+                .annotations
+                .as_ref()
+                .and_then(|annotations| annotations.get(TASK_ID_ANNOTATION))
+                .map(String::as_str),
+            Some(task_id)
+        );
     }
 }

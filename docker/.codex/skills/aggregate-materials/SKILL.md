@@ -15,8 +15,11 @@ Inspect first:
 
 - `runs/<run_id>/reports/materials_manifest.json`
 - `runs/<run_id>/artifacts/dependency_findings.json`
+- `runs/<run_id>/artifacts/bytecode_targets.json`
+- `runs/<run_id>/artifacts/heimdall/build_manifest.json`
 
 Notes:
 
 - Repository-side findings, when present, live in `runs/<run_id>/artifacts/dependency_findings.json`.
 - If you save direct tool artifacts under the current `runs/<run_id>/artifacts/`, rerunning this step will surface them in `runs/<run_id>/reports/materials_manifest.json` under optional tool artifacts.
+- Bytecode files under `artifacts/bytecode/` and CLI-managed Heimdall manifests, scripts, logs, and output under `artifacts/heimdall/` are included when present.

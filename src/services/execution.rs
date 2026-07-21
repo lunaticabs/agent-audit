@@ -11,6 +11,7 @@ use crate::models::run::RunRequest;
 use crate::models::step::StepStatus;
 use crate::output::EXIT_OK;
 use crate::services::pipeline::AuditPipelineService;
+use crate::services::rpc::latest_block_number;
 use crate::services::run_sync::sync_run_to_mongo;
 use crate::workspace::{RunGuard, RunWorkspace, load_request_context, paths};
 
@@ -50,8 +51,18 @@ impl ExecutionError {
 
 pub fn execute_init_run(config: &AppConfig, input: InitRunInput) -> ExecutionResult<StepPayload> {
     let InitRunInput { address, chain } = input;
-    let workspace = RunWorkspace::create(&config.project_root, &config.runs_dir, &address, &chain)
-        .map_err(ExecutionError::without_run_id)?;
+    let block_number = config
+        .rpc_url
+        .as_ref()
+        .and_then(|url| latest_block_number(url).ok());
+    let workspace = RunWorkspace::create_with_block_number(
+        &config.project_root,
+        &config.runs_dir,
+        &address,
+        &chain,
+        block_number,
+    )
+    .map_err(ExecutionError::without_run_id)?;
     let run_id = workspace.run_id().clone();
     workspace
         .store()
@@ -225,6 +236,7 @@ impl WorkspaceStep {
                 slither_build_manifest_path: WorkspaceRelPath::new(paths::SLITHER_BUILD_MANIFEST),
                 foundry_build_manifest_path: WorkspaceRelPath::new(paths::FOUNDRY_BUILD_MANIFEST),
                 echidna_build_manifest_path: WorkspaceRelPath::new(paths::ECHIDNA_BUILD_MANIFEST),
+                heimdall_build_manifest_path: WorkspaceRelPath::new(paths::HEIMDALL_BUILD_MANIFEST),
             }),
         )
     }
@@ -358,6 +370,7 @@ fn execute_full_prepare(run: &mut RunExecutionContext) -> AppResult<StepPayload>
             slither_build_manifest_path: WorkspaceRelPath::new(paths::SLITHER_BUILD_MANIFEST),
             foundry_build_manifest_path: WorkspaceRelPath::new(paths::FOUNDRY_BUILD_MANIFEST),
             echidna_build_manifest_path: WorkspaceRelPath::new(paths::ECHIDNA_BUILD_MANIFEST),
+            heimdall_build_manifest_path: WorkspaceRelPath::new(paths::HEIMDALL_BUILD_MANIFEST),
         }),
     )
 }

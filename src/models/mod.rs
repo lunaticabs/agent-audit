@@ -1,4 +1,5 @@
 pub mod artifact;
+pub mod bytecode;
 pub mod command;
 pub mod discovery;
 pub mod envelope;

@@ -36,17 +36,17 @@ The workflow publishes:
 - `ghcr.io/<owner>/agent-audit:<tag>`
 - `ghcr.io/<owner>/agent-audit-dispatcher:<tag>`
 
-The current manifests are wired for your `rebuild` branch tags:
+The current manifests are wired for the `v1.0.0` release tags:
 
-- `ghcr.io/lunaticabs/agent-audit:main`
-- `ghcr.io/lunaticabs/agent-audit-dispatcher:main`
+- `ghcr.io/lunaticabs/agent-audit:v1.0.0`
+- `ghcr.io/lunaticabs/agent-audit-dispatcher:v1.0.0`
 
-Set image addresses in two places before applying if you later switch away from `rebuild`:
+Set image addresses in two places before applying if you later switch away from `v1.0.0`:
 
 - runner image in [runner-configmap.yaml](/Users/lunaticabs/code/agent-audit/k3s/runner-configmap.yaml)
 - dispatcher image in [dispatcher-deployment.yaml](/Users/lunaticabs/code/agent-audit/k3s/dispatcher-deployment.yaml)
 
-These manifests currently use the moving `main` tag with `imagePullPolicy: IfNotPresent`. This avoids repeated registry lookups and reduces node-side image churn. For tighter release control, replace those tags with a concrete `sha-...` tag or image digest.
+These manifests use release tags with `imagePullPolicy: Always` for the dispatcher and runner Jobs. For tighter release control, replace those tags with a concrete `sha-...` tag or image digest.
 
 If you want to check the currently configured image references:
 
@@ -154,7 +154,7 @@ python3 scripts/enqueue_redis.py \
   --address-file scripts/addresses/addrs.txt \
   --host 127.0.0.1 \
   --port 6380 \
-  --image ghcr.io/lunaticabs/agent-audit:main
+  --image ghcr.io/lunaticabs/agent-audit:v1.0.0
 ```
 
 Defaults:

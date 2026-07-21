@@ -13,6 +13,7 @@ pub enum ArtifactStep {
     PrepareToolingWorkspaces,
     PrepareFoundryProject,
     PrepareEchidnaProject,
+    PrepareHeimdallWorkspace,
     AggregateMaterials,
 }
 

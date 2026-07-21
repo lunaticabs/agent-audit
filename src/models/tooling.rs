@@ -1,10 +1,13 @@
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
+use crate::models::bytecode::BytecodeFetchStatus;
 use crate::models::identity::RunId;
+use crate::models::identity::{ChainAlias, EvmAddress};
 use crate::models::path::{RelativePath, WorkspaceRelPath};
 use crate::models::run::RunTarget;
 use crate::models::source::AnalysisTarget;
+use crate::models::source::SourceAvailabilityStatus;
 use crate::models::step::StepStatus;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -33,6 +36,7 @@ pub struct ToolWorkspaceManifestSet {
     pub slither: ToolWorkspaceManifest,
     pub foundry: ToolWorkspaceManifest,
     pub echidna: ToolWorkspaceManifest,
+    pub heimdall: ToolWorkspaceManifest,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -145,6 +149,75 @@ pub struct EchidnaBuildManifest {
     pub preferred_source_root: Option<RelativePath>,
     pub harness_dir: Option<WorkspaceRelPath>,
     pub note: Option<String>,
+}
+
+#[skip_serializing_none]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HeimdallBuildManifest {
+    #[serde(flatten)]
+    pub header: RunArtifactHeader,
+    pub bytecode_targets_path: Option<WorkspaceRelPath>,
+    pub heimdall_root: Option<WorkspaceRelPath>,
+    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
+    pub targets: Vec<HeimdallTargetWorkspace>,
+    pub note: Option<String>,
+}
+
+#[skip_serializing_none]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HeimdallTargetWorkspace {
+    pub address: EvmAddress,
+    pub chain: ChainAlias,
+    pub role: String,
+    pub name: String,
+    pub source_availability: SourceAvailabilityStatus,
+    pub source_unavailable_reason: Option<String>,
+    pub bytecode_status: BytecodeFetchStatus,
+    pub bytecode_artifact: Option<WorkspaceRelPath>,
+    pub target_root: WorkspaceRelPath,
+    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
+    pub commands: Vec<HeimdallCommandWorkspace>,
+    pub note: Option<String>,
+}
+
+#[skip_serializing_none]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HeimdallCommandWorkspace {
+    pub action: HeimdallAction,
+    pub status: StepStatus,
+    pub run_script_path: WorkspaceRelPath,
+    pub command_json_path: WorkspaceRelPath,
+    pub command_text_path: WorkspaceRelPath,
+    pub stdout_path: WorkspaceRelPath,
+    pub stderr_path: WorkspaceRelPath,
+    pub exit_code_path: WorkspaceRelPath,
+    pub failure_path: WorkspaceRelPath,
+    pub output_dir: WorkspaceRelPath,
+    #[serde(skip_serializing_if = "crate::serde_ext::is_empty")]
+    pub command: Vec<String>,
+    pub note: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeimdallAction {
+    #[default]
+    Decompile,
+    Disassemble,
+    Cfg,
+}
+
+impl HeimdallAction {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Decompile => "decompile",
+            Self::Disassemble => "disassemble",
+            Self::Cfg => "cfg",
+        }
+    }
 }
 
 #[skip_serializing_none]

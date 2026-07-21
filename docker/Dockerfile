@@ -1,7 +1,8 @@
 ARG RUST_VERSION=1.88.0
+ARG IMAGE_PLATFORM=linux/amd64
 ARG TOOLBOX_IMAGE=ghcr.io/trailofbits/eth-security-toolbox/ci:nightly-20260406@sha256:d99940538986a8ade09fe82d4dfd2d85ca98e7be9c705704954df482a98e4d38
 
-FROM docker.io/library/ubuntu:22.04 AS builder
+FROM --platform=${IMAGE_PLATFORM} docker.io/library/ubuntu:22.04 AS builder
 
 USER root
 
@@ -29,7 +30,36 @@ COPY xtask ./xtask
 
 RUN cargo build --release --bin agent-audit
 
-FROM ${TOOLBOX_IMAGE} AS runtime
+FROM --platform=${IMAGE_PLATFORM} docker.io/library/ubuntu:22.04 AS heimdall-builder
+
+USER root
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PATH=/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ARG HEIMDALL_REV=13ae7cb02959feca08bcaafb10c9d66a28037f77
+ARG HEIMDALL_RUST_VERSION=1.91.0
+ARG HEIMDALL_CARGO_BUILD_JOBS=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+        git \
+        libssl-dev \
+        pkg-config \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain "${HEIMDALL_RUST_VERSION}"
+
+RUN CARGO_BUILD_JOBS="${HEIMDALL_CARGO_BUILD_JOBS}" cargo install \
+    --git https://github.com/Jon-Becker/heimdall-rs \
+    --rev "${HEIMDALL_REV}" \
+    --locked \
+    heimdall-cli
+
+FROM --platform=${IMAGE_PLATFORM} ${TOOLBOX_IMAGE} AS runtime
 
 USER root
 
@@ -72,13 +102,15 @@ ENV PATH=${CODEX_RUNNER_DIR}/node_modules/.bin:${PATH}
 WORKDIR /opt/agent-audit
 
 COPY --from=builder /build/target/release/agent-audit /usr/local/bin/agent-audit
+COPY --from=heimdall-builder /root/.cargo/bin/heimdall /usr/local/bin/heimdall
 COPY docker/AGENTS.md ./AGENTS.md
-COPY docker/.codex ./.codex
+COPY docker/.codex/config.toml ./codex-config.toml
+COPY docker/.codex/skills ./.codex/skills
 COPY docker/codex-runner/agent-audit-run.mjs ${CODEX_RUNNER_DIR}/agent-audit-run.mjs
 
 RUN chmod +x ${CODEX_RUNNER_DIR}/agent-audit-run.mjs \
     && mkdir -p /root/.codex /opt/agent-audit/runs \
-    && cp /opt/agent-audit/.codex/config.toml /root/.codex/config.toml
+    && cp /opt/agent-audit/codex-config.toml /root/.codex/config.toml
 
 ENTRYPOINT ["node", "/opt/agent-audit/codex-runner/agent-audit-run.mjs"]
 
@@ -95,13 +127,18 @@ RUN bash -lc 'set -euo pipefail \
     && command -v cast \
     && command -v anvil \
     && command -v echidna \
+    && command -v heimdall \
+    && heimdall --help >/dev/null \
     && test -f /opt/agent-audit/codex-runner/agent-audit-run.mjs \
     && test -d /opt/agent-audit/codex-runner/node_modules/@openai/codex-sdk \
     && node /opt/agent-audit/codex-runner/agent-audit-run.mjs --help >/dev/null \
     && test -f /opt/agent-audit/AGENTS.md \
-    && test -f /opt/agent-audit/.codex/config.toml \
+    && test ! -f /opt/agent-audit/.codex/config.toml \
+    && test -f /opt/agent-audit/codex-config.toml \
+    && test -f /root/.codex/config.toml \
     && test -f /opt/agent-audit/.codex/skills/workspace/SKILL.md \
-    && grep -q "^model_provider = \"apiapi\"$" /opt/agent-audit/.codex/config.toml \
-    && grep -q "^approval_policy = \"never\"$" /opt/agent-audit/.codex/config.toml'
+    && test -f /opt/agent-audit/.codex/skills/closed-source-evm/SKILL.md \
+    && grep -q "^model_provider = \"apiapi\"$" /root/.codex/config.toml \
+    && grep -q "^approval_policy = \"never\"$" /root/.codex/config.toml'
 
 FROM runtime AS final

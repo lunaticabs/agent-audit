@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -6,13 +7,15 @@ use serde_json::Value;
 
 use crate::error::AppResult;
 use crate::models::artifact::{ArtifactKind, ArtifactStatus, ArtifactStep};
+use crate::models::bytecode::{BytecodeAuditTarget, BytecodeTargetsArtifact};
 use crate::models::identity::{ChainAlias, EvmAddress, RunId};
 use crate::models::path::{RelativePath, WorkspaceRelPath};
 use crate::models::run::RunTarget;
 use crate::models::source::{SourceBundleArtifact, SourceMetadata};
 use crate::models::step::StepStatus;
 use crate::models::tooling::{
-    EchidnaBuildManifest, FoundryBuildManifest, NodeModuleLink, RunArtifactHeader,
+    EchidnaBuildManifest, FoundryBuildManifest, HeimdallAction, HeimdallBuildManifest,
+    HeimdallCommandWorkspace, HeimdallTargetWorkspace, NodeModuleLink, RunArtifactHeader,
     SlitherBuildManifest, SlitherInputsArtifact, SolcSelectStatus, SourceLink, SourceLinkKind,
     ToolCommandStatus, ToolWorkspaceManifest, ToolWorkspaceManifestSet, ToolingManifest,
 };
@@ -27,6 +30,8 @@ use super::support::{
     format_path_for_json, path_parent, recreate_dir, recreate_symlink, render_line_list,
 };
 
+const HEIMDALL_ROOT: &str = "artifacts/heimdall";
+
 impl AuditPipelineService {
     pub fn prepare_slither_project(
         &mut self,
@@ -36,16 +41,20 @@ impl AuditPipelineService {
         let slither_root = self.workspace.root().join("slither_project");
         let bundle_payload = self.load_source_bundle_payload()?;
         if !bundle_payload.is_fetched() {
+            let (status, note, summary) = source_unavailable_tooling_precondition(
+                &bundle_payload,
+                "Slither",
+                "Skipped Slither project preparation because source fetching did not complete.",
+            );
             return self.prepare_slither_precondition(
                 address,
                 chain,
                 &slither_root,
                 PreconditionSpec {
-                    status: StepStatus::SourceNotFetched,
-                    note: "Fetch verified source before preparing a Slither project.",
+                    status,
+                    note,
                     artifact_status: StepStatus::ConfiguredNotExecuted,
-                    summary:
-                        "Skipped Slither project preparation because source fetching did not complete.",
+                    summary,
                 },
             );
         }
@@ -187,11 +196,17 @@ impl AuditPipelineService {
         let slither_status = self.prepare_slither_project(address, chain)?;
         let foundry_status = self.prepare_foundry_project(address, chain, &bundle_payload)?;
         let echidna_status = self.prepare_echidna_project(address, chain, &bundle_payload)?;
+        let heimdall_status = self.prepare_heimdall_workspace(
+            address,
+            chain,
+            bundle_payload.is_fetched() || bundle_payload.is_source_unavailable(),
+        )?;
         let status = aggregate_tooling_status(
             source_status,
             slither_status,
             foundry_status,
             echidna_status,
+            heimdall_status,
         );
         let manifest_path = self.workspace.store().write_json(
             paths::TOOLING_MANIFEST,
@@ -211,6 +226,10 @@ impl AuditPipelineService {
                         status: echidna_status,
                         manifest_path: WorkspaceRelPath::new(paths::ECHIDNA_BUILD_MANIFEST),
                     },
+                    heimdall: ToolWorkspaceManifest {
+                        status: heimdall_status,
+                        manifest_path: WorkspaceRelPath::new(paths::HEIMDALL_BUILD_MANIFEST),
+                    },
                 },
             },
         )?;
@@ -222,6 +241,113 @@ impl AuditPipelineService {
             "Prepared standard working directories for supported analysis tools.",
         );
         Ok(status)
+    }
+
+    fn prepare_heimdall_workspace(
+        &mut self,
+        address: &EvmAddress,
+        chain: &ChainAlias,
+        source_material_ready: bool,
+    ) -> AppResult<StepStatus> {
+        let targets_path = self.workspace.paths().resolve(paths::BYTECODE_TARGETS);
+        let targets_exist = targets_path.exists();
+        let bytecode_targets: BytecodeTargetsArtifact =
+            super::support::read_json_if_exists(&targets_path)?;
+        fs::create_dir_all(self.workspace.root().join(HEIMDALL_ROOT))?;
+
+        let mut target_workspaces = Vec::new();
+        let command_status = if bytecode_targets.rpc_url_configured {
+            StepStatus::Prepared
+        } else {
+            StepStatus::ConfiguredNotExecuted
+        };
+        for target in &bytecode_targets.targets {
+            let target_root = heimdall_target_root(&target.chain, &target.address);
+            fs::create_dir_all(self.workspace.root().join(target_root.as_str()))?;
+            let mut commands = Vec::new();
+            for action in [
+                HeimdallAction::Decompile,
+                HeimdallAction::Disassemble,
+                HeimdallAction::Cfg,
+            ] {
+                let command = heimdall_command_workspace(target, action, command_status);
+                self.write_heimdall_command_files(&command)?;
+                commands.push(command);
+            }
+            target_workspaces.push(HeimdallTargetWorkspace {
+                address: target.address.clone(),
+                chain: target.chain.clone(),
+                role: target.role.clone(),
+                name: target.name.clone(),
+                source_availability: target.source_availability,
+                source_unavailable_reason: target.source_unavailable_reason.clone(),
+                bytecode_status: target.bytecode_status,
+                bytecode_artifact: target.bytecode_artifact.clone(),
+                target_root,
+                commands,
+                note: if bytecode_targets.rpc_url_configured {
+                    None
+                } else {
+                    Some(
+                        "AGENT_AUDIT_RPC_URL is required before running prepared Heimdall commands."
+                            .to_string(),
+                    )
+                },
+            });
+        }
+
+        let status =
+            heimdall_workspace_status(&bytecode_targets, targets_exist, source_material_ready);
+        let note = heimdall_workspace_note(&bytecode_targets, targets_exist, source_material_ready);
+        let manifest_path = self.workspace.store().write_json(
+            paths::HEIMDALL_BUILD_MANIFEST,
+            &HeimdallBuildManifest {
+                header: build_header(address, chain, self.workspace.run_id(), status),
+                bytecode_targets_path: targets_exist
+                    .then(|| WorkspaceRelPath::new(paths::BYTECODE_TARGETS)),
+                heimdall_root: Some(WorkspaceRelPath::new(HEIMDALL_ROOT)),
+                targets: target_workspaces,
+                note,
+            },
+        )?;
+        self.record(
+            ArtifactStep::PrepareHeimdallWorkspace,
+            &manifest_path,
+            ArtifactKind::Prep,
+            status,
+            "Prepared Heimdall command workspaces for bytecode audit targets.",
+        );
+        Ok(status)
+    }
+
+    fn write_heimdall_command_files(
+        &mut self,
+        command: &HeimdallCommandWorkspace,
+    ) -> AppResult<()> {
+        self.workspace
+            .store()
+            .write_json(command.command_json_path.as_str(), command)?;
+        self.workspace.store().write_text(
+            command.command_text_path.as_str(),
+            &heimdall_command_text(command),
+        )?;
+        self.workspace.store().write_text(
+            command.run_script_path.as_str(),
+            &render_heimdall_run_script(command),
+        )?;
+        set_executable(
+            self.workspace
+                .paths()
+                .resolve(command.run_script_path.as_str()),
+        )?;
+        self.record(
+            ArtifactStep::PrepareHeimdallWorkspace,
+            &command.run_script_path,
+            ArtifactKind::Prep,
+            command.status,
+            "Prepared a Heimdall command runner that captures stdout, stderr, exit code, and failure text.",
+        );
+        Ok(())
     }
 
     fn link_slither_source_entries(
@@ -309,16 +435,23 @@ impl AuditPipelineService {
     ) -> AppResult<StepStatus> {
         let foundry_root = self.workspace.root().join("foundry_project");
         if !bundle_payload.is_fetched() {
+            if bundle_payload.is_source_unavailable() {
+                return self.prepare_closed_source_foundry_project(address, chain, &foundry_root);
+            }
+            let (status, note, summary) = source_unavailable_tooling_precondition(
+                bundle_payload,
+                "Foundry",
+                "Skipped Foundry project preparation because source fetching did not complete.",
+            );
             return self.prepare_foundry_precondition(
                 address,
                 chain,
                 &foundry_root,
                 PreconditionSpec {
-                    status: StepStatus::SourceNotFetched,
-                    note: "Fetch verified source before preparing a Foundry project.",
+                    status,
+                    note,
                     artifact_status: StepStatus::ConfiguredNotExecuted,
-                    summary:
-                        "Skipped Foundry project preparation because source fetching did not complete.",
+                    summary,
                 },
             );
         }
@@ -424,6 +557,77 @@ impl AuditPipelineService {
         Ok(StepStatus::Prepared)
     }
 
+    fn prepare_closed_source_foundry_project(
+        &mut self,
+        address: &EvmAddress,
+        chain: &ChainAlias,
+        foundry_root: &Path,
+    ) -> AppResult<StepStatus> {
+        recreate_dir(foundry_root)?;
+        self.workspace
+            .store()
+            .write_text("foundry_project/src/.gitkeep", "")?;
+        self.workspace
+            .store()
+            .write_text("foundry_project/test/.gitkeep", "")?;
+        self.workspace
+            .store()
+            .write_text("foundry_project/script/.gitkeep", "")?;
+        self.workspace
+            .store()
+            .write_text("foundry_project/lib/.gitkeep", "")?;
+        self.workspace
+            .store()
+            .write_text("foundry_project/node_modules/.gitkeep", "")?;
+        let remappings_path = self
+            .workspace
+            .store()
+            .write_text("foundry_project/remappings.txt", "")?;
+        let foundry_toml_path = self.workspace.store().write_text(
+            "foundry_project/foundry.toml",
+            &render_closed_source_foundry_toml(),
+        )?;
+        self.record(
+            ArtifactStep::PrepareFoundryProject,
+            &remappings_path,
+            ArtifactKind::Prep,
+            ArtifactStatus::Executed,
+            "Prepared empty Foundry remappings for bytecode-only audit work.",
+        );
+        self.record(
+            ArtifactStep::PrepareFoundryProject,
+            &foundry_toml_path,
+            ArtifactKind::Prep,
+            ArtifactStatus::Executed,
+            "Prepared a bytecode-only Foundry config.",
+        );
+        let manifest_path = self.workspace.store().write_json(
+            paths::FOUNDRY_BUILD_MANIFEST,
+            &FoundryBuildManifest {
+                header: build_header(address, chain, self.workspace.run_id(), StepStatus::Prepared),
+                project_root: Some(WorkspaceRelPath::new("foundry_project")),
+                remappings_path: Some(remappings_path),
+                foundry_toml_path: Some(foundry_toml_path),
+                preferred_working_dir: Some(WorkspaceRelPath::new("foundry_project")),
+                test_dir: Some(WorkspaceRelPath::new("foundry_project/test")),
+                script_dir: Some(WorkspaceRelPath::new("foundry_project/script")),
+                note: Some(
+                    "Verified source is unavailable; this is a bytecode-only Foundry scaffold for fork tests, low-level-call harnesses, and economic fuzzing."
+                        .to_string(),
+                ),
+                ..FoundryBuildManifest::default()
+            },
+        )?;
+        self.record(
+            ArtifactStep::PrepareFoundryProject,
+            &manifest_path,
+            ArtifactKind::Prep,
+            ArtifactStatus::Executed,
+            "Prepared a bytecode-only Foundry project manifest.",
+        );
+        Ok(StepStatus::Prepared)
+    }
+
     fn prepare_foundry_precondition(
         &mut self,
         address: &EvmAddress,
@@ -458,16 +662,23 @@ impl AuditPipelineService {
     ) -> AppResult<StepStatus> {
         let echidna_root = self.workspace.root().join("echidna_project");
         if !bundle_payload.is_fetched() {
+            if bundle_payload.is_source_unavailable() {
+                return self.prepare_closed_source_echidna_project(address, chain, &echidna_root);
+            }
+            let (status, note, summary) = source_unavailable_tooling_precondition(
+                bundle_payload,
+                "Echidna",
+                "Skipped Echidna project preparation because source fetching did not complete.",
+            );
             return self.prepare_echidna_precondition(
                 address,
                 chain,
                 &echidna_root,
                 PreconditionSpec {
-                    status: StepStatus::SourceNotFetched,
-                    note: "Fetch verified source before preparing an Echidna project.",
+                    status,
+                    note,
                     artifact_status: StepStatus::ConfiguredNotExecuted,
-                    summary:
-                        "Skipped Echidna project preparation because source fetching did not complete.",
+                    summary,
                 },
             );
         }
@@ -557,6 +768,58 @@ impl AuditPipelineService {
         Ok(StepStatus::Prepared)
     }
 
+    fn prepare_closed_source_echidna_project(
+        &mut self,
+        address: &EvmAddress,
+        chain: &ChainAlias,
+        echidna_root: &Path,
+    ) -> AppResult<StepStatus> {
+        recreate_dir(echidna_root)?;
+        self.workspace
+            .store()
+            .write_text("echidna_project/src/.gitkeep", "")?;
+        self.workspace
+            .store()
+            .write_text("echidna_project/test/.gitkeep", "")?;
+        self.workspace
+            .store()
+            .write_text("echidna_project/lib/.gitkeep", "")?;
+        let config_path = self.workspace.store().write_text(
+            "echidna_project/echidna.yaml",
+            &render_closed_source_echidna_yaml(),
+        )?;
+        self.record(
+            ArtifactStep::PrepareEchidnaProject,
+            &config_path,
+            ArtifactKind::Prep,
+            ArtifactStatus::Executed,
+            "Prepared a bytecode-only Echidna config scaffold.",
+        );
+        let manifest_path = self.workspace.store().write_json(
+            paths::ECHIDNA_BUILD_MANIFEST,
+            &EchidnaBuildManifest {
+                header: build_header(address, chain, self.workspace.run_id(), StepStatus::Prepared),
+                project_root: Some(WorkspaceRelPath::new("echidna_project")),
+                config_path: Some(config_path),
+                preferred_working_dir: Some(WorkspaceRelPath::new("echidna_project")),
+                harness_dir: Some(WorkspaceRelPath::new("echidna_project/test")),
+                note: Some(
+                    "Verified source is unavailable; this is a bytecode-only Echidna scaffold for fork-backed property harnesses and economic fuzzing."
+                        .to_string(),
+                ),
+                ..EchidnaBuildManifest::default()
+            },
+        )?;
+        self.record(
+            ArtifactStep::PrepareEchidnaProject,
+            &manifest_path,
+            ArtifactKind::Prep,
+            ArtifactStatus::Executed,
+            "Prepared a bytecode-only Echidna project manifest.",
+        );
+        Ok(StepStatus::Prepared)
+    }
+
     fn prepare_echidna_precondition(
         &mut self,
         address: &EvmAddress,
@@ -637,6 +900,238 @@ impl AuditPipelineService {
     }
 }
 
+fn heimdall_target_root(chain: &ChainAlias, address: &EvmAddress) -> WorkspaceRelPath {
+    WorkspaceRelPath::new(format!(
+        "{}/{}/{}",
+        HEIMDALL_ROOT,
+        chain.as_str(),
+        address.as_lowercase()
+    ))
+}
+
+fn heimdall_command_workspace(
+    target: &BytecodeAuditTarget,
+    action: HeimdallAction,
+    status: StepStatus,
+) -> HeimdallCommandWorkspace {
+    let action_root = WorkspaceRelPath::new(format!(
+        "{}/{}/{}/{}",
+        HEIMDALL_ROOT,
+        target.chain.as_str(),
+        target.address.as_lowercase(),
+        action.as_str()
+    ));
+    let output_dir = action_root.join("output");
+    let command = heimdall_command_vector(target, action, &output_dir);
+    HeimdallCommandWorkspace {
+        action,
+        status,
+        run_script_path: action_root.join("run.sh"),
+        command_json_path: action_root.join("command.json"),
+        command_text_path: action_root.join("command.txt"),
+        stdout_path: action_root.join("stdout.txt"),
+        stderr_path: action_root.join("stderr.txt"),
+        exit_code_path: action_root.join("exit_code.txt"),
+        failure_path: action_root.join("failure.txt"),
+        output_dir,
+        command,
+        note: if status == StepStatus::Prepared {
+            None
+        } else {
+            Some("AGENT_AUDIT_RPC_URL must be configured before this command can run.".to_string())
+        },
+    }
+}
+
+fn heimdall_command_vector(
+    target: &BytecodeAuditTarget,
+    action: HeimdallAction,
+    output_dir: &WorkspaceRelPath,
+) -> Vec<String> {
+    let mut command = vec![
+        "heimdall".to_string(),
+        action.as_str().to_string(),
+        target.address.to_string(),
+        "--rpc-url".to_string(),
+        "$AGENT_AUDIT_RPC_URL".to_string(),
+    ];
+    if action == HeimdallAction::Decompile {
+        command.extend(["--default".to_string(), "--include-yul".to_string()]);
+    }
+    command.extend(["--output".to_string(), output_dir.to_string()]);
+    if action == HeimdallAction::Decompile {
+        command.extend([
+            "--name".to_string(),
+            heimdall_target_name(&target.role, &target.name),
+        ]);
+    }
+    command
+}
+
+fn heimdall_target_name(role: &str, name: &str) -> String {
+    if !role.trim().is_empty() {
+        role.to_string()
+    } else if !name.trim().is_empty() {
+        name.to_string()
+    } else {
+        "target".to_string()
+    }
+}
+
+fn heimdall_workspace_status(
+    targets: &BytecodeTargetsArtifact,
+    targets_exist: bool,
+    source_material_ready: bool,
+) -> StepStatus {
+    if !targets_exist {
+        return if source_material_ready {
+            StepStatus::Prepared
+        } else {
+            StepStatus::SourceNotFetched
+        };
+    }
+    if targets.targets.is_empty() {
+        return StepStatus::Prepared;
+    }
+    if targets.rpc_url_configured {
+        StepStatus::Prepared
+    } else {
+        StepStatus::ConfiguredNotExecuted
+    }
+}
+
+fn heimdall_workspace_note(
+    targets: &BytecodeTargetsArtifact,
+    targets_exist: bool,
+    source_material_ready: bool,
+) -> Option<String> {
+    if !targets_exist {
+        return Some(if source_material_ready {
+            "No bytecode target artifact was found; no Heimdall workspace is required for this run."
+                .to_string()
+        } else {
+            "Fetch source before preparing Heimdall workspaces; artifacts/bytecode_targets.json is missing."
+                .to_string()
+        });
+    }
+    if targets.targets.is_empty() {
+        return Some("No source-unavailable bytecode audit targets were identified.".to_string());
+    }
+    if !targets.rpc_url_configured {
+        return Some(
+            "AGENT_AUDIT_RPC_URL is not configured; Heimdall command workspaces were written but cannot run yet."
+                .to_string(),
+        );
+    }
+    None
+}
+
+fn render_heimdall_run_script(command: &HeimdallCommandWorkspace) -> String {
+    let command_line = heimdall_shell_command(command);
+    let command_text = heimdall_command_text(command);
+    format!(
+        r#"#!/usr/bin/env bash
+set -u
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+RUN_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../../../../.." && pwd)
+cd "$RUN_ROOT"
+
+mkdir -p {output_dir}
+: > {stdout_path}
+: > {stderr_path}
+rm -f {failure_path}
+
+if [ -z "${{AGENT_AUDIT_RPC_URL:-}}" ]; then
+  printf '%s\n' 'AGENT_AUDIT_RPC_URL is not configured.' > {stderr_path}
+  printf '%s\n' '2' > {exit_code_path}
+  printf '%s\n' 'AGENT_AUDIT_RPC_URL is not configured.' > {failure_path}
+  exit 2
+fi
+
+printf '%s\n' {command_text} > {command_text_path}
+{command_line} > {stdout_path} 2> {stderr_path}
+status=$?
+printf '%s\n' "$status" > {exit_code_path}
+if [ "$status" -ne 0 ]; then
+  printf 'heimdall {action} failed with exit code %s\n' "$status" > {failure_path}
+else
+  rm -f {failure_path}
+fi
+exit "$status"
+"#,
+        output_dir = shell_quote(command.output_dir.as_str()),
+        stdout_path = shell_quote(command.stdout_path.as_str()),
+        stderr_path = shell_quote(command.stderr_path.as_str()),
+        exit_code_path = shell_quote(command.exit_code_path.as_str()),
+        failure_path = shell_quote(command.failure_path.as_str()),
+        command_text_path = shell_quote(command.command_text_path.as_str()),
+        command_text = shell_quote(&command_text),
+        command_line = command_line,
+        action = command.action.as_str(),
+    )
+}
+
+fn heimdall_shell_command(command: &HeimdallCommandWorkspace) -> String {
+    let address = command
+        .command
+        .get(2)
+        .map(String::as_str)
+        .unwrap_or_default();
+    let mut line = format!(
+        "heimdall {} {} --rpc-url \"$AGENT_AUDIT_RPC_URL\"",
+        command.action.as_str(),
+        shell_quote(address)
+    );
+    if command.action == HeimdallAction::Decompile {
+        line.push_str(" --default --include-yul");
+    }
+    line.push_str(&format!(
+        " --output {}",
+        shell_quote(command.output_dir.as_str())
+    ));
+    if command.action == HeimdallAction::Decompile
+        && let Some(name) = command.command.last()
+    {
+        line.push_str(&format!(" --name {}", shell_quote(name)));
+    }
+    line
+}
+
+fn heimdall_command_text(command: &HeimdallCommandWorkspace) -> String {
+    command
+        .command
+        .iter()
+        .map(|arg| {
+            if arg == "$AGENT_AUDIT_RPC_URL" {
+                "\"$AGENT_AUDIT_RPC_URL\"".to_string()
+            } else {
+                shell_quote(arg)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn set_executable(path: PathBuf) -> AppResult<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&path)?.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions)?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+    Ok(())
+}
+
 #[derive(Clone)]
 struct SlitherSettings {
     target_path: RelativePath,
@@ -673,6 +1168,42 @@ struct PreconditionSpec<'a> {
     summary: &'a str,
 }
 
+fn source_unavailable_tooling_precondition<'a>(
+    bundle_payload: &SourceBundleArtifact,
+    tool_name: &'a str,
+    default_summary: &'a str,
+) -> (StepStatus, &'a str, &'a str) {
+    if bundle_payload.is_source_unavailable() {
+        (
+            StepStatus::SourceUnavailable,
+            "Verified source is unavailable; Solidity project preparation is skipped. Use artifacts/bytecode_targets.json for bytecode review.",
+            match tool_name {
+                "Slither" => {
+                    "Skipped Slither project preparation because verified source is unavailable."
+                }
+                "Foundry" => {
+                    "Skipped Foundry project preparation because verified source is unavailable."
+                }
+                "Echidna" => {
+                    "Skipped Echidna project preparation because verified source is unavailable."
+                }
+                _ => "Skipped Solidity project preparation because verified source is unavailable.",
+            },
+        )
+    } else {
+        (
+            StepStatus::SourceNotFetched,
+            match tool_name {
+                "Slither" => "Fetch verified source before preparing a Slither project.",
+                "Foundry" => "Fetch verified source before preparing a Foundry project.",
+                "Echidna" => "Fetch verified source before preparing an Echidna project.",
+                _ => "Fetch verified source before preparing a Solidity project.",
+            },
+            default_summary,
+        )
+    }
+}
+
 fn build_header(
     address: &EvmAddress,
     chain: &ChainAlias,
@@ -699,11 +1230,17 @@ fn aggregate_tooling_status(
     slither_status: StepStatus,
     foundry_status: StepStatus,
     echidna_status: StepStatus,
+    heimdall_status: StepStatus,
 ) -> StepStatus {
     if source_status != StepStatus::SourceFetched {
         return source_status;
     }
-    for status in [slither_status, foundry_status, echidna_status] {
+    for status in [
+        slither_status,
+        foundry_status,
+        echidna_status,
+        heimdall_status,
+    ] {
         if status != StepStatus::Prepared {
             return status;
         }
@@ -925,6 +1462,22 @@ fn render_foundry_toml(settings: &ToolProjectSettings, remappings: &[String]) ->
     lines.join("\n")
 }
 
+fn render_closed_source_foundry_toml() -> String {
+    [
+        "[profile.default]",
+        "src = \"src\"",
+        "test = \"test\"",
+        "script = \"script\"",
+        "out = \"out\"",
+        "libs = [\"lib\", \"node_modules\"]",
+        "optimizer = false",
+        "optimizer_runs = 200",
+        "fs_permissions = [{ access = \"read-write\", path = \"../artifacts\" }]",
+        "",
+    ]
+    .join("\n")
+}
+
 fn render_echidna_yaml(settings: &ToolProjectSettings) -> String {
     let mut lines = vec![
         "testMode: \"property\"".to_string(),
@@ -936,6 +1489,19 @@ fn render_echidna_yaml(settings: &ToolProjectSettings) -> String {
     lines.push(format!("prefix: \"{}\"", settings.prepared_target));
     lines.push(String::new());
     lines.join("\n")
+}
+
+fn render_closed_source_echidna_yaml() -> String {
+    [
+        "testMode: \"property\"",
+        "format: \"text\"",
+        "corpusDir: \"corpus\"",
+        "srcDir: \"src\"",
+        "testDir: \"test\"",
+        "prefix: \"echidna_\"",
+        "",
+    ]
+    .join("\n")
 }
 
 fn slither_source_root_for_target(
@@ -1122,6 +1688,35 @@ fn split_versioned_package_name(name: &str) -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::bytecode::{BytecodeAuditTarget, BytecodeFetchStatus};
+    use crate::models::identity::RunId;
+    use crate::models::run::RunTarget;
+    use crate::models::source::SourceAvailabilityStatus;
+    use crate::workspace::RunWorkspace;
+    use tempfile::TempDir;
+
+    fn test_workspace() -> (TempDir, RunWorkspace, RunTarget) {
+        let temp = TempDir::new().expect("temp dir");
+        std::fs::write(
+            temp.path().join(".env"),
+            "AGENT_AUDIT_DEFAULT_CHAIN=eth\nAGENT_AUDIT_RUNS_DIR=runs\n",
+        )
+        .expect("write env");
+        let target = RunTarget::new(
+            EvmAddress::new("0x1234567890abcdef1234567890abcdef12345678").expect("address"),
+            ChainAlias::new("eth").expect("chain"),
+        );
+        let workspace = RunWorkspace::create_at_root_with_block_number(
+            temp.path(),
+            &temp.path().join("runs/run-1"),
+            &RunId::new("run-1").expect("run id"),
+            &target.address,
+            &target.chain,
+            None,
+        )
+        .expect("workspace");
+        (temp, workspace, target)
+    }
 
     #[test]
     fn aggregate_tooling_status_returns_first_tooling_failure() {
@@ -1129,6 +1724,7 @@ mod tests {
             StepStatus::SourceFetched,
             StepStatus::Prepared,
             StepStatus::SourceFilesMissing,
+            StepStatus::Prepared,
             StepStatus::Prepared,
         );
 
@@ -1142,8 +1738,175 @@ mod tests {
             StepStatus::Prepared,
             StepStatus::Prepared,
             StepStatus::Prepared,
+            StepStatus::Prepared,
         );
 
         assert_eq!(status, StepStatus::SourceApiNotConfigured);
+    }
+
+    #[test]
+    fn prepare_tooling_creates_managed_heimdall_workspace() {
+        let (_temp, workspace, target) = test_workspace();
+        workspace
+            .store()
+            .write_json(
+                paths::SOURCE_BUNDLE,
+                &SourceBundleArtifact {
+                    target: target.clone(),
+                    status: StepStatus::SourceUnavailable,
+                    source_availability: SourceAvailabilityStatus::Unavailable,
+                    source_unavailable_reason: Some("not verified".into()),
+                    ..SourceBundleArtifact::default()
+                },
+            )
+            .expect("source bundle");
+        workspace
+            .store()
+            .write_json(
+                paths::BYTECODE_TARGETS,
+                &BytecodeTargetsArtifact::new(
+                    target.clone(),
+                    true,
+                    vec![BytecodeAuditTarget {
+                        address: target.address.clone(),
+                        chain: target.chain.clone(),
+                        role: "target".into(),
+                        name: "target".into(),
+                        source_availability: SourceAvailabilityStatus::Unavailable,
+                        source_unavailable_reason: Some("not verified".into()),
+                        origin: "source_provider_unavailable".into(),
+                        bytecode_status: BytecodeFetchStatus::Fetched,
+                        bytecode_artifact: Some(WorkspaceRelPath::new(
+                            "artifacts/bytecode/eth/0x1234567890abcdef1234567890abcdef12345678.hex",
+                        )),
+                        ..BytecodeAuditTarget::default()
+                    }],
+                ),
+            )
+            .expect("bytecode targets");
+        let config = crate::config::AppConfig {
+            project_root: workspace.project_root.clone(),
+            runs_dir: workspace.project_root.join("runs"),
+            default_chain: target.chain.clone(),
+            source_api_base: None,
+            source_api_key: None,
+            source_api_headers: std::collections::BTreeMap::new(),
+            rpc_url: None,
+            mongo_uri: None,
+            mongo_db: "agent_audit".to_string(),
+            mongo_runs_meta_collection: "runs_meta".to_string(),
+            mongo_runs_files_collection: "runs_files".to_string(),
+            mongo_max_inline_file_bytes: 8 * 1024 * 1024,
+        };
+        let mut service = AuditPipelineService::new(config, workspace);
+
+        let status = service
+            .prepare_tooling_workspaces(&target.address, &target.chain)
+            .expect("prepare tooling");
+
+        assert_eq!(status, StepStatus::SourceUnavailable);
+        let foundry_manifest: FoundryBuildManifest = super::super::support::read_json_if_exists(
+            &service
+                .workspace
+                .paths()
+                .resolve(paths::FOUNDRY_BUILD_MANIFEST),
+        )
+        .expect("foundry manifest");
+        assert_eq!(foundry_manifest.header.status, StepStatus::Prepared);
+        assert_eq!(
+            foundry_manifest.preferred_working_dir,
+            Some(WorkspaceRelPath::new("foundry_project"))
+        );
+        assert_eq!(
+            foundry_manifest.foundry_toml_path,
+            Some(WorkspaceRelPath::new("foundry_project/foundry.toml"))
+        );
+        assert!(
+            service
+                .workspace
+                .paths()
+                .resolve("foundry_project/foundry.toml")
+                .exists()
+        );
+
+        let echidna_manifest: EchidnaBuildManifest = super::super::support::read_json_if_exists(
+            &service
+                .workspace
+                .paths()
+                .resolve(paths::ECHIDNA_BUILD_MANIFEST),
+        )
+        .expect("echidna manifest");
+        assert_eq!(echidna_manifest.header.status, StepStatus::Prepared);
+        assert_eq!(
+            echidna_manifest.preferred_working_dir,
+            Some(WorkspaceRelPath::new("echidna_project"))
+        );
+        assert_eq!(
+            echidna_manifest.config_path,
+            Some(WorkspaceRelPath::new("echidna_project/echidna.yaml"))
+        );
+        assert!(
+            service
+                .workspace
+                .paths()
+                .resolve("echidna_project/echidna.yaml")
+                .exists()
+        );
+
+        let manifest: HeimdallBuildManifest = super::super::support::read_json_if_exists(
+            &service
+                .workspace
+                .paths()
+                .resolve(paths::HEIMDALL_BUILD_MANIFEST),
+        )
+        .expect("heimdall manifest");
+        assert_eq!(manifest.header.status, StepStatus::Prepared);
+        assert_eq!(manifest.targets.len(), 1);
+        let target_manifest = &manifest.targets[0];
+        assert_eq!(target_manifest.commands.len(), 3);
+        let decompile = target_manifest
+            .commands
+            .iter()
+            .find(|command| command.action == HeimdallAction::Decompile)
+            .expect("decompile command");
+        assert_eq!(decompile.status, StepStatus::Prepared);
+        assert!(
+            decompile
+                .command
+                .iter()
+                .any(|arg| arg == "$AGENT_AUDIT_RPC_URL")
+        );
+        assert!(decompile.command.iter().any(|arg| arg == "--include-yul"));
+        assert!(!decompile.command.iter().any(|arg| arg == "--include-sol"));
+
+        let run_script_path = service
+            .workspace
+            .paths()
+            .resolve(decompile.run_script_path.as_str());
+        let command_json_path = service
+            .workspace
+            .paths()
+            .resolve(decompile.command_json_path.as_str());
+        assert!(run_script_path.exists());
+        assert!(command_json_path.exists());
+        let script = std::fs::read_to_string(run_script_path).expect("read run script");
+        assert!(script.contains("stdout.txt"));
+        assert!(script.contains("exit_code.txt"));
+        assert!(script.contains("AGENT_AUDIT_RPC_URL"));
+        assert!(script.contains("--include-yul"));
+        assert!(!script.contains("--include-sol --include-yul"));
+
+        let tooling_manifest: ToolingManifest = super::super::support::read_json_if_exists(
+            &service.workspace.paths().resolve(paths::TOOLING_MANIFEST),
+        )
+        .expect("tooling manifest");
+        assert_eq!(
+            tooling_manifest.workspaces.heimdall.status,
+            StepStatus::Prepared
+        );
+        assert_eq!(
+            tooling_manifest.workspaces.heimdall.manifest_path.as_str(),
+            paths::HEIMDALL_BUILD_MANIFEST
+        );
     }
 }

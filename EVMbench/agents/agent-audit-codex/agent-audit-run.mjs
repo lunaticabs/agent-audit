@@ -437,6 +437,12 @@ function isRecoverableStreamError(event) {
   return /^Reconnecting\.\.\. \d+\/\d+ \(/.test(message);
 }
 
+function isModelMetadataFallbackWarning(message) {
+  return /^Model metadata for `[^`]+` not found\. Defaulting to fallback metadata; this can degrade performance and cause issues\.$/.test(
+    message,
+  );
+}
+
 function extractCompletedResponse(event) {
   if (typeof event?.finalResponse === "string" && event.finalResponse.trim() !== "") {
     return event.finalResponse;
@@ -533,7 +539,12 @@ async function runAudit(args) {
           writeTextBlock("Assistant Output", text);
         }
       } else if (event.item?.type === "error") {
-        throw new Error(extractFailureMessage(event) || "Codex reported an item error");
+        const message = extractFailureMessage(event) || "";
+        if (isModelMetadataFallbackWarning(message)) {
+          infoLog("sdk model metadata fallback", { message });
+          continue;
+        }
+        throw new Error(message || "Codex reported an item error");
       }
     } else if (event.type === "turn.completed") {
       const completedResponse = extractCompletedResponse(event);
