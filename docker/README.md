@@ -25,7 +25,7 @@ Run:
 ./docker/run.sh --prompt "Check AGENTS.md and audit 0x0000000000000000000000000000000000000000 on eth."
 ```
 
-`docker/run.sh` expects the repository-local `.env` to exist and mounts it read-only as `/opt/agent-audit/.env`. Put both `OPENROUTER_KIMI_K3_API_KEY` and the required `AGENT_AUDIT_*` settings there so the packaged Codex SDK entrypoint and the bundled CLI share one configuration source. The packaged Codex config uses OpenRouter with `moonshotai/kimi-k3`, max reasoning effort, and Kimi K3's 1,048,576-token context window.
+`docker/run.sh` expects the repository-local `.env` to exist and mounts it read-only as `/opt/agent-audit/.env`. Put both `APIAPI_API_KEY` and the required `AGENT_AUDIT_*` settings there so the packaged Codex SDK entrypoint and the bundled CLI share one configuration source. The packaged Codex config uses apiapi with `deepseek-v4-pro`, max reasoning effort, and DeepSeek V4 Pro's 1M-token context window.
 
 The container no longer understands business fields such as `address`, `chain`, or `instructions`. It accepts one complete prompt only:
 

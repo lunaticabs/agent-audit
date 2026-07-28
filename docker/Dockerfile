@@ -138,10 +138,12 @@ RUN bash -lc 'set -euo pipefail \
     && test -f /root/.codex/config.toml \
     && test -f /opt/agent-audit/.codex/skills/workspace/SKILL.md \
     && test -f /opt/agent-audit/.codex/skills/closed-source-evm/SKILL.md \
-    && grep -q "^model_provider = \"openrouter\"$" /root/.codex/config.toml \
-    && grep -q "^model = \"moonshotai/kimi-k3\"$" /root/.codex/config.toml \
+    && grep -q "^model_provider = \"apiapi\"$" /root/.codex/config.toml \
+    && grep -q "^model = \"deepseek-v4-pro\"$" /root/.codex/config.toml \
     && grep -q "^model_reasoning_effort = \"max\"$" /root/.codex/config.toml \
-    && grep -q "^model_context_window = 1048576$" /root/.codex/config.toml \
+    && grep -q "^model_context_window = 1000000$" /root/.codex/config.toml \
+    && grep -q "^base_url = \"https://llmx.chat/v1\"$" /root/.codex/config.toml \
+    && grep -q "^env_key = \"APIAPI_API_KEY\"$" /root/.codex/config.toml \
     && grep -q "^approval_policy = \"never\"$" /root/.codex/config.toml'
 
 FROM runtime AS final

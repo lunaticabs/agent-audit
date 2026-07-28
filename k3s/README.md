@@ -36,12 +36,12 @@ The workflow publishes:
 - `ghcr.io/<owner>/agent-audit:<tag>`
 - `ghcr.io/<owner>/agent-audit-dispatcher:<tag>`
 
-The current manifests are wired for the `v1.0.1` release tags:
+The current manifests are wired for these release tags:
 
-- `ghcr.io/lunaticabs/agent-audit:v1.0.1`
+- `ghcr.io/lunaticabs/agent-audit:v1.0.2`
 - `ghcr.io/lunaticabs/agent-audit-dispatcher:v1.0.1`
 
-Set image addresses in two places before applying if you later switch away from `v1.0.1`:
+Set image addresses in two places before applying if you later switch either tag:
 
 - runner image in [runner-configmap.yaml](/Users/lunaticabs/code/agent-audit/k3s/runner-configmap.yaml)
 - dispatcher image in [dispatcher-deployment.yaml](/Users/lunaticabs/code/agent-audit/k3s/dispatcher-deployment.yaml)
@@ -58,7 +58,7 @@ rg -n "ghcr.io/.*/agent-audit" k3s
 
 Copy [runner-secret.example.yaml](/Users/lunaticabs/code/agent-audit/k3s/runner-secret.example.yaml) to `k3s/runner-secret.yaml` and fill in:
 
-- `OPENROUTER_KIMI_K3_API_KEY`
+- `APIAPI_API_KEY`
 - every required `AGENT_AUDIT_*`
 - `AGENT_AUDIT_MONGO_URI`
 
@@ -154,7 +154,7 @@ python3 scripts/enqueue_redis.py \
   --address-file scripts/addresses/addrs.txt \
   --host 127.0.0.1 \
   --port 6380 \
-  --image ghcr.io/lunaticabs/agent-audit:v1.0.1
+  --image ghcr.io/lunaticabs/agent-audit:v1.0.2
 ```
 
 Defaults:

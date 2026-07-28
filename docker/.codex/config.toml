@@ -1,19 +1,19 @@
-model_provider = "openrouter"
-model = "moonshotai/kimi-k3"
+model_provider = "apiapi"
+model = "deepseek-v4-pro"
 model_reasoning_effort = "max"
-model_context_window = 1048576
-model_auto_compact_token_limit = 950000
+model_context_window = 1000000
+model_auto_compact_token_limit = 900000
 model_auto_compact_token_limit_scope = "total"
 model_supports_reasoning_summaries = true
-tool_output_token_limit = 20000
-wire_api = "responses"
+tool_output_token_limit = 50000
 sandbox_mode = "danger-full-access"
 approval_policy = "never"
 
-[model_providers.openrouter]
-name = "OpenRouter"
-base_url = "https://openrouter.ai/api/v1"
-env_key = "OPENROUTER_KIMI_K3_API_KEY"
+[model_providers.apiapi]
+name = "apiapi"
+base_url = "https://llmx.chat/v1"
+env_key = "APIAPI_API_KEY"
+wire_api = "responses"
 
 [shell_environment_policy]
 inherit = "all"
