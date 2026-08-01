@@ -40,6 +40,7 @@ ENV AGENT_AUDIT_EVAL_ENTRYPOINT=/opt/agent-audit/eval/start.sh
 # ENV UV_CACHE_DIR=/tmp/uv-cache
 # ENV PATH=/root/.crytic/bin:/root/.vyper/bin:/root/.foundry/bin:${PATH}
 ARG NODE_MAJOR=22
+ARG FORGE_STD_REV=77041d2ce690e692d6e03cc812b57d1ddaa4d505
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -67,6 +68,15 @@ RUN mkdir -p "${CODEX_RUNNER_DIR}" \
     && npm init -y \
     && npm install --omit=dev @openai/codex @openai/codex-sdk \
     && npm cache clean --force
+
+RUN mkdir -p /opt/agent-audit/vendor/forge-std \
+    && cd /opt/agent-audit/vendor/forge-std \
+    && git init \
+    && git remote add origin https://github.com/foundry-rs/forge-std.git \
+    && git fetch --depth 1 origin "${FORGE_STD_REV}" \
+    && git checkout --detach FETCH_HEAD \
+    && git submodule update --init --depth 1 \
+    && rm -rf .git
 
 ENV PATH=${CODEX_RUNNER_DIR}/node_modules/.bin:${PATH}
 
@@ -102,6 +112,7 @@ RUN bash -lc 'set -euo pipefail \
     && command -v cast \
     && command -v anvil \
     && command -v echidna \
+    && test -f /opt/agent-audit/vendor/forge-std/src/Test.sol \
     && test -f /opt/agent-audit/codex-runner/agent-audit-run.mjs \
     && test -x /opt/agent-audit/eval/start.sh \
     && test -d /opt/agent-audit/codex-runner/node_modules/@openai/codex-sdk \

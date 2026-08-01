@@ -12,6 +12,7 @@ Use this workflow:
 1. Ensure `runs/<run_id>/foundry_project/build_manifest.json` exists. Normally `$workspace` already prepares it. If needed, rerun `agent-audit prepare-tooling --run-id <run_id>`.
 2. `cd runs/<run_id>/foundry_project`
 3. Use `preferred_target`, `solc_version`, and `remappings` from the manifest.
+   When writing a harness under `test/`, import the target with `../<preferred_target>`.
 
 RPC source:
 
@@ -62,13 +63,15 @@ runs/<run_id>/sources/forge/
 Audit guidance:
 
 - Prefer `forge build` and `forge test` before writing custom harnesses.
+- Do not guess the source path for custom harness imports; read `preferred_target` from `build_manifest.json`.
 - Prefer targeted filters over whole-project test runs when validating a specific suspicion.
 - Use `-vvvv` when the trace matters.
 - `forge script` is useful for local simulation and fork reproduction.
 - Do not add `--broadcast` unless the user explicitly asks for a live transaction.
 - Do not assume the prepared project already has tests or scripts; inspect `runs/<run_id>/foundry_project/` first.
 - Save the exact command, target, and intent in `runs/<run_id>/artifacts/forge_plan.json`.
-- Save raw test or script output in `runs/<run_id>/artifacts/forge_output.txt`.
+- Save raw test or script output, including failed compile or harness output, in `runs/<run_id>/artifacts/forge_output.txt`.
+- Do not state that a failed command/output was preserved unless the corresponding artifact file exists and contains that output.
 - If you summarize a reproduced issue or invariant break, save it in `runs/<run_id>/artifacts/forge_findings.json`.
 - Save any ad-hoc test, script, or harness source under `runs/<run_id>/sources/forge/`.
 - Rerun `agent-audit aggregate-materials --run-id <run_id>` if you want the manifest to list these optional artifacts.

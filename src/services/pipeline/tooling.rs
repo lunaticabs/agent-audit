@@ -1,3 +1,4 @@
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -31,6 +32,7 @@ use super::support::{
 };
 
 const HEIMDALL_ROOT: &str = "artifacts/heimdall";
+const PACKAGED_FORGE_STD_ROOT: &str = "/opt/agent-audit/vendor/forge-std";
 
 impl AuditPipelineService {
     pub fn prepare_slither_project(
@@ -472,18 +474,18 @@ impl AuditPipelineService {
         }
 
         let settings = tool_project_settings(bundle_payload);
+        let analysis_target = analysis_target_for_prepared(bundle_payload);
+        let preferred_target = analysis_target.path.clone();
         recreate_dir(&foundry_root)?;
-        let source_links = self.link_tool_project_sources(
-            &sources_root,
-            &foundry_root.join("src"),
-            settings.source_root.as_ref(),
-        )?;
+        let source_links = self.link_tool_project_sources(&sources_root, &foundry_root, None)?;
         let node_modules_links = self.create_slither_node_modules(
             &sources_root.join("npm"),
             &foundry_root.join("node_modules"),
         )?;
+        self.link_foundry_standard_library(&foundry_root.join("lib"))?;
         let generated_remappings = node_modules_remappings(&node_modules_links);
         let remappings = merge_unique_lists(&[
+            foundry_default_remappings().as_slice(),
             settings.remappings.as_slice(),
             generated_remappings.as_slice(),
         ]);
@@ -528,7 +530,7 @@ impl AuditPipelineService {
                     StepStatus::Prepared,
                 ),
                 project_root: Some(WorkspaceRelPath::new("foundry_project")),
-                analysis_target: Some(analysis_target_for_prepared(bundle_payload)),
+                analysis_target: Some(analysis_target),
                 source_links,
                 node_modules_links,
                 compiler_version: settings.compiler_version,
@@ -540,8 +542,7 @@ impl AuditPipelineService {
                 remappings_path: Some(remappings_path),
                 foundry_toml_path: Some(foundry_toml_path),
                 preferred_working_dir: Some(WorkspaceRelPath::new("foundry_project")),
-                preferred_target: Some(settings.prepared_target),
-                preferred_source_root: settings.source_root,
+                preferred_target: Some(preferred_target),
                 test_dir: Some(WorkspaceRelPath::new("foundry_project/test")),
                 script_dir: Some(WorkspaceRelPath::new("foundry_project/script")),
                 ..FoundryBuildManifest::default()
@@ -897,6 +898,16 @@ impl AuditPipelineService {
             });
         }
         Ok(linked)
+    }
+
+    fn link_foundry_standard_library(&self, foundry_lib_root: &Path) -> AppResult<bool> {
+        for candidate in foundry_standard_library_candidates(&self.workspace.project_root) {
+            if candidate.join("src/Test.sol").is_file() {
+                recreate_symlink(&foundry_lib_root.join("forge-std"), &candidate)?;
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
 
@@ -1272,6 +1283,24 @@ fn node_modules_remappings(node_modules_links: &[NodeModuleLink]) -> Vec<String>
         .collect()
 }
 
+fn foundry_default_remappings() -> Vec<String> {
+    vec!["forge-std/=lib/forge-std/src/".to_string()]
+}
+
+fn foundry_standard_library_candidates(project_root: &Path) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(path) = env::var_os("AGENT_AUDIT_FORGE_STD_PATH") {
+        candidates.push(PathBuf::from(path));
+    }
+    candidates.push(project_root.join("vendor/forge-std"));
+    candidates.push(PathBuf::from(PACKAGED_FORGE_STD_ROOT));
+    if let Some(home) = env::var_os("HOME") {
+        candidates.push(PathBuf::from(home).join(".foundry/forge-std"));
+    }
+    candidates.push(PathBuf::from("/root/.foundry/forge-std"));
+    candidates
+}
+
 fn tool_project_settings(bundle_payload: &SourceBundleArtifact) -> ToolProjectSettings {
     let analysis_target = analysis_target_for_prepared(bundle_payload);
     let target_path = analysis_target.path;
@@ -1436,7 +1465,7 @@ fn compiler_evm_version(
 fn render_foundry_toml(settings: &ToolProjectSettings, remappings: &[String]) -> String {
     let mut lines = vec![
         "[profile.default]".to_string(),
-        "src = \"src\"".to_string(),
+        "src = \".\"".to_string(),
         "test = \"test\"".to_string(),
         "script = \"script\"".to_string(),
         "out = \"out\"".to_string(),
@@ -1691,7 +1720,10 @@ mod tests {
     use crate::models::bytecode::{BytecodeAuditTarget, BytecodeFetchStatus};
     use crate::models::identity::RunId;
     use crate::models::run::RunTarget;
-    use crate::models::source::SourceAvailabilityStatus;
+    use crate::models::source::{
+        AnalysisTarget, ArtifactSourceFile, CompilerMetadata, ContractMetadata,
+        SourceAvailabilityStatus,
+    };
     use crate::workspace::RunWorkspace;
     use tempfile::TempDir;
 
@@ -1718,6 +1750,23 @@ mod tests {
         (temp, workspace, target)
     }
 
+    fn test_config(workspace: &RunWorkspace, target: &RunTarget) -> crate::config::AppConfig {
+        crate::config::AppConfig {
+            project_root: workspace.project_root.clone(),
+            runs_dir: workspace.project_root.join("runs"),
+            default_chain: target.chain.clone(),
+            source_api_base: None,
+            source_api_key: None,
+            source_api_headers: std::collections::BTreeMap::new(),
+            rpc_url: None,
+            mongo_uri: None,
+            mongo_db: "agent_audit".to_string(),
+            mongo_runs_meta_collection: "runs_meta".to_string(),
+            mongo_runs_files_collection: "runs_files".to_string(),
+            mongo_max_inline_file_bytes: 8 * 1024 * 1024,
+        }
+    }
+
     #[test]
     fn aggregate_tooling_status_returns_first_tooling_failure() {
         let status = aggregate_tooling_status(
@@ -1742,6 +1791,132 @@ mod tests {
         );
 
         assert_eq!(status, StepStatus::SourceApiNotConfigured);
+    }
+
+    #[test]
+    fn prepare_foundry_preserves_source_import_layout() {
+        let (_temp, workspace, target) = test_workspace();
+        workspace
+            .store()
+            .write_text(
+                "sources/src/feeds/DynamicFeeCurveFeed.sol",
+                r#"pragma solidity ^0.8.20;
+import {ICurvePool} from "src/interfaces/ICurvePool.sol";
+contract DynamicFeeCurveFeed {}
+"#,
+            )
+            .expect("target source");
+        workspace
+            .store()
+            .write_text(
+                "sources/src/interfaces/ICurvePool.sol",
+                "pragma solidity ^0.8.20; interface ICurvePool {}\n",
+            )
+            .expect("interface source");
+        workspace
+            .store()
+            .write_json(
+                paths::SOURCE_BUNDLE,
+                &SourceBundleArtifact {
+                    target: target.clone(),
+                    status: StepStatus::SourceFetched,
+                    source_availability: SourceAvailabilityStatus::Verified,
+                    contract: Some(ContractMetadata {
+                        name: "DynamicFeeCurveFeed".to_string(),
+                        file_name: Some(RelativePath::new("src/feeds/DynamicFeeCurveFeed.sol")),
+                        ..ContractMetadata::default()
+                    }),
+                    compiler: Some(CompilerMetadata {
+                        version: "v0.8.20+commit.a1b79de6".to_string(),
+                        optimization_used: "1".to_string(),
+                        runs: "10000".to_string(),
+                        evm_version: "shanghai".to_string(),
+                        ..CompilerMetadata::default()
+                    }),
+                    files: vec![
+                        ArtifactSourceFile {
+                            path: RelativePath::new("src/feeds/DynamicFeeCurveFeed.sol"),
+                            length: 1,
+                            original_path: None,
+                        },
+                        ArtifactSourceFile {
+                            path: RelativePath::new("src/interfaces/ICurvePool.sol"),
+                            length: 1,
+                            original_path: None,
+                        },
+                    ],
+                    analysis_target: Some(AnalysisTarget {
+                        address: target.address.clone(),
+                        contract_name: "DynamicFeeCurveFeed".to_string(),
+                        path: RelativePath::new("src/feeds/DynamicFeeCurveFeed.sol"),
+                        role: "target".to_string(),
+                        ..AnalysisTarget::default()
+                    }),
+                    ..SourceBundleArtifact::default()
+                },
+            )
+            .expect("source bundle");
+        let config = test_config(&workspace, &target);
+        let mut service = AuditPipelineService::new(config, workspace);
+
+        let status = service
+            .prepare_tooling_workspaces(&target.address, &target.chain)
+            .expect("prepare tooling");
+
+        assert_eq!(status, StepStatus::Prepared);
+        assert!(
+            service
+                .workspace
+                .paths()
+                .resolve("foundry_project/src/feeds/DynamicFeeCurveFeed.sol")
+                .exists()
+        );
+        assert!(
+            service
+                .workspace
+                .paths()
+                .resolve("foundry_project/src/interfaces/ICurvePool.sol")
+                .exists()
+        );
+        assert!(
+            !service
+                .workspace
+                .paths()
+                .resolve("foundry_project/src/DynamicFeeCurveFeed.sol")
+                .exists()
+        );
+        let foundry_manifest: FoundryBuildManifest = super::super::support::read_json_if_exists(
+            &service
+                .workspace
+                .paths()
+                .resolve(paths::FOUNDRY_BUILD_MANIFEST),
+        )
+        .expect("foundry manifest");
+        let foundry_toml = std::fs::read_to_string(
+            service
+                .workspace
+                .paths()
+                .resolve("foundry_project/foundry.toml"),
+        )
+        .expect("foundry toml");
+        assert!(foundry_toml.contains("src = \".\""));
+        assert_eq!(
+            foundry_manifest.preferred_target,
+            Some(RelativePath::new("src/feeds/DynamicFeeCurveFeed.sol"))
+        );
+        assert_eq!(foundry_manifest.preferred_source_root, None);
+        assert!(
+            foundry_manifest
+                .source_links
+                .iter()
+                .any(|link| link.path == RelativePath::new("src/interfaces/ICurvePool.sol"))
+        );
+        assert!(
+            foundry_manifest
+                .remappings
+                .iter()
+                .any(|entry| entry == "forge-std/=lib/forge-std/src/")
+        );
     }
 
     #[test]
@@ -1784,20 +1959,7 @@ mod tests {
                 ),
             )
             .expect("bytecode targets");
-        let config = crate::config::AppConfig {
-            project_root: workspace.project_root.clone(),
-            runs_dir: workspace.project_root.join("runs"),
-            default_chain: target.chain.clone(),
-            source_api_base: None,
-            source_api_key: None,
-            source_api_headers: std::collections::BTreeMap::new(),
-            rpc_url: None,
-            mongo_uri: None,
-            mongo_db: "agent_audit".to_string(),
-            mongo_runs_meta_collection: "runs_meta".to_string(),
-            mongo_runs_files_collection: "runs_files".to_string(),
-            mongo_max_inline_file_bytes: 8 * 1024 * 1024,
-        };
+        let config = test_config(&workspace, &target);
         let mut service = AuditPipelineService::new(config, workspace);
 
         let status = service
