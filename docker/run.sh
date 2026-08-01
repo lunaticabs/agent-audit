@@ -32,8 +32,8 @@ if [[ ! -f "${ENV_FILE}" ]]; then
   exit 2
 fi
 
-if ! grep -Eq '^[[:space:]]*APIAPI_API_KEY=' "${ENV_FILE}"; then
-  echo "APIAPI_API_KEY is not configured in ${ENV_FILE}" >&2
+if ! grep -Eq '^[[:space:]]*OPENROUTER_API_KEY=' "${ENV_FILE}"; then
+  echo "OPENROUTER_API_KEY is not configured in ${ENV_FILE}" >&2
   exit 2
 fi
 

@@ -115,12 +115,14 @@ COPY --from=builder /build/target/release/agent-audit /usr/local/bin/agent-audit
 COPY --from=heimdall-builder /root/.cargo/bin/heimdall /usr/local/bin/heimdall
 COPY docker/AGENTS.md ./AGENTS.md
 COPY docker/.codex/config.toml ./codex-config.toml
+COPY docker/.codex/models.json ./codex-models.json
 COPY docker/.codex/skills ./.codex/skills
 COPY docker/codex-runner/agent-audit-run.mjs ${CODEX_RUNNER_DIR}/agent-audit-run.mjs
 
 RUN chmod +x ${CODEX_RUNNER_DIR}/agent-audit-run.mjs \
     && mkdir -p /root/.codex /opt/agent-audit/runs \
-    && cp /opt/agent-audit/codex-config.toml /root/.codex/config.toml
+    && cp /opt/agent-audit/codex-config.toml /root/.codex/config.toml \
+    && cp /opt/agent-audit/codex-models.json /root/.codex/models.json
 
 ENTRYPOINT ["node", "/opt/agent-audit/codex-runner/agent-audit-run.mjs"]
 
@@ -146,15 +148,20 @@ RUN bash -lc 'set -euo pipefail \
     && test -f /opt/agent-audit/AGENTS.md \
     && test ! -f /opt/agent-audit/.codex/config.toml \
     && test -f /opt/agent-audit/codex-config.toml \
+    && test -f /opt/agent-audit/codex-models.json \
     && test -f /root/.codex/config.toml \
+    && test -f /root/.codex/models.json \
     && test -f /opt/agent-audit/.codex/skills/workspace/SKILL.md \
     && test -f /opt/agent-audit/.codex/skills/closed-source-evm/SKILL.md \
-    && grep -q "^model_provider = \"apiapi\"$" /root/.codex/config.toml \
-    && grep -q "^model = \"deepseek-v4-pro\"$" /root/.codex/config.toml \
-    && grep -q "^model_reasoning_effort = \"max\"$" /root/.codex/config.toml \
-    && grep -q "^model_context_window = 1000000$" /root/.codex/config.toml \
-    && grep -q "^base_url = \"https://llmx.chat/v1\"$" /root/.codex/config.toml \
-    && grep -q "^env_key = \"APIAPI_API_KEY\"$" /root/.codex/config.toml \
+    && grep -q "^model_provider = \"openrouter\"$" /root/.codex/config.toml \
+    && grep -q "^model = \"deepseek/deepseek-v4-flash-0731\"$" /root/.codex/config.toml \
+    && grep -q "^model_reasoning_effort = \"high\"$" /root/.codex/config.toml \
+    && grep -q "^model_catalog_json = \"/root/.codex/models.json\"$" /root/.codex/config.toml \
+    && grep -q "^model_context_window = 1048576$" /root/.codex/config.toml \
+    && grep -q "^base_url = \"https://openrouter.ai/api/v1\"$" /root/.codex/config.toml \
+    && grep -q "^env_key = \"OPENROUTER_API_KEY\"$" /root/.codex/config.toml \
+    && grep -q '"slug": "deepseek/deepseek-v4-flash-0731"' /root/.codex/models.json \
+    && grep -q '"context_window": 1048576' /root/.codex/models.json \
     && grep -q "^approval_policy = \"never\"$" /root/.codex/config.toml'
 
 FROM runtime AS final
