@@ -38,7 +38,7 @@ The workflow publishes:
 
 The current manifests are wired for these release tags:
 
-- `ghcr.io/lunaticabs/agent-audit:v1.1.2`
+- `ghcr.io/lunaticabs/agent-audit:v1.1.3`
 - `ghcr.io/lunaticabs/agent-audit-dispatcher:v1.0.1`
 
 Set image addresses in two places before applying if you later switch either tag:
@@ -154,7 +154,7 @@ python3 scripts/enqueue_redis.py \
   --address-file scripts/addresses/addrs.txt \
   --host 127.0.0.1 \
   --port 6380 \
-  --image ghcr.io/lunaticabs/agent-audit:v1.1.2
+  --image ghcr.io/lunaticabs/agent-audit:v1.1.3
 ```
 
 Defaults:

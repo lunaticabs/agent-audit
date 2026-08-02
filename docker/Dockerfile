@@ -164,6 +164,8 @@ RUN bash -lc 'set -euo pipefail \
     && grep -q "\"slug\": \"deepseek/deepseek-v4-flash-0731\"" /root/.codex/models.json \
     && grep -q "\"context_window\": 1048576" /root/.codex/models.json \
     && grep -q "\"supports_search_tool\": false" /root/.codex/models.json \
+    && grep -q "\"apply_patch_tool_type\": null" /root/.codex/models.json \
+    && ! grep -q "\"apply_patch_tool_type\": \"freeform\"" /root/.codex/models.json \
     && grep -q "webSearchMode: \"disabled\"" /opt/agent-audit/codex-runner/agent-audit-run.mjs \
     && grep -q "^approval_policy = \"never\"$" /root/.codex/config.toml'
 
