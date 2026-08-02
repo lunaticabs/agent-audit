@@ -9,6 +9,7 @@ model_auto_compact_token_limit = 996147
 model_auto_compact_token_limit_scope = "total"
 model_supports_reasoning_summaries = true
 tool_output_token_limit = 50000
+web_search = "disabled"
 sandbox_mode = "danger-full-access"
 approval_policy = "never"
 

@@ -411,6 +411,7 @@ async function runAudit(args) {
   const thread = await codex.startThread({
     approvalPolicy: "never",
     sandboxMode: "danger-full-access",
+    webSearchMode: "disabled",
     workingDirectory: runtime.projectRoot,
     skipGitRepoCheck: true,
   });

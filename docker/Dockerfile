@@ -158,11 +158,13 @@ RUN bash -lc 'set -euo pipefail \
     && grep -q "^model_reasoning_effort = \"high\"$" /root/.codex/config.toml \
     && grep -q "^model_catalog_json = \"/root/.codex/models.json\"$" /root/.codex/config.toml \
     && grep -q "^model_context_window = 1048576$" /root/.codex/config.toml \
+    && grep -q "^web_search = \"disabled\"$" /root/.codex/config.toml \
     && grep -q "^base_url = \"https://openrouter.ai/api/v1\"$" /root/.codex/config.toml \
     && grep -q "^env_key = \"OPENROUTER_API_KEY\"$" /root/.codex/config.toml \
     && grep -q "\"slug\": \"deepseek/deepseek-v4-flash-0731\"" /root/.codex/models.json \
     && grep -q "\"context_window\": 1048576" /root/.codex/models.json \
     && grep -q "\"supports_search_tool\": false" /root/.codex/models.json \
+    && grep -q "webSearchMode: \"disabled\"" /opt/agent-audit/codex-runner/agent-audit-run.mjs \
     && grep -q "^approval_policy = \"never\"$" /root/.codex/config.toml'
 
 FROM runtime AS final
