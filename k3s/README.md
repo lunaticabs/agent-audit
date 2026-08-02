@@ -38,7 +38,7 @@ The workflow publishes:
 
 The current manifests are wired for these release tags:
 
-- `ghcr.io/lunaticabs/agent-audit:v1.0.2`
+- `ghcr.io/lunaticabs/agent-audit:v1.1.1`
 - `ghcr.io/lunaticabs/agent-audit-dispatcher:v1.0.1`
 
 Set image addresses in two places before applying if you later switch either tag:
@@ -46,7 +46,7 @@ Set image addresses in two places before applying if you later switch either tag
 - runner image in [runner-configmap.yaml](/Users/lunaticabs/code/agent-audit/k3s/runner-configmap.yaml)
 - dispatcher image in [dispatcher-deployment.yaml](/Users/lunaticabs/code/agent-audit/k3s/dispatcher-deployment.yaml)
 
-These manifests use release tags with `imagePullPolicy: Always` for the dispatcher and runner Jobs. For tighter release control, replace those tags with a concrete `sha-...` tag or image digest.
+These manifests use `imagePullPolicy: Always` for the dispatcher and `IfNotPresent` for runner Jobs. For tighter release control, replace those tags with a concrete `sha-...` tag or image digest.
 
 If you want to check the currently configured image references:
 
@@ -58,7 +58,7 @@ rg -n "ghcr.io/.*/agent-audit" k3s
 
 Copy [runner-secret.example.yaml](/Users/lunaticabs/code/agent-audit/k3s/runner-secret.example.yaml) to `k3s/runner-secret.yaml` and fill in:
 
-- `APIAPI_API_KEY`
+- `OPENROUTER_API_KEY`
 - every required `AGENT_AUDIT_*`
 - `AGENT_AUDIT_MONGO_URI`
 
@@ -154,7 +154,7 @@ python3 scripts/enqueue_redis.py \
   --address-file scripts/addresses/addrs.txt \
   --host 127.0.0.1 \
   --port 6380 \
-  --image ghcr.io/lunaticabs/agent-audit:v1.0.2
+  --image ghcr.io/lunaticabs/agent-audit:v1.1.1
 ```
 
 Defaults:

@@ -162,6 +162,7 @@ RUN bash -lc 'set -euo pipefail \
     && grep -q "^env_key = \"OPENROUTER_API_KEY\"$" /root/.codex/config.toml \
     && grep -q "\"slug\": \"deepseek/deepseek-v4-flash-0731\"" /root/.codex/models.json \
     && grep -q "\"context_window\": 1048576" /root/.codex/models.json \
+    && grep -q "\"supports_search_tool\": false" /root/.codex/models.json \
     && grep -q "^approval_policy = \"never\"$" /root/.codex/config.toml'
 
 FROM runtime AS final
