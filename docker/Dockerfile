@@ -154,14 +154,14 @@ RUN bash -lc 'set -euo pipefail \
     && test -f /opt/agent-audit/.codex/skills/workspace/SKILL.md \
     && test -f /opt/agent-audit/.codex/skills/closed-source-evm/SKILL.md \
     && grep -q "^model_provider = \"openrouter\"$" /root/.codex/config.toml \
-    && grep -q "^model = \"deepseek/deepseek-v4-flash-0731\"$" /root/.codex/config.toml \
+    && grep -q "^model = \"deepseek/deepseek-v4-pro-0813\"$" /root/.codex/config.toml \
     && grep -q "^model_reasoning_effort = \"high\"$" /root/.codex/config.toml \
     && grep -q "^model_catalog_json = \"/root/.codex/models.json\"$" /root/.codex/config.toml \
     && grep -q "^model_context_window = 1048576$" /root/.codex/config.toml \
     && grep -q "^web_search = \"disabled\"$" /root/.codex/config.toml \
     && grep -q "^base_url = \"https://openrouter.ai/api/v1\"$" /root/.codex/config.toml \
     && grep -q "^env_key = \"OPENROUTER_API_KEY\"$" /root/.codex/config.toml \
-    && grep -q "\"slug\": \"deepseek/deepseek-v4-flash-0731\"" /root/.codex/models.json \
+    && grep -q "\"slug\": \"deepseek/deepseek-v4-pro-0813\"" /root/.codex/models.json \
     && grep -q "\"context_window\": 1048576" /root/.codex/models.json \
     && grep -q "\"supports_search_tool\": false" /root/.codex/models.json \
     && grep -q "\"apply_patch_tool_type\": null" /root/.codex/models.json \
