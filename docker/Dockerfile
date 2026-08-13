@@ -155,7 +155,7 @@ RUN bash -lc 'set -euo pipefail \
     && test -f /opt/agent-audit/.codex/skills/closed-source-evm/SKILL.md \
     && grep -q "^model_provider = \"openrouter\"$" /root/.codex/config.toml \
     && grep -q "^model = \"deepseek/deepseek-v4-pro-0813\"$" /root/.codex/config.toml \
-    && grep -q "^model_reasoning_effort = \"high\"$" /root/.codex/config.toml \
+    && grep -q "^model_reasoning_effort = \"max\"$" /root/.codex/config.toml \
     && grep -q "^model_catalog_json = \"/root/.codex/models.json\"$" /root/.codex/config.toml \
     && grep -q "^model_context_window = 1048576$" /root/.codex/config.toml \
     && grep -q "^web_search = \"disabled\"$" /root/.codex/config.toml \
