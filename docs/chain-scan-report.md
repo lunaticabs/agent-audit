@@ -11,9 +11,10 @@
 | **Period** | July – September 2026 |
 
 > **Handling note.** This document describes unpatched vulnerabilities in live contracts.
-> Contract addresses and full reproduction scripts are deliberately withheld here and are
-> available to affected parties and to customers under disclosure terms. Treat this document as
-> confidential until the findings have been disclosed responsibly.
+> Contract addresses are shown as truncated prefixes (`0x1a2b3c…`) so that findings can be
+> referenced and cross-checked without publishing a complete exploitation target. Full addresses
+> and reproduction scripts are available to affected parties and to customers under disclosure
+> terms. Treat this document as confidential until the findings have been disclosed responsibly.
 
 ---
 
@@ -106,13 +107,13 @@ mechanism, and a measurable impact.
 
 ### 3.1 An unauthenticated function that drains the contract to a hardcoded address
 
-**The contract** exposes a single state-changing entry point, `flashloan()`, marked payable and
-callable by anyone. There is no authorisation, no whitelist, no fee check, and no repayment
-requirement.
+**The contract** `0xD7b761…` exposes a single state-changing entry point, `flashloan()`, marked
+payable and callable by anyone. There is no authorisation, no whitelist, no fee check, and no
+repayment requirement.
 
-**The mechanism.** The function reads a hardcoded recipient address from an internal token
-contract and then transfers **its entire ETH balance** to that address — every time it is
-called, by anyone.
+**The mechanism.** The function reads a hardcoded recipient address (`0x6a20fd…`) from an internal
+token contract (`0x9c82f4…`) and then transfers **its entire ETH balance** to that address — every
+time it is called, by anyone.
 
 **The impact.** At block 25,721,960 the contract held 16,742,360,800,000,000 wei. A single call
 moves that balance to zero. The contract dates from July 2021 and holds ETH deposited by its
@@ -126,7 +127,7 @@ contract's prior balance.
 
 ### 3.2 An inverted access-control check that locks out the owner and admits everyone else
 
-**The contract** gates all four of its privileged functions behind an ownership check.
+**The contract** `0x9b179c…` gates all four of its privileged functions behind an ownership check.
 
 **The mechanism.** Every check is inverted. The contract reverts when the caller **is** the
 owner and succeeds for everyone else. The intended administrator is the only account in the
@@ -146,11 +147,12 @@ contract from 100 ETH to 999,999,991 wei; a sequence fuzz found an 8-call path d
 
 ### 3.3 Price-oracle manipulation enabling undercollateralised borrowing
 
-**The contract** is a lending market that values sETH collateral using a closed-source oracle.
+**The contract** is a lending market, `0x53515f…`, that values sETH collateral using a
+closed-source oracle at `0xdf117F…`.
 
 **The mechanism.** The oracle's price for ETH can be refreshed by **anyone** through a
-permissionless entry point, which reads a Uniswap v2 spot price. A single large swap moves the
-stored price; no time-weighting resists it.
+permissionless entry point, which reads a Uniswap v2 spot price from pair `0x0d4a11…`. A single
+large swap moves the stored price; no time-weighting resists it.
 
 **The impact.** On the fork, swapping roughly 500 WETH for USDT and calling the refresh moved
 sETH's price **6.77×** (from 355,498,584 to 2,407,996.55 scaled units). With collateral factors
@@ -165,8 +167,8 @@ collateral.
 
 ### 3.4 Free minting: a paid NFT collection that hands out tokens for 1 wei
 
-**The contract** is a collection with an advertised price of 0.07 ETH per token and a supply cap
-of 10,000.
+**The contract** `0xB4E4e6…` is a collection with an advertised price of 0.07 ETH per token and a
+supply cap of 10,000.
 
 **The mechanism.** The payment check enforces only an *upper* bound — it rejects overpayment but
 never requires a minimum. Worse, the fallback path reached by empty calldata or an unrecognised
@@ -184,7 +186,7 @@ on this path. The revenue model and the advertised scarcity both fail.
 
 ### 3.5 Six million dollars of USDT locked forever
 
-**The contract** holds 6,000,000 USDT.
+**The contract** `0xC4D8b8…` holds 6,000,000 USDT.
 
 **The mechanism.** Its token-transfer handling requires a boolean return value from `transfer`.
 USDT returns no data at all. The check therefore fails and the call reverts — so the transfer
@@ -200,7 +202,7 @@ with empty revert data, and the contract's USDT balance remains 6,000,000 × 10�
 
 ### 3.6 A deployed, uninitialised contract anyone can seize
 
-**The contract** is live on mainnet and exposes a public `initialize` function.
+**The contract** `0xa54f70…` is live on mainnet and exposes a public `initialize` function.
 
 **The mechanism.** At block 25,592,483 the contract's owner, fee collector, fee rate and factory
 references all read as zero — it was deployed but never initialised. The initialiser is public
