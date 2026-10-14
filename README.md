@@ -11,6 +11,40 @@
 
 This root README explains the overall architecture and workflows. Detailed build, deployment, and runtime notes live in each subdirectory README.
 
+## What the system finds
+
+Scanning **8,255 Ethereum mainnet contracts** end to end, the system confirmed **6,466
+vulnerabilities** and **reproduced working exploits on 432 contracts** — measured balance effects
+on a forked mainnet, not severity estimates. 96% of those targets had no verified source code.
+
+```mermaid
+flowchart LR
+    A["8,255 mainnet<br/>contracts scanned"] --> B["3,577 with<br/>confirmed findings"]
+    B --> C["3,245 with a<br/>high-severity finding"]
+    B --> D["432 with an exploit<br/>reproduced on a fork"]
+    D --> E["Measured impact<br/>on balances"]
+
+    style A fill:#e8f0fe,stroke:#4285f4
+    style D fill:#e6f4ea,stroke:#34a853
+    style E fill:#e6f4ea,stroke:#34a853
+```
+
+| Result | Count |
+| --- | ---: |
+| Contracts scanned | 8,255 |
+| Confirmed vulnerabilities | 6,466 |
+| Contracts with at least one confirmed vulnerability | 3,577 (43.7%) |
+| Contracts with a high-severity vulnerability | 3,245 (39.6%) |
+| Contracts with an exploit reproduced on a mainnet fork | 432 (5.3%) |
+| Priority vulnerability classes reached | 10 / 10 |
+
+What that looks like in practice: an unauthenticated `flashloan()` that drains a contract's entire
+ETH balance to a hardcoded address; an inverted ownership check that locks out the owner and
+admits everyone else; a permissionless oracle refresh that moves a price **6.77×** in a single
+swap; **6,000,000 USDT** permanently locked by an unhandled ERC-20 return value.
+
+**→ [Full report: Scanning 8,255 On-Chain Contracts](docs/chain-scan-report.md)**
+
 ## System Structure
 
 | Directory | Role | Main outputs |
