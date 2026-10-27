@@ -267,6 +267,43 @@ class CollectTests(unittest.TestCase):
         self.assertIn("declared_coverage_overclaim", codes)
         self.assertEqual(metrics["coverage"]["overclaims"], ["fuzzing"])
 
+    def test_abi_from_blockscout_artifact(self):
+        run = make_run(self.root)
+        (run / "sources" / "Foo.abi.json").unlink()
+        _write_json(
+            run / "artifacts" / "blockscout_contract.json",
+            {
+                "abi": [
+                    {"type": "function", "name": "alpha", "inputs": [], "stateMutability": "view"},
+                    {"type": "function", "name": "beta", "inputs": [], "stateMutability": "nonpayable"},
+                    {"type": "function", "name": "gamma", "inputs": [], "stateMutability": "view"},
+                ]
+            },
+        )
+        metrics = collect_run(run, now="2026-01-01T00:00:00Z")
+        coverage = metrics["function_coverage"]
+        self.assertTrue(coverage["abi_available"])
+        self.assertEqual(coverage["abi_source"], "artifacts/blockscout_contract.json")
+        self.assertEqual(coverage["abi_functions"], 3)
+        self.assertAlmostEqual(coverage["coverage"], 2 / 3)
+
+    def test_abi_from_etherscan_getsourcecode(self):
+        run = make_run(self.root)
+        (run / "sources" / "Foo.abi.json").unlink()
+        abi = [
+            {"type": "function", "name": "alpha", "inputs": [], "stateMutability": "view"},
+            {"type": "function", "name": "beta", "inputs": [], "stateMutability": "nonpayable"},
+            {"type": "function", "name": "gamma", "inputs": [], "stateMutability": "view"},
+        ]
+        _write_json(
+            run / "artifacts" / "etherscan_getsourcecode.json",
+            {"status": "1", "result": [{"ContractName": "Foo", "ABI": json.dumps(abi)}]},
+        )
+        metrics = collect_run(run, now="2026-01-01T00:00:00Z")
+        coverage = metrics["function_coverage"]
+        self.assertEqual(coverage["abi_source"], "artifacts/etherscan_getsourcecode.json")
+        self.assertEqual(coverage["abi_functions"], 3)
+
     def test_legacy_report_is_graceful(self):
         run = make_legacy_run(self.root)
         metrics = collect_run(run, now="2026-01-01T00:00:00Z")

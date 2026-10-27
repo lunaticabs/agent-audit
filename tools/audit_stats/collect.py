@@ -585,42 +585,81 @@ def coverage_claims(
 # --- function coverage ------------------------------------------------------
 
 
-def _abi_entries(payload: Any) -> List[Dict[str, Any]]:
+def _abi_entries(payload: Any, depth: int = 0) -> List[Dict[str, Any]]:
+    """Find an ABI list in common Etherscan/Blockscout/Sourcify shapes.
+
+    Agents save ABIs in different wrappers: `{"abi": [...]}`, Etherscan's
+    `{"result": [{"ABI": "..."}]}`, or Sourcify's `{"output": {"abi": [...]}}`.
+    Recursion is bounded and only follows known keys.
+    """
+    if depth > 3:
+        return []
+
     if isinstance(payload, list):
-        return [entry for entry in payload if isinstance(entry, dict)]
+        entries = [entry for entry in payload if isinstance(entry, dict)]
+        if not entries:
+            return []
+        if any(entry.get("type") or entry.get("name") for entry in entries):
+            return entries
+        for item in entries:
+            nested = _abi_entries(item, depth + 1)
+            if nested:
+                return nested
+        return []
+
     if isinstance(payload, dict):
-        for key in ("abi", "result"):
+        for key in ("abi", "ABI"):
             value = payload.get(key)
             if isinstance(value, list):
-                return [entry for entry in value if isinstance(entry, dict)]
-            if key == "result" and isinstance(value, str):
+                entries = [entry for entry in value if isinstance(entry, dict)]
+                if entries:
+                    return entries
+            elif isinstance(value, str) and value.strip():
                 try:
                     decoded = json.loads(value)
                 except json.JSONDecodeError:
                     continue
                 if isinstance(decoded, list):
-                    return [entry for entry in decoded if isinstance(entry, dict)]
+                    entries = [entry for entry in decoded if isinstance(entry, dict)]
+                    if entries:
+                        return entries
+        for key in ("result", "output", "metadata", "contract"):
+            if key in payload:
+                nested = _abi_entries(payload[key], depth + 1)
+                if nested:
+                    return nested
     return []
 
 
 def _load_target_abi(run_dir: Path) -> Dict[str, Any]:
-    """Find the target ABI from `sources/*.abi.json` or the Etherscan response."""
+    """Find the target ABI in `sources/` or `artifacts/`.
+
+    Agents do not always save `*.abi.json`; a Blockscout contract response, an
+    Etherscan `getsourcecode` payload, or a Sourcify response can carry the same
+    ABI. Scan top-level JSON files in both directories and keep the candidate
+    with the most functions.
+    """
     candidates: List[Tuple[str, List[Dict[str, Any]]]] = []
-    sources = run_dir / "sources"
-    if sources.is_dir():
-        for path in sorted(sources.glob("*.abi.json")):
+    seen: set = set()
+    for base in (run_dir / "sources", run_dir / "artifacts"):
+        if not base.is_dir():
+            continue
+        for path in sorted(base.glob("*.json")):
+            key = str(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                if path.stat().st_size > 5 * 1024 * 1024:
+                    continue
+            except OSError:
+                continue
             payload, error = read_json(path)
             if error:
                 continue
             entries = _abi_entries(payload)
             if entries:
                 candidates.append((path.relative_to(run_dir).as_posix(), entries))
-
-    payload, error = read_json(run_dir / "artifacts" / "etherscan_getabi.json")
-    if not error:
-        entries = _abi_entries(payload)
-        if entries:
-            candidates.append(("artifacts/etherscan_getabi.json", entries))
 
     best: Optional[Tuple[str, Dict[str, set], Dict[str, set]]] = None
     for source, entries in candidates:
