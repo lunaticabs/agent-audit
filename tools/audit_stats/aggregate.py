@@ -786,9 +786,11 @@ def render_markdown(summary: Dict[str, Any], metrics: Sequence[Dict[str, Any]]) 
                 [
                     ["Targets audited more than once", stability["targets_with_repeat"]],
                     ["Comparable pairs", stability["pairs"]],
-                    ["Mean title-set overlap", format_pct(stability["mean_overlap"])],
-                    ["Median title-set overlap", format_pct(stability["median_overlap"])],
+                    ["Mean finding-set overlap", format_pct(stability["mean_overlap"])],
+                    ["Median finding-set overlap", format_pct(stability["median_overlap"])],
+                    ["Mean best title similarity", format_pct(stability["mean_best_similarity"])],
                     ["Pairs with zero overlap", stability["zero_overlap_pairs"]],
+                    ["Matches anchored by function", stability["matched_by_function"]],
                     ["Mean absolute severity delta", (
                         "{:.2f}".format(stability["mean_abs_severity_delta"])
                         if stability["mean_abs_severity_delta"] is not None
@@ -849,9 +851,12 @@ def render_markdown(summary: Dict[str, Any], metrics: Sequence[Dict[str, Any]]) 
         )
         out.append("")
     out.append(
-        "Stability measures repeatability, not correctness: two runs can agree and both "
-        "be wrong. Compare like-for-like conditions before attributing a change to a model "
-        "or prompt upgrade."
+        "Matching uses the finding `function` when it overlaps (title similarity floor "
+        "{floor}), otherwise title similarity at {threshold}. Title similarity is the max of "
+        "token Jaccard, overlap coefficient, and sequence ratio. Stability measures "
+        "repeatability, not correctness: two runs can agree and both be wrong.".format(
+            floor=stability["function_floor"], threshold=stability["threshold"]
+        )
     )
     out.append("")
 
@@ -915,7 +920,9 @@ def render_markdown(summary: Dict[str, Any], metrics: Sequence[Dict[str, Any]]) 
         "  bound, and `trace only` sees just the traces the agent saved. It is not line/branch\n"
         "  coverage of the target source.\n"
         "- Stability overlap measures repeatability, not correctness. Two runs can agree and both\n"
-        "  be wrong; compare like-for-like model/image/prompt conditions.\n"
+        "  be wrong; compare like-for-like model/image/prompt conditions. Function-anchored\n"
+        "  matches can pair different issues in the same function; the CSV records how each\n"
+        "  match was anchored.\n"
         "- Legacy reports (older schema) are counted when they contain a findings list; see the\n"
         "  schema-grade stratum."
     )
@@ -967,6 +974,9 @@ STABILITY_FIELDS = (
     "union",
     "overlap",
     "empty_pair",
+    "mean_best_similarity",
+    "matched_by_function",
+    "matched_by_title",
     "mean_best_jaccard",
     "severity_delta_mean",
     "severity_delta_max_abs",

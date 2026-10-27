@@ -113,11 +113,21 @@ not compiled into the Foundry project, so `forge coverage` would measure the
 harness, not the target.
 
 **Stability overlap.** For a target with two or more evaluable runs, findings are
-matched one-to-one by normalized title token Jaccard (default threshold 0.6);
-overlap is `matched / (A + B - matched)`. Severity delta is the severity rank of
-the newer run minus the older run. Two empty finding sets count as overlap 1.0.
-Pairs are flagged like-for-like when model, image, and prompt hash all match, so
-a regression can be separated from a prompt change. Agreement is not truth.
+matched one-to-one. A pair is anchored by the `function` field when the function
+sets overlap and title similarity is at least 0.35; without a function anchor the
+title similarity must reach 0.5. Title similarity is the maximum of token
+Jaccard, overlap coefficient, and sequence ratio, because model-authored titles
+are reworded heavily between runs. Overlap is
+`matched / (A + B - matched)`; severity delta is the newer run minus the older
+run. Two empty finding sets count as overlap 1.0. Pairs are flagged like-for-like
+when model, image, and prompt hash all match, so a regression can be separated
+from a prompt change. `stability.csv` records whether each pair was anchored by
+function or title. Agreement is not truth.
+
+On a real WETH9 pair (local run vs the k3s run, same prompt and model) the
+reworded findings matched 4 of 6 union findings (66.7%) with two +1 severity
+upgrades. Pure title Jaccard on the same pair was 0.22, which is why the
+function anchor exists.
 
 **Evidence resolution.** Every `evidence` path is checked inside the run
 directory. Absolute paths, `..` traversal, and symlinks that escape the run are
@@ -214,5 +224,5 @@ python3 -m unittest discover -s audit_stats/tests -t . -v
 
 Covers severity/confidence normalization, evidence path containment (including
 symlink escape), forge log merging, fork/repro linkage, trace-based function
-coverage, title Jaccard and severity drift, legacy report handling, aggregate
-denominators, and output rendering.
+coverage, function-anchored title matching, severity drift, legacy report
+handling, aggregate denominators, and output rendering.

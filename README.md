@@ -179,8 +179,8 @@ PYTHONPATH=tools python3 -m audit_stats report --runs-root runs --expected 120
 
 The report covers findings and severity, fork-reproduction coverage (linked test
 passed, restricted to fork-backed runs), trace-based function coverage (which
-ABI functions the run exercised), cross-run stability (title Jaccard and
-severity drift when a target was audited more than once), evidence resolution,
+ABI functions the run exercised), cross-run stability (function-anchored
+title similarity and severity drift when a target was audited more than once), evidence resolution,
 declared-vs-observed coverage, tool usage, schema grades, anomalies, and latency
 percentiles, with strata by model, chain, verified status, and schema grade. It treats
 `final_report.json` as untrusted: severity is normalized, evidence paths must

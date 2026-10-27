@@ -506,8 +506,8 @@ class AggregateTests(unittest.TestCase):
         self.assertIn("evidence_missing", findings_header)
 
 
-def _finding(finding_id: str, title: str, severity: str) -> dict:
-    return {"id": finding_id, "title": title, "severity": severity}
+def _finding(finding_id: str, title: str, severity: str, function: str = "") -> dict:
+    return {"id": finding_id, "title": title, "severity": severity, "function": function}
 
 
 def _run(
@@ -585,6 +585,58 @@ class StabilityTests(unittest.TestCase):
         self.assertEqual(summary["severity_delta_distribution"], {"-2": 1})
         self.assertEqual(summary["severe_drift_pairs"], 1)
         self.assertEqual(summary["worst_targets"][0]["address"], "0xabc")
+
+    def test_paraphrased_titles_with_same_function_match(self):
+        from audit_stats.stability import compare_pair
+
+        left = _run(
+            "run-a",
+            "0xabc",
+            [
+                _finding(
+                    "A1",
+                    "withdraw() forwards only 2,300 gas, locking WETH held by contracts with gas-heavy receive hooks",
+                    "low",
+                    "withdraw(uint256)",
+                )
+            ],
+        )
+        right = _run(
+            "run-b",
+            "0xabc",
+            [
+                _finding(
+                    "B1",
+                    "withdraw() forwards only 2,300 gas, preventing redemption by some contract recipients",
+                    "medium",
+                    "withdraw(uint256)",
+                )
+            ],
+        )
+        pair = compare_pair(left, right)
+        self.assertEqual(pair["matched"], 1)
+        self.assertEqual(pair["overlap"], 1.0)
+        self.assertEqual(pair["matched_by_function"], 1)
+        self.assertEqual(pair["severity_deltas"], [1])
+        self.assertLess(pair["mean_best_jaccard"], 0.5)
+        self.assertGreaterEqual(pair["mean_best_similarity"], 0.5)
+
+    def test_same_function_with_unrelated_titles_does_not_match(self):
+        from audit_stats.stability import compare_pair
+
+        left = _run(
+            "run-a",
+            "0xabc",
+            [_finding("A1", "Gas stipend blocks contract recipients", "low", "withdraw(uint256)")],
+        )
+        right = _run(
+            "run-b",
+            "0xabc",
+            [_finding("B1", "Event ordering can confuse indexers", "low", "withdraw(uint256)")],
+        )
+        pair = compare_pair(left, right)
+        self.assertEqual(pair["matched"], 0)
+        self.assertEqual(pair["overlap"], 0.0)
 
     def test_empty_pair_counts_as_agreement(self):
         from audit_stats.stability import compare_pair

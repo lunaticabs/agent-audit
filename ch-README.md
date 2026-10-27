@@ -136,7 +136,7 @@ PYTHONPATH=tools python3 -m audit_stats report --runs-root runs --expected 120
 ```
 
 统计覆盖漏洞数与严重度、fork 复现覆盖率（只算有 fork 证据的 run）、函数覆盖率
-（trace 与 harness 引用到的 ABI 函数）、同一目标重复审计的标题 Jaccard 与严重度漂移、
+（trace 与 harness 引用到的 ABI 函数）、同一目标重复审计的函数锚定标题相似度与严重度漂移、
 证据解析率、"声明覆盖 vs 磁盘观察"、工具使用、schema 分布、异常码和时长分位数，
 并按模型、链、是否已验证、schema 代际分层。`final_report.json` 按不可信输入处理：严重度归一化、
 证据路径必须落在 run 目录内，坏报告只进漏斗并记异常码，不抛异常。

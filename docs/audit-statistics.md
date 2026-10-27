@@ -77,9 +77,11 @@
   `target_address_mismatch`、`duration_inconsistent` 等。
 - 重复 finding ID、报告 run_id 与目录名不一致、prompt 地址与报告地址不一致。
 - legacy 报告占比（跨期比较必须先分层）。
-- **跨 run 稳定性**：同一 `(chain, address)` 的多次审计，按标题 token Jaccard
-  （默认 0.6）一一配对，算 `matched / (A+B-matched)` 重叠率和严重度 rank 漂移；
-  按 model/image/prompt hash 是否相同拆成 like-for-like 与 changed conditions。
+- **跨 run 稳定性**：同一 `(chain, address)` 的多次审计一一配对。优先用 `function`
+  字段锚定（函数集合有交集且标题相似度 ≥ 0.35），无函数锚定时标题相似度需 ≥ 0.5；
+  标题相似度取 token Jaccard、overlap coefficient、sequence ratio 的最大值。
+  算 `matched / (A+B-matched)` 重叠率和严重度 rank 漂移；按 model/image/prompt hash
+  是否相同拆成 like-for-like 与 changed conditions。
 - 后续：已知模板化问题占比（approve race、零地址转账等）用于区分"真发现"和"套路项"。
 
 ### E. 批次与规模化（"这一轮跑得怎么样"）
@@ -206,8 +208,9 @@ rsync -a --include='*/' --include='stats/' --include='stats/metrics.json' \
 - 旧 run：schema 识别为 `legacy`，仍能计入 1 个 medium 发现；无证据、
   无 fork、无 forge 日志，产生 2 条异常但不影响聚合。
 - 聚合：2 run，5 发现，高危 0，fork 复现 4/5，证据解析 14/14，函数覆盖 11/11。
-- 稳定性：当前没有同一地址的第二次审计，报告会明确写"n/a"；单元测试用两条
-  同地址的合成 run 覆盖了标题重排、部分重叠、严重度 +2 漂移和条件变化分支。
+- 稳定性：本地 WETH9 run 与 k3s WETH9 run（同地址、同 prompt、同 model）构成真实
+  重复审计对：6 个并集 finding 中匹配 4 个（66.7%），2 个严重度 +1，4 对全部由
+  `function` 锚定；纯标题 Jaccard 仅 22.2%，说明函数锚定的必要性。
 
 ## 8. 缺口与下一步
 

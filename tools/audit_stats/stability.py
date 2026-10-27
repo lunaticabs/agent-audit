@@ -8,12 +8,15 @@ repeatability, not correctness: two runs can agree and both be wrong.
 
 from __future__ import annotations
 
+import difflib
 import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .common import percentile, ratio
 
-DEFAULT_THRESHOLD = 0.6
+DEFAULT_THRESHOLD = 0.5
+FUNCTION_FLOOR = 0.35
+FUNCTION_BONUS = 0.15
 DEFAULT_MAX_PAIRS = 2000
 
 SEVERITY_RANK = {
@@ -93,6 +96,7 @@ STOPWORDS = {
 }
 
 TOKEN_RE = re.compile(r"[a-z0-9]+")
+FUNCTION_KEY_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 
 
 def title_tokens(title: Any) -> set:
@@ -111,6 +115,42 @@ def jaccard(left: set, right: set) -> float:
     return len(left & right) / len(union)
 
 
+def overlap_coefficient(left: set, right: set) -> float:
+    """Intersection over the smaller set; forgiving when one title adds words."""
+    if not left or not right:
+        return 0.0
+    return len(left & right) / min(len(left), len(right))
+
+
+def normalized_title(text: Any) -> str:
+    if not isinstance(text, str):
+        return ""
+    return " ".join(TOKEN_RE.findall(text.lower()))
+
+
+def title_similarity(left: Any, right: Any) -> Tuple[float, float, float, float]:
+    """Return (best, jaccard, overlap, sequence-ratio).
+
+    Titles are model-authored, so lexical overlap alone is too brittle. The
+    maximum of three signals is the best cheap proxy; the function field is a
+    separate anchor in `match_findings`.
+    """
+    left_tokens = title_tokens(left)
+    right_tokens = title_tokens(right)
+    jac = jaccard(left_tokens, right_tokens)
+    overlap = overlap_coefficient(left_tokens, right_tokens)
+    sequence = difflib.SequenceMatcher(
+        None, normalized_title(left), normalized_title(right)
+    ).ratio()
+    return max(jac, overlap, sequence), jac, overlap, sequence
+
+
+def function_keys(value: Any) -> set:
+    if not isinstance(value, str):
+        return set()
+    return {match.group(1).lower() for match in FUNCTION_KEY_RE.finditer(value)}
+
+
 def _finding_rows(metrics: Dict[str, Any]) -> List[Dict[str, Any]]:
     rows = metrics.get("findings")
     if not isinstance(rows, list):
@@ -122,36 +162,61 @@ def match_findings(
     left: Sequence[Dict[str, Any]],
     right: Sequence[Dict[str, Any]],
     threshold: float = DEFAULT_THRESHOLD,
-) -> List[Tuple[float, int, int]]:
-    """Greedy one-to-one matching by title token Jaccard.
+) -> List[Tuple[float, int, int, bool]]:
+    """Greedy one-to-one matching, anchored by `function` when available.
 
-    Greedy is enough here: findings per run are few, and a perfect bipartite
-    matching would cost more than it changes the overlap number.
+    A pair needs either:
+      - overlapping function keys (e.g. both `withdraw(uint256)`) plus a title
+        similarity of at least `FUNCTION_FLOOR`, or
+      - a title similarity of at least `threshold` when functions are absent or
+        disjoint.
+
+    The function anchor matters: in a real repeated audit the same four issues
+    were reworded heavily and token Jaccard was only 0.17-0.33, while the
+    `function` field still matched. Greedy is enough for the small number of
+    findings per run; a perfect bipartite matching would not change the number.
     """
     left_tokens = [title_tokens(row.get("title")) for row in left]
     right_tokens = [title_tokens(row.get("title")) for row in right]
+    left_norm = [normalized_title(row.get("title")) for row in left]
+    right_norm = [normalized_title(row.get("title")) for row in right]
+    left_funcs = [function_keys(row.get("function")) for row in left]
+    right_funcs = [function_keys(row.get("function")) for row in right]
 
-    candidates: List[Tuple[float, int, int]] = []
-    for index, tokens in enumerate(left_tokens):
-        if not tokens:
+    candidates: List[Tuple[float, float, bool, int, int]] = []
+    for index in range(len(left)):
+        if not left_tokens[index] and not left_funcs[index]:
             continue
-        for other, other_tokens in enumerate(right_tokens):
-            if not other_tokens:
+        for other in range(len(right)):
+            if not right_tokens[other] and not right_funcs[other]:
                 continue
-            score = jaccard(tokens, other_tokens)
-            if score >= threshold:
-                candidates.append((score, index, other))
+            jac = jaccard(left_tokens[index], right_tokens[other])
+            overlap = overlap_coefficient(left_tokens[index], right_tokens[other])
+            sequence = difflib.SequenceMatcher(
+                None, left_norm[index], right_norm[other]
+            ).ratio()
+            similarity = max(jac, overlap, sequence)
+            anchored = bool(left_funcs[index] & right_funcs[other])
+
+            if anchored:
+                if similarity < FUNCTION_FLOOR:
+                    continue
+            elif similarity < threshold:
+                continue
+
+            score = similarity + (FUNCTION_BONUS if anchored else 0.0)
+            candidates.append((score, similarity, anchored, index, other))
 
     candidates.sort(reverse=True)
     used_left: set = set()
     used_right: set = set()
-    matched: List[Tuple[float, int, int]] = []
-    for score, index, other in candidates:
+    matched: List[Tuple[float, int, int, bool]] = []
+    for _, similarity, anchored, index, other in candidates:
         if index in used_left or other in used_right:
             continue
         used_left.add(index)
         used_right.add(other)
-        matched.append((score, index, other))
+        matched.append((similarity, index, other, anchored))
     return matched
 
 
@@ -177,26 +242,51 @@ def compare_pair(
 
     deltas: List[int] = []
     scores: List[float] = []
-    for score, index, other in matched:
-        scores.append(score)
+    matched_by_function = 0
+    for similarity, index, other, anchored in matched:
+        scores.append(similarity)
+        if anchored:
+            matched_by_function += 1
         left_rank = _severity_rank(findings_left[index].get("severity"))
         right_rank = _severity_rank(findings_right[other].get("severity"))
         if left_rank is not None and right_rank is not None:
             deltas.append(right_rank - left_rank)
 
-    # Best-match score for every finding, with unmatched findings scored 0. This
-    # is stricter than averaging matched pairs only.
-    left_tokens = [title_tokens(row.get("title")) for row in findings_left]
-    right_tokens = [title_tokens(row.get("title")) for row in findings_right]
-    left_best = [
-        max((jaccard(tokens, other) for other in right_tokens), default=0.0)
-        for tokens in left_tokens
-    ]
-    right_best = [
-        max((jaccard(tokens, other) for other in left_tokens), default=0.0)
-        for tokens in right_tokens
-    ]
-    all_best = left_best + right_best
+    # Best-match score for every finding, with unmatched findings scored 0.
+    # Both the combined similarity (used for matching) and pure token Jaccard
+    # (a diagnostic) are reported; they diverge sharply on reworded titles.
+    left_best_similarity: List[float] = []
+    right_best_similarity: List[float] = []
+    left_best_jaccard: List[float] = []
+    right_best_jaccard: List[float] = []
+    for row in findings_left:
+        left_best_similarity.append(
+            max(
+                (title_similarity(row.get("title"), other.get("title"))[0] for other in findings_right),
+                default=0.0,
+            )
+        )
+        left_best_jaccard.append(
+            max(
+                (jaccard(title_tokens(row.get("title")), title_tokens(other.get("title"))) for other in findings_right),
+                default=0.0,
+            )
+        )
+    for row in findings_right:
+        right_best_similarity.append(
+            max(
+                (title_similarity(row.get("title"), other.get("title"))[0] for other in findings_left),
+                default=0.0,
+            )
+        )
+        right_best_jaccard.append(
+            max(
+                (jaccard(title_tokens(row.get("title")), title_tokens(other.get("title"))) for other in findings_left),
+                default=0.0,
+            )
+        )
+    all_best = left_best_similarity + right_best_similarity
+    all_best_jaccard = left_best_jaccard + right_best_jaccard
 
     run_left = left.get("run") or {}
     run_right = right.get("run") or {}
@@ -225,7 +315,10 @@ def compare_pair(
         "union": union,
         "overlap": overlap,
         "empty_pair": empty_pair,
-        "mean_best_jaccard": (sum(all_best) / len(all_best)) if all_best else None,
+        "matched_by_function": matched_by_function,
+        "matched_by_title": len(matched) - matched_by_function,
+        "mean_best_similarity": (sum(all_best) / len(all_best)) if all_best else None,
+        "mean_best_jaccard": (sum(all_best_jaccard) / len(all_best_jaccard)) if all_best_jaccard else None,
         "severity_delta_mean": (sum(deltas) / len(deltas)) if deltas else None,
         "severity_delta_max_abs": max((abs(delta) for delta in deltas), default=None),
         "severity_deltas": deltas,
@@ -320,11 +413,14 @@ def stability_summary(
 
     return {
         "threshold": threshold,
+        "function_floor": FUNCTION_FLOOR,
         "targets_with_repeat": len(repeated),
         "pairs": len(pairs),
         "truncated": truncated,
         "mean_overlap": _mean(overlaps),
         "median_overlap": percentile(overlaps, 0.5) if overlaps else None,
+        "mean_best_similarity": _mean([pair["mean_best_similarity"] for pair in pairs]),
+        "matched_by_function": sum(int(pair["matched_by_function"]) for pair in pairs),
         "zero_overlap_pairs": sum(1 for value in overlaps if value == 0),
         "mean_abs_severity_delta": _mean(abs_deltas),
         "severe_drift_pairs": sum(
