@@ -118,8 +118,14 @@ logs/agent.stderr.log
 The entrypoint runs DSH headless with the run directory as its working
 directory. When the audit exits, an exit trap writes `input/run_meta.json`
 (status, exit code, timings), captures the final answer in
-`reports/final_answer.md`, optionally copies the run to
+`reports/final_answer.md`, derives `stats/metrics.json` (set
+`AGENT_AUDIT_STATS=0` to skip it), optionally copies the run to
 `AGENT_AUDIT_PERSIST_DIR`, and calls `sync`.
+
+`stats/` is derived data: severity normalization, evidence-path checks, fork
+reproduction, tool usage, and anomalies. The collector never changes the audit
+exit code; failures land in `logs/stats.log`. Aggregation happens outside the
+container, see [../tools/audit_stats/README.md](../tools/audit_stats/README.md).
 
 `docker/run.sh` bind-mounts the host `runs/` directory at
 `/opt/agent-audit/runs`, so evidence is durable as it is written. k3s uses a

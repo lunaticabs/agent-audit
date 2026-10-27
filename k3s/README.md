@@ -28,8 +28,13 @@ creates Jobs; it does not assemble prompts or write task state.
 
 Or let GitHub Actions publish both images to GHCR. The manifests currently use:
 
-- `ghcr.io/lunaticabs/agent-audit:v2.0.0`
-- `ghcr.io/lunaticabs/agent-audit-dispatcher:v2.0.0`
+- `ghcr.io/lunaticabs/agent-audit:rebuild`
+- `ghcr.io/lunaticabs/agent-audit-dispatcher:rebuild`
+
+`rebuild` is a mutable branch tag: every push to the `rebuild` branch overwrites
+it. That is convenient while iterating, but a node that already cached the tag
+will not re-pull it under `IfNotPresent`. For a fixed release, use the
+`sha-<short>` tag published by the same workflow, or an image digest.
 
 If you use different tags, update [runner-configmap.yaml](runner-configmap.yaml)
 and [dispatcher-deployment.yaml](dispatcher-deployment.yaml). For tighter
@@ -110,7 +115,7 @@ k3s kubectl -n agent-audit exec deploy/agent-audit-redis -- \
   redis-cli XADD agent-audit:tasks '*' \
     task_id audit-20261026-001 \
     full_prompt 'Audit 0x0000000000000000000000000000000000000000 on eth.' \
-    image ghcr.io/lunaticabs/agent-audit:v2.0.0
+    image ghcr.io/lunaticabs/agent-audit:rebuild
 ```
 
 Batch submission from an address list:
@@ -125,7 +130,7 @@ python3 scripts/enqueue_redis.py \
   --address-file scripts/addresses/addrs.txt \
   --host 127.0.0.1 \
   --port 6380 \
-  --image ghcr.io/lunaticabs/agent-audit:v2.0.0
+  --image ghcr.io/lunaticabs/agent-audit:rebuild
 ```
 
 The default prompt template is:
@@ -165,10 +170,44 @@ reports/final_report.json    # required report
 reports/final_answer.md      # stdout captured from DSH
 logs/agent.stdout.log
 logs/agent.stderr.log
+logs/stats.log               # stats collector output
+stats/metrics.json           # derived post-run metrics
 ```
 
 DSH session files live under the image's `DSH_HOME`, outside the run directory;
 the audit evidence and final answer are captured in `runs/`.
+
+## Round statistics
+
+The runner writes `stats/metrics.json` from the finished run before the
+container exits, so the metrics sit next to the evidence on the node-local
+hostPath. Nothing else is required for collection.
+
+Aggregate on the node (or on any host that can see the runs root):
+
+```bash
+PYTHONPATH=tools python3 -m audit_stats collect --runs-root /var/lib/agent-audit/runs
+PYTHONPATH=tools python3 -m audit_stats report \
+  --runs-root /var/lib/agent-audit/runs \
+  --expected 500 \
+  --out /var/lib/agent-audit/reports/round-20261027
+```
+
+For multiple nodes, copy only the metrics files and aggregate centrally:
+
+```bash
+for node in node1 node2 node3; do
+  rsync -a --include='*/' --include='stats/' --include='stats/metrics.json' \
+    --exclude='*' "root@${node}:/var/lib/agent-audit/runs/" /central/runs/
+done
+PYTHONPATH=tools python3 -m audit_stats report --runs-root /central/runs --expected 500
+```
+
+A CronJob mounting the same hostPath can run this on a schedule. The dispatcher
+now injects `AGENT_AUDIT_IMAGE`, so results can be stratified by image tag; add
+a `batch_id` field to the Redis message when you need per-batch completion.
+See [docs/audit-statistics.md](../docs/audit-statistics.md) for metric
+definitions and failure modes.
 
 ## Operational notes
 

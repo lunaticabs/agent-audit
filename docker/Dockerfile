@@ -43,6 +43,7 @@ USER root
 ENV DEBIAN_FRONTEND=noninteractive
 ENV AGENT_AUDIT_PROJECT_ROOT=/opt/agent-audit
 ENV AGENT_AUDIT_RUNS_DIR=/opt/agent-audit/runs
+ENV AGENT_AUDIT_STATS_MODULE=/opt/agent-audit/tools
 ENV DSH_HOME=/opt/agent-audit/dsh-home
 ENV DSH_PERMISSION_MODE=danger-full-access
 ENV DSH_TELEMETRY_DISABLED=1
@@ -104,6 +105,9 @@ COPY --from=heimdall-builder /root/.cargo/bin/heimdall /usr/local/bin/heimdall
 COPY docker/entrypoint.sh ./entrypoint.sh
 COPY docker/dsh/cordis.patch.yml ./dsh-home/cordis.patch.yml
 COPY docker/dsh/skills ./dsh-home/skills
+# Post-run statistics: the entrypoint derives runs/<run_id>/stats/metrics.json
+# from the finished run directory. Stdlib only; never changes the audit result.
+COPY tools/audit_stats ./tools/audit_stats
 
 RUN chmod +x /opt/agent-audit/entrypoint.sh \
     && mkdir -p /opt/agent-audit/runs /opt/agent-audit/dsh-home
@@ -135,6 +139,7 @@ RUN bash -lc 'set -euo pipefail \
     && test -f /opt/agent-audit/dsh-home/skills/evm-audit/SKILL.md \
     && test -f /opt/agent-audit/dsh-home/skills/evm-audit/references/tools.md \
     && test -f /opt/agent-audit/dsh-home/skills/evm-audit/references/report.md \
-    && test -f /opt/agent-audit/dsh-home/skills/evm-audit/references/chains.md'
+    && test -f /opt/agent-audit/dsh-home/skills/evm-audit/references/chains.md \
+    && PYTHONPATH=/opt/agent-audit/tools python3 -m audit_stats --version'
 
 FROM runtime AS final

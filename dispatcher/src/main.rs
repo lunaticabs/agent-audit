@@ -418,6 +418,12 @@ fn build_job(config: &DispatcherConfig, task: &TaskMessage, job_name: &str) -> J
         ..Default::default()
     }];
 
+    let image = task
+        .image
+        .as_deref()
+        .unwrap_or(config.runner_image.as_str())
+        .to_string();
+
     let env = vec![
         EnvVar {
             name: "FULL_PROMPT".to_string(),
@@ -434,6 +440,13 @@ fn build_job(config: &DispatcherConfig, task: &TaskMessage, job_name: &str) -> J
             value: Some(run_id_for_task(&task.task_id)),
             ..Default::default()
         },
+        // Recorded in the run's stats/metrics.json so results can be
+        // stratified by image when a batch mixes tags.
+        EnvVar {
+            name: "AGENT_AUDIT_IMAGE".to_string(),
+            value: Some(image.clone()),
+            ..Default::default()
+        },
     ];
 
     let resources = build_resources(config);
@@ -446,12 +459,6 @@ fn build_job(config: &DispatcherConfig, task: &TaskMessage, job_name: &str) -> J
         }),
         ..Default::default()
     };
-
-    let image = task
-        .image
-        .as_deref()
-        .unwrap_or(config.runner_image.as_str())
-        .to_string();
 
     Job {
         metadata: ObjectMeta {
@@ -734,6 +741,11 @@ mod tests {
             .find(|item| item.name == "RUN_ID")
             .and_then(|item| item.value.as_deref());
         assert_eq!(run_id, Some("audit-2026-05-05-mainnet"));
+        let image = env
+            .iter()
+            .find(|item| item.name == "AGENT_AUDIT_IMAGE")
+            .and_then(|item| item.value.as_deref());
+        assert_eq!(image, Some("agent-audit:latest"));
     }
 
     #[test]

@@ -118,10 +118,33 @@ k3s kubectl -n agent-audit exec deploy/agent-audit-redis -- \
 python3 scripts/enqueue_redis.py \
   --chain eth \
   --address-file scripts/addresses/addrs.txt \
-  --image ghcr.io/lunaticabs/agent-audit:v2.0.0
+  --image ghcr.io/lunaticabs/agent-audit:rebuild
 ```
 
 每个 Job 挂载节点本地 `hostPath` 到 `/opt/agent-audit/runs`，Pod 清理后 run 仍在。完整部署、secret 和多节点注意事项见 [k3s/README.md](k3s/README.md)。
+
+## 运行统计
+
+每个 run 结束时，入口脚本会生成派生的 `stats/metrics.json`（`AGENT_AUDIT_STATS=0` 可关闭）。聚合一轮：
+
+```bash
+# 为还没有 metrics 的 run 补齐
+PYTHONPATH=tools python3 -m audit_stats collect --runs-root runs
+
+# 一轮报告：summary.json、REPORT.md、runs.csv、findings.csv
+PYTHONPATH=tools python3 -m audit_stats report --runs-root runs --expected 120
+```
+
+统计覆盖漏洞数与严重度、fork 复现覆盖率（只算有 fork 证据的 run）、函数覆盖率
+（trace 与 harness 引用到的 ABI 函数）、同一目标重复审计的标题 Jaccard 与严重度漂移、
+证据解析率、"声明覆盖 vs 磁盘观察"、工具使用、schema 分布、异常码和时长分位数，
+并按模型、链、是否已验证、schema 代际分层。`final_report.json` 按不可信输入处理：严重度归一化、
+证据路径必须落在 run 目录内，坏报告只进漏斗并记异常码，不抛异常。
+
+`stats/` 是派生物，可随时删除重建。k3s 下 metrics 与证据一起落在节点本地 hostPath，
+多节点只需稀疏 rsync `*/stats/metrics.json` 后集中聚合。指标口径与 k3s 方案见
+[docs/audit-statistics.md](docs/audit-statistics.md)，命令与 schema 见
+[tools/audit_stats/README.md](tools/audit_stats/README.md)。
 
 ## 开发检查
 

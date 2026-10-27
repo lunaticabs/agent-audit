@@ -28,6 +28,10 @@ optional:
   AGENT_AUDIT_RUNS_DIR Working run root. Default: /opt/agent-audit/runs
   AGENT_AUDIT_PERSIST_DIR
                        Optional second run root; the finished run is copied there.
+  AGENT_AUDIT_STATS    Set to 0 to skip post-run stats/metrics.json collection.
+  AGENT_AUDIT_STATS_MODULE
+                       Python path containing the audit_stats package.
+                       Default: /opt/agent-audit/tools
   -h, --help           Show this help message
 
 The container persists the whole run directory. In the single-audit Docker
@@ -181,6 +185,8 @@ finalize() {
       --arg prompt_file "input/prompt.txt" \
       --arg model "${DSH_MODEL:-}" \
       --arg reasoning_effort "${DSH_REASONING_EFFORT:-max}" \
+      --arg image "${AGENT_AUDIT_IMAGE:-}" \
+      --arg batch_id "${BATCH_ID:-}" \
       --arg status "$status" \
       --arg started_at "${STARTED_AT:-}" \
       --arg finished_at "$finished_at" \
@@ -195,6 +201,8 @@ finalize() {
         prompt_file: $prompt_file,
         model: $model,
         reasoning_effort: $reasoning_effort,
+        image: (if $image == "" then null else $image end),
+        batch_id: (if $batch_id == "" then null else $batch_id end),
         status: $status,
         exit_code: $exit_code,
         started_at: $started_at,
@@ -203,6 +211,18 @@ finalize() {
         stdout_log: $stdout_log,
         stderr_log: $stderr_log
       }' >"${RUN_DIR}/input/run_meta.json"
+
+    # Derive stats/metrics.json from the finished run. This is best-effort:
+    # a metrics failure must never change the audit's exit code, and the
+    # collector already writes atomically. AGENT_AUDIT_STATS=0 disables it.
+    if [[ "${AGENT_AUDIT_STATS:-1}" != "0" ]] && command -v python3 >/dev/null 2>&1; then
+      local stats_module="${AGENT_AUDIT_STATS_MODULE:-${PROJECT_ROOT}/tools}"
+      if [[ -d "${stats_module}/audit_stats" ]]; then
+        PYTHONPATH="${stats_module}${PYTHONPATH:+:${PYTHONPATH}}" \
+          python3 -m audit_stats collect "${RUN_DIR}" \
+          >/dev/null 2>"${RUN_DIR}/logs/stats.log" || true
+      fi
+    fi
 
     if [[ -n "${AGENT_AUDIT_PERSIST_DIR:-}" && "${AGENT_AUDIT_PERSIST_DIR}" != "${RUNS_DIR}" ]]; then
       mkdir -p "${AGENT_AUDIT_PERSIST_DIR}/${RUN_ID}"
@@ -307,6 +327,8 @@ main() {
     --arg prompt_file "input/prompt.txt" \
     --arg model "$DSH_MODEL" \
     --arg reasoning_effort "${DSH_REASONING_EFFORT:-max}" \
+    --arg image "${AGENT_AUDIT_IMAGE:-}" \
+    --arg batch_id "${BATCH_ID:-}" \
     --arg started_at "$STARTED_AT" \
     '{
       schema_version: 1,
@@ -315,6 +337,8 @@ main() {
       prompt_file: $prompt_file,
       model: $model,
       reasoning_effort: $reasoning_effort,
+      image: (if $image == "" then null else $image end),
+      batch_id: (if $batch_id == "" then null else $batch_id end),
       status: "running",
       exit_code: null,
       started_at: $started_at,

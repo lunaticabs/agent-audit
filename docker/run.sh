@@ -70,6 +70,9 @@ if [[ -n "${FULL_PROMPT:-}" ]]; then
   docker_args+=(-e FULL_PROMPT)
 fi
 
+# The run's stats/metrics.json records the image so results can be stratified.
+docker_args+=(-e "AGENT_AUDIT_IMAGE=${IMAGE}")
+
 docker_args+=(
   "${IMAGE}"
   "$@"

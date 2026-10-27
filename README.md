@@ -48,6 +48,7 @@ Parallel audit:
 | `k3s/` | Redis queue, dispatcher Deployment, runner Job template, hostPath runs |
 | `dispatcher/` | Rust Redis-to-Kubernetes-Job bridge |
 | `scripts/` | Batch enqueue helper and address lists |
+| `tools/` | Post-run statistics (`audit_stats`) |
 | `xtask/` | Workspace formatting, linting, and test checks |
 | `docs/` | Long-form reports |
 
@@ -79,6 +80,8 @@ reports/final_report.json     # required structured report
 reports/final_answer.md       # captured DSH stdout
 logs/agent.stdout.log
 logs/agent.stderr.log
+logs/stats.log                # stats collector output
+stats/metrics.json            # derived post-run metrics
 ```
 
 The entrypoint writes the final metadata and captures stdout on exit. The
@@ -154,12 +157,42 @@ Submit a batch:
 python3 scripts/enqueue_redis.py \
   --chain eth \
   --address-file scripts/addresses/addrs.txt \
-  --image ghcr.io/lunaticabs/agent-audit:v2.0.0
+  --image ghcr.io/lunaticabs/agent-audit:rebuild
 ```
 
 Each Job mounts a node-local `hostPath` at `/opt/agent-audit/runs`, so the run
 survives Pod cleanup. See [k3s/README.md](k3s/README.md) for the full deployment,
 secret, and multi-node caveats.
+
+## Run statistics
+
+Every finished run gets a derived `stats/metrics.json` (the entrypoint collects
+it on exit; `AGENT_AUDIT_STATS=0` disables it). Aggregate a round:
+
+```bash
+# collect metrics for runs that do not have them yet
+PYTHONPATH=tools python3 -m audit_stats collect --runs-root runs
+
+# round report: summary.json, REPORT.md, runs.csv, findings.csv
+PYTHONPATH=tools python3 -m audit_stats report --runs-root runs --expected 120
+```
+
+The report covers findings and severity, fork-reproduction coverage (linked test
+passed, restricted to fork-backed runs), trace-based function coverage (which
+ABI functions the run exercised), cross-run stability (title Jaccard and
+severity drift when a target was audited more than once), evidence resolution,
+declared-vs-observed coverage, tool usage, schema grades, anomalies, and latency
+percentiles, with strata by model, chain, verified status, and schema grade. It treats
+`final_report.json` as untrusted: severity is normalized, evidence paths must
+stay inside the run directory, and a bad report lands in the funnel with an
+anomaly code instead of an exception.
+
+`stats/` is derived and safe to delete. On k3s the metrics land on the
+node-local hostPath with the run; multi-node aggregation rsyncs only
+`*/stats/metrics.json`. See [docs/audit-statistics.md](docs/audit-statistics.md)
+for the metric definitions and k3s collection plan, and
+[tools/audit_stats/README.md](tools/audit_stats/README.md) for the CLI and
+schema.
 
 ## Development checks
 
