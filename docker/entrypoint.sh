@@ -36,8 +36,8 @@ so evidence is durable as soon as it is written. In k3s the dispatcher mounts
 the node-local /var/lib/agent-audit/runs directory into every Job.
 
 Examples:
-  ./docker/run.sh --prompt "Audit 0x... on eth. Start by loading the evm-audit skill."
-  FULL_PROMPT="Audit 0x... on base. Start by loading the evm-audit skill." ./docker/run.sh
+  ./docker/run.sh --prompt "Audit 0x... on eth."
+  FULL_PROMPT="Audit 0x... on base." ./docker/run.sh
 EOF
 }
 
@@ -353,6 +353,8 @@ main() {
     tee -a "$RUN_DIR/logs/agent.stderr.log" >&2 <"$fifo_dir/stderr" &
     STDERR_TEE=$!
 
+    # DSH headless reads stdin as the initial user message; prompt.txt is the
+    # durable copy kept in the run record.
     "${dsh_cmd[@]}" --profile "$DSH_PROFILE" \
       <"$RUN_DIR/input/prompt.txt" \
       >"$fifo_dir/stdout" \
@@ -368,6 +370,8 @@ main() {
     STDERR_TEE=""
     rm -rf "$fifo_dir"
   else
+    # DSH headless reads stdin as the initial user message; prompt.txt is the
+    # durable copy kept in the run record.
     "${dsh_cmd[@]}" --profile "$DSH_PROFILE" \
       <"$RUN_DIR/input/prompt.txt" \
       >"$RUN_DIR/logs/agent.stdout.log" \

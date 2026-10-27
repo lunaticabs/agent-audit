@@ -13,7 +13,7 @@ usage() {
 usage: ./docker/run.sh [--prompt <text>]
 
 examples:
-  ./docker/run.sh --prompt "Audit 0x0000000000000000000000000000000000000000 on eth. Start by loading the evm-audit skill."
+  ./docker/run.sh --prompt "Audit 0x0000000000000000000000000000000000000000 on eth."
   FULL_PROMPT="Audit 0x0000000000000000000000000000000000000000 on base." ./docker/run.sh
 EOF
 }

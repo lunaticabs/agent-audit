@@ -48,10 +48,31 @@ through DSH's `deepseek-official` provider; OpenRouter is not used.
 `deepseek-v4-pro`. `DSH_REASONING_EFFORT` accepts `off`, `low`, `high`, or
 `max`; the image default is `max`.
 
+## Environment variables
+
+For a manual single audit, put values in the repository `.env`; it is
+gitignored. `docker/run.sh` mounts it read-only at `/opt/agent-audit/.env` and
+the entrypoint loads it. The script also forwards these exported shell
+variables into the container if present:
+
+```text
+DEEPSEEK_API_KEY DSH_MODEL DSH_REASONING_EFFORT
+ETHERSCAN_API_KEY ETHERSCAN_API_URL RPC_URL
+TASK_ID RUN_ID AGENT_AUDIT_PERSIST_DIR
+```
+
+An already-exported variable wins over the same key in `.env`; image defaults
+apply last. `DEEPSEEK_API_KEY` is required. `ETHERSCAN_API_KEY` and `RPC_URL`
+are strongly recommended; source/bytecode work and fork tests need them.
+
+For a direct `docker run`, either mount `.env` the same way (recommended) or
+pass `--env-file .env` / `-e NAME=value`. The prompt is not an environment
+variable for the agent: pass it as `--prompt` or `FULL_PROMPT`.
+
 ## Run one audit
 
 ```bash
-./docker/run.sh --prompt "Audit 0x0000000000000000000000000000000000000000 on eth. Start by loading the evm-audit skill."
+./docker/run.sh --prompt "Audit 0x0000000000000000000000000000000000000000 on eth."
 ```
 
 Or pass the prompt through the environment:
@@ -72,7 +93,10 @@ docker run --rm \
 
 The runner accepts one complete prompt only. It does not assemble `address`,
 `chain`, or `instructions` fields. The caller includes the target, network, and
-any scope in the prompt.
+any scope in the prompt. The entrypoint passes that text to DSH on stdin as the
+initial user message, and also keeps a durable copy in `input/prompt.txt`.
+DSH's skill catalog triggers the `evm-audit` skill from its description, so the
+prompt needs no routing or role text.
 
 `TASK_ID` is optional; use it for an external scheduler. `RUN_ID` overrides the
 generated run-directory name. Both are normalized to a safe directory name.
@@ -112,7 +136,7 @@ There is no MongoDB or other archive backend.
 - Heimdall
 - `jq`, `curl`, `git`, and the usual shell
 - vendored `forge-std` for offline harnesses
-- the `evm-audit` skill and audit instructions under `DSH_HOME`
+- the `evm-audit` skill under `DSH_HOME` (the run's entry point)
 
 The base image is the pinned Trail of Bits eth-security-toolbox image. Heimdall
 is built from a pinned upstream revision in an Ubuntu 22.04 builder so its
@@ -126,15 +150,17 @@ The image ships a home-level DSH patch at `dsh-home/cordis.patch.yml`:
 
 - model/provider: `deepseek-official` + `DSH_MODEL` (default `deepseek-flash`)
 - reasoning effort: `DSH_REASONING_EFFORT` (default `max`)
+- no role or persona prompt
 - full sandbox access and no approval prompts inside the container
 - session-log and package-inventory request extensions disabled
 - auxiliary title-generation model call disabled
 - telemetry disabled by default
 
-The audit instructions live at `dsh-home/AGENTS.md`; the single main skill is
-`dsh-home/skills/evm-audit/SKILL.md`, with the supported-chain table in
-`references/chains.md`. There are no per-tool workflow skills: tools are
-declared in the main skill and used directly.
+The single main skill is `dsh-home/skills/evm-audit/SKILL.md`. Its root is a
+short router; tool commands, supported chains, and the report shape live in
+`references/` and load on demand. The skill description triggers on audit
+tasks. There is no role prompt, no per-tool workflow skill, and no separate
+AGENTS.md in the image.
 
 ## Security boundary
 

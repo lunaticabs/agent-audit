@@ -60,7 +60,7 @@ are strongly recommended; closed-source and fork-based work needs RPC.
 cp .env.example .env
 # fill DEEPSEEK_API_KEY, ETHERSCAN_API_KEY, RPC_URL
 ./docker/build.sh
-./docker/run.sh --prompt "Audit 0x0000000000000000000000000000000000000000 on eth. Start by loading the evm-audit skill."
+./docker/run.sh --prompt "Audit 0x0000000000000000000000000000000000000000 on eth."
 ```
 
 The container accepts exactly one complete prompt, through `FULL_PROMPT` or
@@ -70,7 +70,7 @@ prompt. See [docker/README.md](docker/README.md).
 A finished run lands in `runs/<run_id>/`:
 
 ```text
-input/prompt.txt              # caller request
+input/prompt.txt              # durable copy of the caller request
 input/request.json            # normalized request
 input/run_meta.json           # status, exit code, timings
 artifacts/                    # evidence produced by the agent
@@ -113,16 +113,18 @@ discovery and source-provider CLI are not in the loop.
 
 ## Skill design
 
-`docker/dsh/skills/evm-audit/SKILL.md` is the only audit skill. It contains:
+`docker/dsh/skills/evm-audit/SKILL.md` is the only audit skill. Its root is a
+short router: workspace/output contract, a few non-obvious checks, and pointers.
+Details load on demand:
 
-- an evidence standard and report contract,
-- source/verified and bytecode/closed-source guidance,
-- the available tool catalog with direct command examples,
-- Etherscan v2 endpoints and proxy-slot recipes,
-- a pointer to the supported-chain table.
+- `references/tools.md` — Etherscan v2, RPC, Foundry, Slither, Echidna, Heimdall.
+- `references/report.md` — report shape and evidence requirements.
+- `references/chains.md` — supported chain aliases and IDs.
 
-`docker/AGENTS.md` is short: workspace contract, evidence rules, credentials,
-and a pointer to the skill. It deliberately does not prescribe a step order.
+The skill is the run's entry point. DSH exposes it in the skill catalog and the
+audit task triggers it from its description; there is no role prompt, no forced
+workflow, and no separate AGENTS.md in the runtime image. The root file stays
+short and routes to references for tools, chains, and report format.
 
 ## k3s deployment
 
@@ -143,7 +145,7 @@ Submit one task:
 k3s kubectl -n agent-audit exec deploy/agent-audit-redis -- \
   redis-cli XADD agent-audit:tasks '*' \
     task_id audit-20261026-001 \
-    full_prompt 'Audit 0x0000000000000000000000000000000000000000 on eth. Start by loading the evm-audit skill.'
+    full_prompt 'Audit 0x0000000000000000000000000000000000000000 on eth.'
 ```
 
 Submit a batch:

@@ -109,7 +109,7 @@ name after normalization.
 k3s kubectl -n agent-audit exec deploy/agent-audit-redis -- \
   redis-cli XADD agent-audit:tasks '*' \
     task_id audit-20261026-001 \
-    full_prompt 'Audit 0x0000000000000000000000000000000000000000 on eth. Start by loading the evm-audit skill.' \
+    full_prompt 'Audit 0x0000000000000000000000000000000000000000 on eth.' \
     image ghcr.io/lunaticabs/agent-audit:v2.0.0
 ```
 
@@ -131,8 +131,11 @@ python3 scripts/enqueue_redis.py \
 The default prompt template is:
 
 ```text
-Audit {address} on {chain}. Start by loading the evm-audit skill.
+Audit {address} on {chain}.
 ```
+
+DSH's skill catalog triggers the `evm-audit` skill from its description, so the
+prompt can stay minimal and needs no routing text.
 
 Preview without sending:
 

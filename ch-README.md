@@ -45,7 +45,7 @@
 cp .env.example .env
 # 填写 DEEPSEEK_API_KEY、ETHERSCAN_API_KEY、RPC_URL
 ./docker/build.sh
-./docker/run.sh --prompt "Audit 0x0000000000000000000000000000000000000000 on eth. Start by loading the evm-audit skill."
+./docker/run.sh --prompt "Audit 0x0000000000000000000000000000000000000000 on eth."
 ```
 
 容器只接受一个完整 prompt，通过 `FULL_PROMPT` 或 `--prompt` 传入。目标地址、链、范围和输出要求都由调用方写进 prompt。细节见 [docker/README.md](docker/README.md)。
@@ -80,15 +80,15 @@ entrypoint 在退出时自动写 metadata、保存 stdout 并 `sync`。agent 不
 
 ## Skill 设计
 
-`docker/dsh/skills/evm-audit/SKILL.md` 是唯一审计 skill，包含：
+`docker/dsh/skills/evm-audit/SKILL.md` 是唯一审计 skill。
 
-- 证据标准和报告格式；
-- 源码审计与 bytecode/闭源审计指引；
-- 工具目录和直接命令示例；
-- Etherscan v2 端点与 proxy slot 用法；
-- 支持链表入口。
+根文件只是一个很短的 router：工作区/输出约定、几个非显而易见的检查点、以及 references 指针。细节按需加载：
 
-`docker/AGENTS.md` 很短：工作区、证据规则、凭据、指向主 skill；不规定步骤顺序。
+- `references/tools.md` — Etherscan v2、RPC、Foundry、Slither、Echidna、Heimdall；
+- `references/report.md` — 报告结构和证据要求；
+- `references/chains.md` — 支持的链别名和 chain ID。
+
+主 skill 就是本次 run 的入口。DSH 把 skill 放进 catalog，审计任务通过 description 触发它；没有 role prompt、没有强制 workflow，镜像内也没有单独的 AGENTS.md。根文件保持很短，只做路由，工具、链和报告细节放在 references 里。
 
 ## k3s 部署
 
@@ -109,7 +109,7 @@ k3s kubectl apply -k k3s/
 k3s kubectl -n agent-audit exec deploy/agent-audit-redis -- \
   redis-cli XADD agent-audit:tasks '*' \
     task_id audit-20261026-001 \
-    full_prompt 'Audit 0x0000000000000000000000000000000000000000 on eth. Start by loading the evm-audit skill.'
+    full_prompt 'Audit 0x0000000000000000000000000000000000000000 on eth.'
 ```
 
 批量提交：

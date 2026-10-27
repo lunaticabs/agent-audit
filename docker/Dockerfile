@@ -102,7 +102,6 @@ WORKDIR /opt/agent-audit
 
 COPY --from=heimdall-builder /root/.cargo/bin/heimdall /usr/local/bin/heimdall
 COPY docker/entrypoint.sh ./entrypoint.sh
-COPY docker/AGENTS.md ./dsh-home/AGENTS.md
 COPY docker/dsh/cordis.patch.yml ./dsh-home/cordis.patch.yml
 COPY docker/dsh/skills ./dsh-home/skills
 
@@ -132,9 +131,10 @@ RUN bash -lc 'set -euo pipefail \
     && /opt/agent-audit/entrypoint.sh --help >/dev/null 2>&1 \
     && heimdall --help >/dev/null \
     && test -f /opt/agent-audit/vendor/forge-std/src/Test.sol \
-    && test -f /opt/agent-audit/dsh-home/AGENTS.md \
     && test -f /opt/agent-audit/dsh-home/cordis.patch.yml \
     && test -f /opt/agent-audit/dsh-home/skills/evm-audit/SKILL.md \
+    && test -f /opt/agent-audit/dsh-home/skills/evm-audit/references/tools.md \
+    && test -f /opt/agent-audit/dsh-home/skills/evm-audit/references/report.md \
     && test -f /opt/agent-audit/dsh-home/skills/evm-audit/references/chains.md'
 
 FROM runtime AS final

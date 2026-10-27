@@ -14,12 +14,10 @@
     apiKeyEnv: DEEPSEEK_API_KEY
     reasoningEffort: !!js process.env.DSH_REASONING_EFFORT || 'max'
 
+# No role or persona prompt. The task and the `evm-audit` skill define the job.
 - id: system-prompt
   config:
-    personaPrefix: >-
-      You are an expert smart contract security auditor. You work autonomously,
-      prefer evidence over speculation, and keep the audit workspace durable and
-      reviewable.
+    personaPrefix: ""
 
 - id: sandbox-policy
   config:
