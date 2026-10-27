@@ -1,121 +1,91 @@
-# k3s Parallel Audit Deployment
+# k3s parallel audit deployment
 
-This directory is the single-server `k3s` deployment for running multiple one-shot `agent-audit` tasks.
+This directory runs many one-shot audits on a single-node k3s cluster. Each
+Redis message becomes one Kubernetes Job; each Job runs one DSH headless audit
+and writes its complete workspace to a node-local `runs/` directory.
 
 Topology:
 
-- one `Redis` deployment for the submission queue
-- one `agent-audit-dispatcher` deployment that bridges Redis Stream messages into `Job` objects
-- one Kubernetes `Job` per audit task
-- `Mongo` remains the durable archive through the existing `sync-run` flow
+```text
+Redis Stream
+  -> agent-audit-dispatcher Deployment
+  -> one Kubernetes Job per task
+  -> agent-audit runner (DSH headless + tools)
+  -> /opt/agent-audit/runs/<run_id>
+  -> hostPath /var/lib/agent-audit/runs/<run_id>
+```
 
-There is no long-running `agent-audit` Deployment. The runner exists only as one-shot Jobs that the dispatcher creates from the template settings in [runner-configmap.yaml](/Users/lunaticabs/code/agent-audit/k3s/runner-configmap.yaml).
+There is no database, no archive service, and no long-running runner
+Deployment. The run directory is the durable artifact. The dispatcher only
+creates Jobs; it does not assemble prompts or write task state.
 
-Even though this is scoped to `k3s`, it still uses the standard Kubernetes APIs that `k3s` exposes: `Deployment`, `Service`, `Job`, `Secret`, `ConfigMap`, and `RBAC`.
-
-## Build Images
-
-You can build locally:
+## Build images
 
 ```bash
 ./docker/build.sh
-```
-
-```bash
 ./docker/build-dispatcher.sh
 ```
 
-Or use GitHub Actions + GHCR:
+Or let GitHub Actions publish both images to GHCR. The manifests currently use:
 
-- push the repository to GitHub
-- let [.github/workflows/publish-images.yml](/Users/lunaticabs/code/agent-audit/.github/workflows/publish-images.yml) build and publish both images
-- after the first successful publish, set both GHCR packages to `public` for the simplest k3s pull path
+- `ghcr.io/lunaticabs/agent-audit:v2.0.0`
+- `ghcr.io/lunaticabs/agent-audit-dispatcher:v2.0.0`
 
-The workflow publishes:
+If you use different tags, update [runner-configmap.yaml](runner-configmap.yaml)
+and [dispatcher-deployment.yaml](dispatcher-deployment.yaml). For tighter
+release control, use a `sha-...` tag or an image digest.
 
-- `ghcr.io/<owner>/agent-audit:<tag>`
-- `ghcr.io/<owner>/agent-audit-dispatcher:<tag>`
+## Prepare the node
 
-The current manifests are wired for these release tags:
-
-- `ghcr.io/lunaticabs/agent-audit:v1.1.3`
-- `ghcr.io/lunaticabs/agent-audit-dispatcher:v1.0.1`
-
-Set image addresses in two places before applying if you later switch either tag:
-
-- runner image in [runner-configmap.yaml](/Users/lunaticabs/code/agent-audit/k3s/runner-configmap.yaml)
-- dispatcher image in [dispatcher-deployment.yaml](/Users/lunaticabs/code/agent-audit/k3s/dispatcher-deployment.yaml)
-
-These manifests use `imagePullPolicy: Always` for the dispatcher and `IfNotPresent` for runner Jobs. For tighter release control, replace those tags with a concrete `sha-...` tag or image digest.
-
-If you want to check the currently configured image references:
+Each runner Job mounts a hostPath volume. Create the directory once on the k3s
+node (the `DirectoryOrCreate` type also creates it, but an explicit directory
+with restrictive permissions is clearer):
 
 ```bash
-rg -n "ghcr.io/.*/agent-audit" k3s
+sudo mkdir -p /var/lib/agent-audit/runs
+sudo chmod 700 /var/lib/agent-audit/runs
 ```
 
-## Prepare Secrets
+The path is configurable through
+`DISPATCHER_RUNNER_RUNS_HOST_PATH` in [runner-configmap.yaml](runner-configmap.yaml).
 
-Copy [runner-secret.example.yaml](/Users/lunaticabs/code/agent-audit/k3s/runner-secret.example.yaml) to `k3s/runner-secret.yaml` and fill in:
-
-- `OPENROUTER_API_KEY`
-- every required `AGENT_AUDIT_*`
-- `AGENT_AUDIT_MONGO_URI`
-
-Copy [dispatcher-secret.example.yaml](/Users/lunaticabs/code/agent-audit/k3s/dispatcher-secret.example.yaml) to `k3s/dispatcher-secret.yaml`. For the default in-cluster Redis service, `redis://agent-audit-redis:6379/0` is enough.
-
-Host-side `k3s` reservations are separate from Pod requests and limits. The current recommendation for your single server is captured in [server-config.example.yaml](/Users/lunaticabs/code/agent-audit/k3s/server-config.example.yaml):
-
-- reserve `4` CPU cores and `16Gi` memory for the host via `system-reserved`
-- keep `traefik` and `servicelb` disabled
-
-Apply that file to `/etc/rancher/k3s/config.yaml` on the server and restart `k3s`:
+## Prepare secrets
 
 ```bash
-sudo install -d /etc/rancher/k3s
-sudo cp k3s/server-config.example.yaml /etc/rancher/k3s/config.yaml
-sudo systemctl restart k3s
+cp k3s/runner-secret.example.yaml k3s/runner-secret.yaml
+cp k3s/dispatcher-secret.example.yaml k3s/dispatcher-secret.yaml
 ```
 
-If you keep the GHCR images `public`, no image pull secret is required.
+Fill [runner-secret.example.yaml](runner-secret.example.yaml):
 
-If you keep them `private`, create a registry pull secret named `agent-audit-registry` in the `agent-audit` namespace:
+- `DEEPSEEK_API_KEY` — required by DSH
+- `DSH_MODEL` — defaults to `deepseek-flash`; use `deepseek-v4-pro` for a
+  stronger model
+- `DSH_REASONING_EFFORT` — `off`, `low`, `high`, or `max`
+- `ETHERSCAN_API_KEY`, `ETHERSCAN_API_URL` — direct Etherscan v2 access
+- `RPC_URL` — archive RPC for fork tests and fuzzing
 
-```bash
-k3s kubectl create secret docker-registry agent-audit-registry \
-  --namespace agent-audit \
-  --docker-server ghcr.io \
-  --docker-username "$GITHUB_USER" \
-  --docker-password "$GHCR_READ_PACKAGES_TOKEN"
-```
+No Mongo or Codex/OpenRouter values are used. Remove stale keys from existing
+secrets before applying.
 
-For private images:
+For the default in-cluster Redis, `redis://agent-audit-redis:6379/0` is enough
+in the dispatcher secret.
 
-- add an `imagePullSecrets` stanza back into [dispatcher-deployment.yaml](/Users/lunaticabs/code/agent-audit/k3s/dispatcher-deployment.yaml)
-- set `DISPATCHER_RUNNER_IMAGE_PULL_SECRET` to `agent-audit-registry` in [runner-configmap.yaml](/Users/lunaticabs/code/agent-audit/k3s/runner-configmap.yaml)
+If the GHCR images are private, create a registry pull secret named
+`agent-audit-registry` in the `agent-audit` namespace and set
+`DISPATCHER_RUNNER_IMAGE_PULL_SECRET` accordingly.
 
 ## Deploy
 
-Apply the namespace first:
-
 ```bash
 k3s kubectl apply -f k3s/namespace.yaml
-```
-
-Apply your filled secrets:
-
-```bash
 k3s kubectl apply -f k3s/runner-secret.yaml
 k3s kubectl apply -f k3s/dispatcher-secret.yaml
-```
-
-Apply the rest:
-
-```bash
 k3s kubectl apply -k k3s/
 ```
 
-If you change [runner-configmap.yaml](/Users/lunaticabs/code/agent-audit/k3s/runner-configmap.yaml) later, restart the dispatcher so it reloads the new Job template environment:
+If you change the runner ConfigMap later, restart the dispatcher so it reloads
+the Job template:
 
 ```bash
 k3s kubectl -n agent-audit rollout restart deploy/agent-audit-dispatcher
@@ -126,23 +96,24 @@ Watch the control plane:
 
 ```bash
 k3s kubectl -n agent-audit get deploy,pods
+k3s kubectl -n agent-audit get jobs,pods -w
 ```
 
-## Submit Tasks
+## Submit tasks
 
-Each Redis message contains a `task_id`, one complete prompt, and an optional image override. The dispatcher does not assemble prompts and does not write task state back into Redis.
-
-Example:
+Each Redis message carries a `task_id`, one complete prompt, and an optional
+image override. `task_id` is the idempotency key and becomes the run directory
+name after normalization.
 
 ```bash
 k3s kubectl -n agent-audit exec deploy/agent-audit-redis -- \
   redis-cli XADD agent-audit:tasks '*' \
-    task_id audit-20260505-001 \
-    full_prompt 'Check AGENTS.md and audit 0x0000000000000000000000000000000000000000 on eth. Focus on upgradeability and authz.' \
-    image registry.example.com/agent-audit:0.1
+    task_id audit-20261026-001 \
+    full_prompt 'Audit 0x0000000000000000000000000000000000000000 on eth. Start by loading the evm-audit skill.' \
+    image ghcr.io/lunaticabs/agent-audit:v2.0.0
 ```
 
-For batch submission from an address list, keep a local port-forward open and use [enqueue_redis.py](/Users/lunaticabs/code/agent-audit/scripts/enqueue_redis.py):
+Batch submission from an address list:
 
 ```bash
 k3s kubectl -n agent-audit port-forward svc/agent-audit-redis 6380:6379
@@ -154,17 +125,14 @@ python3 scripts/enqueue_redis.py \
   --address-file scripts/addresses/addrs.txt \
   --host 127.0.0.1 \
   --port 6380 \
-  --image ghcr.io/lunaticabs/agent-audit:v1.1.3
+  --image ghcr.io/lunaticabs/agent-audit:v2.0.0
 ```
 
-Defaults:
+The default prompt template is:
 
-- one address per line
-- blank lines and `#` comments ignored
-- address text is preserved exactly as written, including case
-- only exact duplicate lines are skipped
-- default prompt template: `Check AGENTS.md and audit {address} on {chain}.`
-- auto-generated unique task IDs in the form `audit-<timestamp>-<chain>-<index>-...`
+```text
+Audit {address} on {chain}. Start by loading the evm-audit skill.
+```
 
 Preview without sending:
 
@@ -172,27 +140,47 @@ Preview without sending:
 python3 scripts/enqueue_redis.py --chain eth --dry-run
 ```
 
-Track jobs and pods from `k3s` directly:
+## Read results
+
+Use Kubernetes Job/Pod state for execution state and the host run directory for
+audit artifacts:
 
 ```bash
-k3s kubectl -n agent-audit get jobs,pods -w
+k3s kubectl -n agent-audit describe job agent-audit-audit-20261026-001
+sudo ls -la /var/lib/agent-audit/runs/audit-20261026-001
 ```
 
-Inspect one Job in detail:
+Each run contains:
 
-```bash
-k3s kubectl -n agent-audit describe job agent-audit-audit-20260505-001
+```text
+input/prompt.txt
+input/request.json
+input/run_meta.json          # status, exit code, timings (written on exit)
+artifacts/                   # evidence the agent produced
+sources/                     # optional fetched source
+reports/final_report.json    # required report
+reports/final_answer.md      # stdout captured from DSH
+logs/agent.stdout.log
+logs/agent.stderr.log
 ```
 
-Use `Job.status` and `Pod.status` as the source of truth for runtime state. Redis is input-only.
+DSH session files live under the image's `DSH_HOME`, outside the run directory;
+the audit evidence and final answer are captured in `runs/`.
 
-## Operational Notes
+## Operational notes
 
-- `task_id` is the idempotency key. The dispatcher derives a stable Job name from it and will not create duplicates when the Job already exists.
-- `FULL_PROMPT` is injected into the Job pod as an environment variable. The runner image no longer accepts `address/chain/instructions` fields.
-- `runs/` lives on an `emptyDir` mounted at `/opt/agent-audit/runs`, which is sufficient for a single-node one-shot Job lifecycle.
-- `ttlSecondsAfterFinished` is enabled so finished Jobs and Pods clean themselves up automatically.
-- Runner Job settings such as image, TTL, resources, pull policy, and `runs/` volume size live in [runner-configmap.yaml](/Users/lunaticabs/code/agent-audit/k3s/runner-configmap.yaml).
-- The current runner template requests `500m` CPU and `1Gi` memory, with limits of `2000m` CPU and `4Gi` memory.
-- Dispatcher settings such as Redis stream, consumer group, and block timeout live in [dispatcher-configmap.yaml](/Users/lunaticabs/code/agent-audit/k3s/dispatcher-configmap.yaml).
-- The dispatcher does not enforce a separate queue-level concurrency cap. Effective parallelism comes from `k3s` scheduling plus the runner Job `requests`/`limits` in [runner-configmap.yaml](/Users/lunaticabs/code/agent-audit/k3s/runner-configmap.yaml).
+- The dispatcher derives a stable Job name from `task_id` and will not create a
+  duplicate if the Job already exists.
+- `FULL_PROMPT`, `TASK_ID`, and `RUN_ID` are injected into the Job pod.
+- Finished Jobs and Pods clean themselves up with `ttlSecondsAfterFinished`.
+  The hostPath run directory is not deleted.
+- Effective parallelism is bounded by node CPU/memory and the runner Job
+  requests/limits, not by a dispatcher-level queue cap.
+- `hostPath` is node-local. This is intentional for the current single-node k3s
+  deployment. All Jobs on the node share the same runs root, so a runner can
+  read sibling run directories; use per-run volumes if audits need tenant
+  isolation. For a multi-node cluster, replace it with a shared ReadWriteMany
+  volume or a per-node collector; do not assume runs from different nodes are
+  in the same directory.
+- A runtime image update is a tag update plus `kubectl apply -k k3s/`; existing
+  Jobs keep their image until replaced.

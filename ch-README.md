@@ -1,191 +1,102 @@
 # agent-audit
 
-`agent-audit` 是一个 agent-first 的智能合约审计系统。项目把一次 EVM 合约审计拆成四层：
+`agent-audit` 是一个 agent-first 的智能合约审计系统。DeepSeek Harness 在容器内自主完成一次审计；容器已经打包链上数据访问、源码获取和安全工具。两种部署方式共用同一个镜像：
 
-1. `src/` 下的 Rust harness CLI 负责创建 run、拉取源码、准备工具工程、聚合审计材料并归档。
-2. `docker/` 下的容器化审计环境把 CLI、Codex SDK、Codex CLI 和常用合约安全工具打包成单次审计 runner。
-3. `k3s/` 下的容器级并行部署系统用 Redis 队列和 Kubernetes Job 批量运行多个 runner。
-4. `eval_docker/` 与 `EVMbench/` 下的评估系统复用审计环境，但改成面向 EVMbench Detect 的本地仓库评测适配器。
+- **单次审计**：`docker/run.sh` 为一个完整 prompt 拉起一个容器。
+- **并行审计**：k3s dispatcher 把 Redis 消息转换成一次性 Kubernetes Job。
 
-根 README 介绍整体结构和工作流程。更细的构建、部署和运行细节见各子目录 README。
+没有数据库归档，没有 Rust 审计 CLI，也没有固定审计流水线。run 目录就是持久化产物；agent 通过 Etherscan、RPC 和已安装工具直接工作。
 
-## 系统能发现什么
+## 本次重构
 
-对 **8,255 个以太坊主网合约**完成端到端扫描，确认 **6,466 个漏洞**，并在 **432 个合约**上
-**复现了可执行的攻击**——给出的是主网分叉上的真实余额变化，而不是严重度估计。这些目标中
-96% 没有可获取的源码。
+- agent 从 Codex 换成 **DeepSeek Harness headless CLI 模式**，API 换成 DeepSeek 官方接口（`deepseek-official`），不再使用 OpenRouter。
+- 删除旧 Rust `agent-audit` 流水线（`src/`）。源码拉取、依赖启发式、材料聚合和 Mongo 归档全部移除，改成 agent 直接调用 Etherscan v2 / RPC，加一个很小的容器 entrypoint。
+- 删除 `eval_docker/` 和 `EVMbench/`。这个仓库只做审计，不做 agent 评测。
+- 删除按工具/流程拆分的 skill，只保留一个主 `evm-audit` skill 和可用工具声明。审计方法由 agent 自己决定。
+- 删除 MongoDB 归档。每次审计写入 `runs/<run_id>/`；Docker 直接 bind mount，k3s 使用节点本地 hostPath。
+- 保留原有链集合、容器工具列表和 k3s 大规模部署能力。
 
-```mermaid
-flowchart LR
-    A["扫描 8,255 个<br/>主网合约"] --> B["3,577 个存在<br/>确认漏洞"]
-    B --> C["3,245 个存在<br/>高危漏洞"]
-    B --> D["432 个在分叉上<br/>复现了攻击"]
-    D --> E["可测量的<br/>余额影响"]
-
-    style A fill:#e8f0fe,stroke:#4285f4
-    style D fill:#e6f4ea,stroke:#34a853
-    style E fill:#e6f4ea,stroke:#34a853
-```
-
-| 结果 | 数量 |
-| --- | ---: |
-| 扫描合约数 | 8,255 |
-| 确认漏洞数 | 6,466 |
-| 至少存在 1 个确认漏洞的合约 | 3,577（43.7%） |
-| 存在高危漏洞的合约 | 3,245（39.6%） |
-| 在主网分叉上复现攻击的合约 | 432（5.3%） |
-| 覆盖的优先漏洞类别 | 10 / 10 |
-
-实际发现的例子：一个没有任何鉴权的 `flashloan()` 把合约全部 ETH 余额转到硬编码地址；
-一个写反的 owner 校验把真正的管理员挡在门外、却对所有人放行；一次无需许可的预言机刷新
-在单笔交易中把价格推高 **6.77 倍**；**6,000,000 USDT** 因未处理 ERC-20 返回值而永久锁死。
-
-**→ [完整报告：Scanning 8,255 On-Chain Contracts](docs/chain-scan-report.md)**
-
-## 系统结构
-
-| 目录 | 角色 | 主要产物 |
-| --- | --- | --- |
-| `src/` | 本地 harness CLI | `agent-audit` 二进制、`runs/<run_id>/` 工作区、JSON 步骤输出 |
-| `docker/` | 生产审计 runner 镜像 | `agent-audit:<tag>`，一次容器运行处理一个完整 prompt |
-| `k3s/` | 批量并行执行层 | Redis Stream、dispatcher、每个任务一个 Kubernetes Job |
-| `eval_docker/` | EVMbench 专用评测镜像 | `agent-audit-eval:<tag>`，输出 `submission/audit.md` |
-| `EVMbench/` | EVMbench overlay | `agent-audit-codex` adapter 与 Dockerfile patch 脚本 |
-| `dispatcher/` | k3s dispatcher 程序 | `agent-audit-dispatcher` 镜像，把 Redis 消息转成 Job |
-
-整体数据流：
+## 架构
 
 ```text
-生产单次审计:
-  prompt -> docker runner -> Codex agent -> agent-audit CLI -> runs/<run_id>/ -> sync-run -> Mongo
+单次审计：
+  prompt -> runner 容器 -> DSH headless -> Etherscan/RPC/工具
+         -> runs/<run_id>/ -> 宿主机 runs/（bind mount）
 
-生产批量审计:
-  address list -> Redis Stream -> dispatcher -> Kubernetes Jobs -> docker runner -> Mongo
-
-EVMbench Detect:
-  EVMbench audit repo -> eval runner -> Codex agent + local tools -> submission/audit.md
+批量审计：
+  地址列表 -> Redis Stream -> dispatcher -> Kubernetes Job
+           -> 同一个 runner 镜像 -> /var/lib/agent-audit/runs/<run_id>
 ```
 
-## 1. `src/`: Harness CLI
+| 目录 | 作用 |
+| --- | --- |
+| `docker/` | 运行镜像、单次审计入口、DSH 指令和主 skill |
+| `k3s/` | Redis 队列、dispatcher Deployment、runner Job 模板、hostPath runs |
+| `dispatcher/` | Rust 实现的 Redis → Kubernetes Job 桥 |
+| `scripts/` | 批量入队脚本和地址列表 |
+| `xtask/` | 格式化、lint、测试检查 |
+| `docs/` | 长报告 |
 
-`src/` 是审计系统的数据准备和归档核心。它不直接替 agent 做审计判断，而是为 agent 准备可重复读取的材料，并用结构化 JSON 记录每一步状态。
+## 快速开始：单次审计
 
-CLI 入口：
+需要 Docker 和 DeepSeek API key；强烈建议再配置 Etherscan key 和 archive RPC，闭源合约与 fork 测试需要 RPC。
 
 ```bash
-agent-audit <subcommand>
-```
-
-本地开发时也可以直接运行：
-
-```bash
-cargo run --bin agent-audit -- <subcommand>
-```
-
-当前命令：
-
-```text
-agent-audit init-run --chain <chain> --address <address>
-agent-audit fetch-source --run-id <run_id>
-agent-audit run-dependency --run-id <run_id>
-agent-audit prepare-slither --run-id <run_id>
-agent-audit prepare-tooling --run-id <run_id>
-agent-audit aggregate-materials --run-id <run_id>
-agent-audit sync-run --run-id <run_id>
-```
-
-核心职责：
-
-- 创建 `runs/<run_id>/` 工作区和 `input/request.json`、`input/run_meta.json`。
-- 通过 `AGENT_AUDIT_SOURCE_API_BASE` 等配置拉取目标合约源码。
-- 做依赖发现和依赖分析，写入 `artifacts/dependency_*.json`。
-- 准备 Slither、Foundry、Echidna 等工具工作区和 build manifest。
-- 聚合审计材料到 `reports/materials_manifest.json`。
-- 通过 `sync-run` 将 run 元数据和文件同步到 MongoDB。
-
-常用配置来自项目根目录 `.env`：
-
-```text
-AGENT_AUDIT_DEFAULT_CHAIN
-AGENT_AUDIT_SOURCE_API_BASE
-AGENT_AUDIT_SOURCE_API_KEY
-AGENT_AUDIT_SOURCE_HEADERS_JSON
-AGENT_AUDIT_RPC_URL
-AGENT_AUDIT_MONGO_URI
-AGENT_AUDIT_MONGO_DB
-AGENT_AUDIT_RUNS_DIR
-```
-
-`init-run` 会执行完整准备流程：拉源码、依赖分析、准备工具工程、聚合材料。其他子命令用于对已有 run 单步重跑或补充材料。
-
-## 2. `docker/`: 容器化审计环境
-
-`docker/` 将生产审计所需环境封装为一个 runner 镜像。镜像内包含：
-
-- `agent-audit` CLI
-- Node.js、`@openai/codex-sdk`、`codex`
-- Slither、`solc-select`
-- Foundry: `forge`、`cast`、`anvil`
-- Echidna
-- 容器专用 `.codex` 配置和审计技能
-
-构建：
-
-```bash
+cp .env.example .env
+# 填写 DEEPSEEK_API_KEY、ETHERSCAN_API_KEY、RPC_URL
 ./docker/build.sh
+./docker/run.sh --prompt "Audit 0x0000000000000000000000000000000000000000 on eth. Start by loading the evm-audit skill."
 ```
 
-运行单次审计：
+容器只接受一个完整 prompt，通过 `FULL_PROMPT` 或 `--prompt` 传入。目标地址、链、范围和输出要求都由调用方写进 prompt。细节见 [docker/README.md](docker/README.md)。
 
-```bash
-./docker/run.sh --prompt "Check AGENTS.md and audit 0x0000000000000000000000000000000000000000 on eth."
-```
-
-也可以直接调用 Docker：
-
-```bash
-docker run --rm \
-  -v "$(pwd)/.env:/opt/agent-audit/.env:ro" \
-  -e FULL_PROMPT="Check AGENTS.md and audit 0x0000000000000000000000000000000000000000 on eth." \
-  agent-audit:0.1
-```
-
-生产 runner 只接受一个完整 prompt：
-
-- `FULL_PROMPT` 环境变量
-- 或 `--prompt "..."` 参数
-
-容器不会自行拼接 `address`、`chain`、`instructions`。调度方需要提前把目标、链、审计要求和输出要求写进 prompt。容器启动后，Codex agent 会读取 `AGENTS.md`，按需要调用 `agent-audit` CLI 和安全工具，最终完成审计与归档。
-
-当 verified source 不可用时，CLI 会把闭源审计目标记录到 `runs/<run_id>/artifacts/bytecode_targets.json`，并在 RPC 已配置时把 runtime bytecode 保存到 `runs/<run_id>/artifacts/bytecode/`。`prepare-tooling` 仍会准备面向 fork harness 的 bytecode-only Foundry/Echidna 工作区，并创建 `runs/<run_id>/artifacts/heimdall/` 下的受管理 Heimdall 命令工作区。
-
-更多细节见 [`docker/README.md`](docker/README.md)。
-
-## 3. `k3s/`: 容器级并行部署
-
-`k3s/` 是单服务器 Kubernetes 部署方案，用来把多个单次 runner 并行化。它不改变审计逻辑，只负责把任务分发成多个一次性 Job。
-
-拓扑：
+完成后的 run 目录：
 
 ```text
-Redis Stream
-  -> agent-audit-dispatcher Deployment
-  -> one Kubernetes Job per task
-  -> agent-audit runner container
-  -> sync-run / Mongo archive
+input/prompt.txt              # 调用方请求
+input/request.json            # 规范化请求
+input/run_meta.json           # 状态、退出码、耗时
+artifacts/                    # agent 产出的证据
+sources/                      # 可选：拉取到的源码
+reports/final_report.json     # 必须的结构化报告
+reports/final_answer.md       # DSH stdout
+logs/agent.stdout.log
+logs/agent.stderr.log
 ```
 
-关键组件：
+entrypoint 在退出时自动写 metadata、保存 stdout 并 `sync`。agent 不需要、也没有持久化命令可调用。
 
-- `k3s/redis.yaml`: 输入队列。
-- `dispatcher/`: Redis Stream 到 Kubernetes Job 的桥接程序。
-- `k3s/dispatcher-*.yaml`: dispatcher 的 Deployment、RBAC、配置和 Secret。
-- `k3s/runner-configmap.yaml`: runner Job 模板，包括镜像、资源、TTL、`runs/` volume。
-- `k3s/runner-secret.yaml`: runner 所需 API key、source/RPC/Mongo 配置。
+## 审计能力
 
-部署入口：
+**开源/已验证合约。** agent 直接调用 Etherscan v2 获取源码、ABI、编译器设置、proxy 信息和历史交易；依赖由 agent 自己从源码、仓库和链上数据解析。按需使用 `slither`、`forge`、`cast`、`anvil`、`solc-select`、`echidna`。
+
+**闭源/未验证合约。** agent 获取 runtime bytecode，解析 proxy 实现，使用 Heimdall 反汇编/反编译，恢复 selector，并用 Foundry 或 Echidna 在 fork 上验证具体经济性质。反编译结果只作为启发式证据。
+
+**链。** 保留原有 alias 集合：Ethereum 及测试网、BNB、Polygon、Base、Arbitrum、OP、Avalanche、Linea、Blast、Scroll、Mantle、Gnosis、Celo、zkSync、opBNB、Moonbeam/Moonriver、BitTorrent、Fraxtal、Sonic、Sei、Taiko、Unichain、World Chain。完整表见 [docker/dsh/skills/evm-audit/references/chains.md](docker/dsh/skills/evm-audit/references/chains.md)。
+
+**工具。** 镜像保留 Node/DSH、Slither、`solc-select`、Foundry（`forge`/`cast`/`anvil`）、Echidna、Heimdall，并加入 `jq` 方便直接处理 JSON API。工具列表和命令写在主 skill 里；不再有 slither/forge/anvil/echidna 等独立 skill。
+
+**数据访问。** agent 直接拿到 `ETHERSCAN_API_KEY`、`ETHERSCAN_API_URL`、`RPC_URL`，用 `curl`/`cast` 调用。旧的依赖启发式发现和 source-provider CLI 不再参与。
+
+## Skill 设计
+
+`docker/dsh/skills/evm-audit/SKILL.md` 是唯一审计 skill，包含：
+
+- 证据标准和报告格式；
+- 源码审计与 bytecode/闭源审计指引；
+- 工具目录和直接命令示例；
+- Etherscan v2 端点与 proxy slot 用法；
+- 支持链表入口。
+
+`docker/AGENTS.md` 很短：工作区、证据规则、凭据、指向主 skill；不规定步骤顺序。
+
+## k3s 部署
 
 ```bash
+cp k3s/runner-secret.example.yaml k3s/runner-secret.yaml
+cp k3s/dispatcher-secret.example.yaml k3s/dispatcher-secret.yaml
+# 填写 DEEPSEEK_API_KEY、ETHERSCAN_API_KEY、RPC_URL
+sudo mkdir -p /var/lib/agent-audit/runs
 k3s kubectl apply -f k3s/namespace.yaml
 k3s kubectl apply -f k3s/runner-secret.yaml
 k3s kubectl apply -f k3s/dispatcher-secret.yaml
@@ -197,135 +108,24 @@ k3s kubectl apply -k k3s/
 ```bash
 k3s kubectl -n agent-audit exec deploy/agent-audit-redis -- \
   redis-cli XADD agent-audit:tasks '*' \
-    task_id audit-20260505-001 \
-    full_prompt 'Check AGENTS.md and audit 0x0000000000000000000000000000000000000000 on eth.' \
-    image ghcr.io/lunaticabs/agent-audit:v1.0.0
+    task_id audit-20261026-001 \
+    full_prompt 'Audit 0x0000000000000000000000000000000000000000 on eth. Start by loading the evm-audit skill.'
 ```
 
-批量提交地址列表：
+批量提交：
 
 ```bash
-k3s kubectl -n agent-audit port-forward svc/agent-audit-redis 6380:6379
 python3 scripts/enqueue_redis.py \
   --chain eth \
   --address-file scripts/addresses/addrs.txt \
-  --host 127.0.0.1 \
-  --port 6380 \
-  --image ghcr.io/lunaticabs/agent-audit:v1.0.0
+  --image ghcr.io/lunaticabs/agent-audit:v2.0.0
 ```
 
-运行状态以 Kubernetes Job/Pod 为准：
-
-```bash
-k3s kubectl -n agent-audit get jobs,pods -w
-```
-
-Redis 是输入队列，不是最终状态存储。审计证据和 run 文件通过 runner 内部的 `sync-run` 流程写入 MongoDB。
-
-更多细节见 [`k3s/README.md`](k3s/README.md)。
-
-## 4. `eval_docker/` 和 `EVMbench/`: 评估系统
-
-评测系统面向 EVMbench Detect。它复用生产镜像里的 Codex 和安全工具，但数据源从“链上地址 + 源码服务”切换为“EVMbench 挂载的本地审计仓库”。
-
-`eval_docker/` 提供评测 runner：
-
-```bash
-./eval_docker/build.sh
-APIAPI_API_KEY=... ./eval_docker/run.sh --audit-dir /path/to/audit
-```
-
-评测 runner 的规则：
-
-- Codex 工作目录是 benchmark 提供的 audit repo。
-- 最终输出必须写到 `submission/audit.md`。
-- 生产地址/链数据面被刻意禁用。
-- `agent-audit init-run`、`fetch-source`、`sync-run` 等生产 pipeline 命令在评测环境中被 guard 阻止。
-- 允许在 benchmark 本地仓库下创建临时 notes、logs、tool outputs，但 grader 只读取 `submission/audit.md`。
-
-`EVMbench/` 提供 overlay 脚本，把 `agent-audit-codex` adapter 注入到 EVMbench checkout：
-
-```bash
-./EVMbench/overlay.sh --evmbench-dir /path/to/evmbench
-```
-
-然后在 EVMbench 仓库中构建并运行 Detect：
-
-```bash
-cd /path/to/evmbench
-uv sync
-docker build -f ploit/Dockerfile -t ploit-builder:latest --target ploit-builder .
-uv run docker_build.py --split debug
-
-APIAPI_API_KEY=... \
-uv run python -m evmbench.nano.entrypoint \
-  evmbench.audit_split=debug \
-  evmbench.mode=detect \
-  evmbench.apply_gold_solution=False \
-  evmbench.log_to_run_dir=True \
-  evmbench.solver=evmbench.nano.solver.EVMbenchSolver \
-  evmbench.solver.agent_id=agent-audit-codex \
-  runner.concurrency=1
-```
-
-更多细节见 [`eval_docker/README.md`](eval_docker/README.md) 和 [`EVMbench/README.md`](EVMbench/README.md)。
-
-## 工作流程
-
-### A. 本地开发和材料准备
-
-```text
-cargo build
-  -> agent-audit init-run
-  -> runs/<run_id>/input
-  -> runs/<run_id>/artifacts
-  -> runs/<run_id>/slither_project / foundry_project / echidna_project
-  -> runs/<run_id>/reports/materials_manifest.json
-```
-
-这个流程用于验证 CLI、source provider、依赖分析和材料聚合是否正确。agent 可以在准备好的 run workspace 中继续调用 Slither、Foundry、Echidna、cast/anvil 等工具。
-
-### B. 单次生产审计
-
-```text
-docker runner
-  -> Codex reads FULL_PROMPT and AGENTS.md
-  -> Codex calls agent-audit CLI to prepare evidence
-  -> Codex runs security tools as needed
-  -> Codex writes report / findings
-  -> agent-audit sync-run archives run files to Mongo
-```
-
-这个流程适合手动审计、调试 prompt、验证镜像内容和复现单个目标。
-
-### C. 批量并行审计
-
-```text
-address file or external scheduler
-  -> Redis Stream message(task_id, full_prompt, image)
-  -> dispatcher
-  -> Kubernetes Job
-  -> same docker runner as single audit
-  -> Mongo archive
-```
-
-这个流程适合大批量地址扫描。并行度主要由 k3s 调度能力、runner Job 的 CPU/内存 requests/limits 以及节点资源决定。
-
-### D. EVMbench Detect 评测
-
-```text
-EVMbench task
-  -> mounted local audit repository
-  -> eval runner
-  -> Codex uses local tools only
-  -> submission/audit.md
-```
-
-这个流程用于 benchmark，不会访问生产 source/RPC/Mongo 数据面，也不会用地址/链 pipeline 生成审计材料。
+每个 Job 挂载节点本地 `hostPath` 到 `/opt/agent-audit/runs`，Pod 清理后 run 仍在。完整部署、secret 和多节点注意事项见 [k3s/README.md](k3s/README.md)。
 
 ## 开发检查
 
-代码修改后推荐运行：
+Rust 侧只剩 dispatcher 和 xtask：
 
 ```bash
 cargo xtask check
@@ -334,15 +134,24 @@ cargo xtask check
 等价命令：
 
 ```bash
-cargo run -p xtask -- check
-```
-
-固定检查顺序：
-
-```text
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 ```
 
-文档或部署改动也应至少确认相关 README 和脚本命令仍与子目录文档一致。
+Docker 打包检查：
+
+```bash
+docker build -f docker/Dockerfile --target smoke-test -t agent-audit:smoke-test .
+```
+
+## 历史结果
+
+旧流水线对 8,255 个以太坊主网合约做了端到端扫描，确认 6,466 个漏洞，并在 432 个合约上基于 fork 复现了攻击。报告保留在 [docs/chain-scan-report.md](docs/chain-scan-report.md)。
+
+## 安全说明
+
+- 容器就是隔离边界。DSH 在容器内拥有完整文件访问权限，且不需要交互式审批。k3s 下所有 Job 共享节点本地 runs 根目录，因此 runner 可以读取同节点的其他 run；需要租户隔离时改用 per-run volume。
+- `.env` 保存 DeepSeek、Etherscan、RPC 凭据。不要提交，也不要挂载到不信任的容器。
+- DSH home patch 已关闭 session-log 上传和 package-inventory 上传扩展；遥测默认关闭。
+- `runs/` 包含审计证据，可能包含敏感目标信息。

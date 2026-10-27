@@ -3,13 +3,11 @@
 .venv/
 __pycache__/
 *.pyc
-.ruff_cache/
 target/
 runs/*
 !runs/.gitkeep
 archive/
 .claude/
 batch_logs/
-configs/
 k3s/runner-secret.yaml
 k3s/dispatcher-secret.yaml

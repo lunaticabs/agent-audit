@@ -2,351 +2,200 @@
 
 [中文版](ch-README.md)
 
-`agent-audit` is an agent-first smart contract audit system. It splits an EVM contract audit into four layers:
+`agent-audit` is an agent-first smart-contract audit system. DeepSeek Harness
+runs one autonomous audit inside a container that already contains the chain
+data, source data, and security tools. Two deployment modes share the same
+image:
 
-1. The Rust harness CLI under `src/` creates runs, fetches source code, prepares tool workspaces, aggregates audit materials, and archives run data.
-2. The containerized audit environment under `docker/` packages the CLI, Codex SDK, Codex CLI, and common contract security tools into a single-audit runner.
-3. The container-level parallel deployment system under `k3s/` uses a Redis queue and Kubernetes Jobs to run multiple runners in parallel.
-4. The evaluation system under `eval_docker/` and `EVMbench/` reuses the audit environment, but adapts it for EVMbench Detect tasks against local benchmark repositories.
+- **Single audit** — `docker/run.sh` launches one container for one prompt.
+- **Parallel audit** — k3s dispatcher turns Redis messages into one-shot Jobs.
 
-This root README explains the overall architecture and workflows. Detailed build, deployment, and runtime notes live in each subdirectory README.
+There is no database archive, no Rust audit CLI, and no fixed audit pipeline.
+The run directory is the durable artifact; the agent works against Etherscan,
+RPC, and the installed tools directly.
 
-## What the system finds
+## What changed
 
-Scanning **8,255 Ethereum mainnet contracts** end to end, the system confirmed **6,466
-vulnerabilities** and **reproduced working exploits on 432 contracts** — measured balance effects
-on a forked mainnet, not severity estimates. 96% of those targets had no verified source code.
+- The agent is **DeepSeek Harness in headless CLI mode**, using the official
+  DeepSeek API (`deepseek-official`), not Codex/OpenRouter.
+- The old Rust `agent-audit` pipeline (`src/`) is gone. Its source fetching,
+  dependency heuristics, material aggregation, and Mongo archive were replaced
+  by direct Etherscan v2/RPC access and a small container entrypoint.
+- `eval_docker/` and `EVMbench/` were removed. This repository is for audits,
+  not agent benchmarking.
+- The per-tool workflow skills were replaced by **one main `evm-audit` skill**
+  plus a declared tool catalog. The agent chooses its own method.
+- MongoDB archival is gone. Each run is persisted under `runs/<run_id>/`;
+  Docker bind-mounts it and k3s mounts a node-local hostPath.
+- The supported chain set, the container tool list, and the k3s deployment are
+  preserved.
 
-```mermaid
-flowchart LR
-    A["8,255 mainnet<br/>contracts scanned"] --> B["3,577 with<br/>confirmed findings"]
-    B --> C["3,245 with a<br/>high-severity finding"]
-    B --> D["432 with an exploit<br/>reproduced on a fork"]
-    D --> E["Measured impact<br/>on balances"]
-
-    style A fill:#e8f0fe,stroke:#4285f4
-    style D fill:#e6f4ea,stroke:#34a853
-    style E fill:#e6f4ea,stroke:#34a853
-```
-
-| Result | Count |
-| --- | ---: |
-| Contracts scanned | 8,255 |
-| Confirmed vulnerabilities | 6,466 |
-| Contracts with at least one confirmed vulnerability | 3,577 (43.7%) |
-| Contracts with a high-severity vulnerability | 3,245 (39.6%) |
-| Contracts with an exploit reproduced on a mainnet fork | 432 (5.3%) |
-| Priority vulnerability classes reached | 10 / 10 |
-
-What that looks like in practice: an unauthenticated `flashloan()` that drains a contract's entire
-ETH balance to a hardcoded address; an inverted ownership check that locks out the owner and
-admits everyone else; a permissionless oracle refresh that moves a price **6.77×** in a single
-swap; **6,000,000 USDT** permanently locked by an unhandled ERC-20 return value.
-
-**→ [Full report: Scanning 8,255 On-Chain Contracts](docs/chain-scan-report.md)**
-
-## System Structure
-
-| Directory | Role | Main outputs |
-| --- | --- | --- |
-| `src/` | Local harness CLI | `agent-audit` binary, `runs/<run_id>/` workspaces, JSON step output |
-| `docker/` | Production audit runner image | `agent-audit:<tag>`, one container run per complete prompt |
-| `k3s/` | Batch parallel execution layer | Redis Stream, dispatcher, one Kubernetes Job per task |
-| `eval_docker/` | EVMbench-specific evaluation image | `agent-audit-eval:<tag>`, writes `submission/audit.md` |
-| `EVMbench/` | EVMbench overlay | `agent-audit-codex` adapter and Dockerfile patch script |
-| `dispatcher/` | k3s dispatcher program | `agent-audit-dispatcher` image, converts Redis messages into Jobs |
-
-Overall data flow:
+## Architecture
 
 ```text
-Production single audit:
-  prompt -> docker runner -> Codex agent -> agent-audit CLI -> runs/<run_id>/ -> sync-run -> Mongo
+Single audit:
+  prompt -> runner container -> DSH headless -> Etherscan/RPC/tools
+         -> runs/<run_id>/ -> host runs/ (bind mount)
 
-Production batch audit:
-  address list -> Redis Stream -> dispatcher -> Kubernetes Jobs -> docker runner -> Mongo
-
-EVMbench Detect:
-  EVMbench audit repo -> eval runner -> Codex agent + local tools -> submission/audit.md
+Parallel audit:
+  address list -> Redis Stream -> dispatcher -> Kubernetes Jobs
+               -> same runner image -> /var/lib/agent-audit/runs/<run_id>
 ```
 
-## 1. `src/`: Harness CLI
+| Path | Role |
+| --- | --- |
+| `docker/` | Runtime image, single-audit entrypoint, DSH instructions and skill |
+| `k3s/` | Redis queue, dispatcher Deployment, runner Job template, hostPath runs |
+| `dispatcher/` | Rust Redis-to-Kubernetes-Job bridge |
+| `scripts/` | Batch enqueue helper and address lists |
+| `xtask/` | Workspace formatting, linting, and test checks |
+| `docs/` | Long-form reports |
 
-`src/` is the data preparation and archival core of the audit system. It does not make audit decisions for the agent. Instead, it prepares repeatable materials and records each step as structured JSON.
+## Quick start: one audit
 
-CLI entrypoint:
+Requirements: Docker and a DeepSeek API key. An Etherscan key and an archive RPC
+are strongly recommended; closed-source and fork-based work needs RPC.
 
 ```bash
-agent-audit <subcommand>
-```
-
-For local development:
-
-```bash
-cargo run --bin agent-audit -- <subcommand>
-```
-
-Current commands:
-
-```text
-agent-audit init-run --chain <chain> --address <address>
-agent-audit fetch-source --run-id <run_id>
-agent-audit run-dependency --run-id <run_id>
-agent-audit prepare-slither --run-id <run_id>
-agent-audit prepare-tooling --run-id <run_id>
-agent-audit aggregate-materials --run-id <run_id>
-agent-audit sync-run --run-id <run_id>
-```
-
-Core responsibilities:
-
-- Create the `runs/<run_id>/` workspace plus `input/request.json` and `input/run_meta.json`, including run creation time and the current block number when RPC is configured.
-- Fetch target contract source code through settings such as `AGENT_AUDIT_SOURCE_API_BASE`.
-- Run dependency discovery and dependency analysis, writing `artifacts/dependency_*.json`.
-- Prepare Slither, Foundry, and Echidna tool workspaces and build manifests.
-- Aggregate audit materials into `reports/materials_manifest.json`.
-- Sync run metadata and files to MongoDB through `sync-run`.
-
-Common configuration comes from the repository-local `.env`:
-
-```text
-AGENT_AUDIT_DEFAULT_CHAIN
-AGENT_AUDIT_SOURCE_API_BASE
-AGENT_AUDIT_SOURCE_API_KEY
-AGENT_AUDIT_SOURCE_HEADERS_JSON
-AGENT_AUDIT_RPC_URL
-AGENT_AUDIT_MONGO_URI
-AGENT_AUDIT_MONGO_DB
-AGENT_AUDIT_RUNS_DIR
-```
-
-`init-run` executes the full preparation flow: source fetch, dependency analysis, tool workspace preparation, and material aggregation. The other subcommands are used to rerun or supplement individual steps for an existing run.
-
-## 2. `docker/`: Containerized Audit Environment
-
-`docker/` packages the production audit environment into a runner image. The image contains:
-
-- `agent-audit` CLI
-- Node.js, `@openai/codex-sdk`, `codex`
-- Slither, `solc-select`
-- Foundry: `forge`, `cast`, `anvil`
-- Echidna
-- Heimdall for bytecode-oriented review of unverified contracts
-- Container-specific `.codex` configuration and audit skills
-
-Build:
-
-```bash
+cp .env.example .env
+# fill DEEPSEEK_API_KEY, ETHERSCAN_API_KEY, RPC_URL
 ./docker/build.sh
+./docker/run.sh --prompt "Audit 0x0000000000000000000000000000000000000000 on eth. Start by loading the evm-audit skill."
 ```
 
-Run a single audit:
+The container accepts exactly one complete prompt, through `FULL_PROMPT` or
+`--prompt`. Put the address, chain, and any scope or output requirements in the
+prompt. See [docker/README.md](docker/README.md).
 
-```bash
-./docker/run.sh --prompt "Check AGENTS.md and audit 0x0000000000000000000000000000000000000000 on eth."
-```
-
-Direct Docker invocation:
-
-```bash
-docker run --rm \
-  -v "$(pwd)/.env:/opt/agent-audit/.env:ro" \
-  -e FULL_PROMPT="Check AGENTS.md and audit 0x0000000000000000000000000000000000000000 on eth." \
-  agent-audit:0.1
-```
-
-The production runner accepts exactly one complete prompt:
-
-- `FULL_PROMPT` environment variable
-- or `--prompt "..."` argument
-
-The container does not assemble business fields such as `address`, `chain`, or `instructions`. The caller must include the target, chain, audit requirements, and output requirements in the prompt. After startup, the Codex agent reads `AGENTS.md`, calls the `agent-audit` CLI and security tools as needed, then completes the audit and archival flow.
-
-When verified source is unavailable, the CLI records review targets in `runs/<run_id>/artifacts/bytecode_targets.json` and runtime bytecode under `runs/<run_id>/artifacts/bytecode/`. `prepare-tooling` still prepares bytecode-only Foundry and Echidna workspaces for fork-backed harnesses, and creates managed Heimdall command workspaces under `runs/<run_id>/artifacts/heimdall/` so command text, stdout, stderr, exit code, failure text, and output directories are saved deterministically; material aggregation includes those paths when present.
-
-See [`docker/README.md`](docker/README.md) for details.
-
-## 3. `k3s/`: Container-Level Parallel Deployment
-
-`k3s/` is the single-server Kubernetes deployment for parallelizing multiple single-audit runners. It does not change the audit logic. It only turns queued tasks into one-shot Jobs.
-
-Topology:
+A finished run lands in `runs/<run_id>/`:
 
 ```text
-Redis Stream
-  -> agent-audit-dispatcher Deployment
-  -> one Kubernetes Job per task
-  -> agent-audit runner container
-  -> sync-run / Mongo archive
+input/prompt.txt              # caller request
+input/request.json            # normalized request
+input/run_meta.json           # status, exit code, timings
+artifacts/                    # evidence produced by the agent
+sources/                      # optional fetched source
+reports/final_report.json     # required structured report
+reports/final_answer.md       # captured DSH stdout
+logs/agent.stdout.log
+logs/agent.stderr.log
 ```
 
-Key components:
+The entrypoint writes the final metadata and captures stdout on exit. The
+agent does not run a persistence command; there is none.
 
-- `k3s/redis.yaml`: input queue.
-- `dispatcher/`: Redis Stream to Kubernetes Job bridge.
-- `k3s/dispatcher-*.yaml`: dispatcher Deployment, RBAC, configuration, and Secret.
-- `k3s/runner-configmap.yaml`: runner Job template, including image, resources, TTL, and `runs/` volume.
-- `k3s/runner-secret.yaml`: runner API key, source, RPC, and Mongo configuration.
+## Audit capability
 
-Deployment entrypoint:
+**Open source and verified.** The agent fetches source, ABI, compiler settings,
+proxy information, and history directly from Etherscan v2. It resolves
+dependencies itself from sources, repositories, and chain data. It uses
+`slither`, `forge`, `cast`, `anvil`, `solc-select`, and `echidna` as needed.
+
+**Closed source and unverified.** The agent fetches runtime bytecode, resolves
+proxy implementations, disassembles/decompiles with Heimdall, recovers selectors,
+and builds fork-backed Foundry or Echidna harnesses to test concrete economic
+properties. Decompiler output is treated as heuristic evidence.
+
+**Chains.** The current alias set is preserved: Ethereum and testnets, BNB,
+Polygon, Base, Arbitrum, OP, Avalanche, Linea, Blast, Scroll, Mantle, Gnosis,
+Celo, zkSync, opBNB, Moonbeam/Moonriver, BitTorrent, Fraxtal, Sonic, Sei, Taiko,
+Unichain, and World Chain. The full table is in
+[docker/dsh/skills/evm-audit/references/chains.md](docker/dsh/skills/evm-audit/references/chains.md).
+
+**Tools.** The runtime keeps Node/DSH, Slither, `solc-select`, Foundry
+(`forge`/`cast`/`anvil`), Echidna, and Heimdall. It adds `jq` for direct JSON
+API work. The tool catalog and commands are declared in the main skill; there
+are no separate slither/forge/anvil/echidna skills.
+
+**Data access.** The agent gets `ETHERSCAN_API_KEY`, `ETHERSCAN_API_URL`, and
+`RPC_URL` and calls them with `curl`/`cast`. The old heuristic dependency
+discovery and source-provider CLI are not in the loop.
+
+## Skill design
+
+`docker/dsh/skills/evm-audit/SKILL.md` is the only audit skill. It contains:
+
+- an evidence standard and report contract,
+- source/verified and bytecode/closed-source guidance,
+- the available tool catalog with direct command examples,
+- Etherscan v2 endpoints and proxy-slot recipes,
+- a pointer to the supported-chain table.
+
+`docker/AGENTS.md` is short: workspace contract, evidence rules, credentials,
+and a pointer to the skill. It deliberately does not prescribe a step order.
+
+## k3s deployment
 
 ```bash
+cp k3s/runner-secret.example.yaml k3s/runner-secret.yaml
+cp k3s/dispatcher-secret.example.yaml k3s/dispatcher-secret.yaml
+# fill DEEPSEEK_API_KEY, ETHERSCAN_API_KEY, RPC_URL
+sudo mkdir -p /var/lib/agent-audit/runs
 k3s kubectl apply -f k3s/namespace.yaml
 k3s kubectl apply -f k3s/runner-secret.yaml
 k3s kubectl apply -f k3s/dispatcher-secret.yaml
 k3s kubectl apply -k k3s/
 ```
 
-Submit a single task:
+Submit one task:
 
 ```bash
 k3s kubectl -n agent-audit exec deploy/agent-audit-redis -- \
   redis-cli XADD agent-audit:tasks '*' \
-    task_id audit-20260505-001 \
-    full_prompt 'Check AGENTS.md and audit 0x0000000000000000000000000000000000000000 on eth.' \
-    image ghcr.io/lunaticabs/agent-audit:v1.0.0
+    task_id audit-20261026-001 \
+    full_prompt 'Audit 0x0000000000000000000000000000000000000000 on eth. Start by loading the evm-audit skill.'
 ```
 
-Submit a batch from an address list:
+Submit a batch:
 
 ```bash
-k3s kubectl -n agent-audit port-forward svc/agent-audit-redis 6380:6379
 python3 scripts/enqueue_redis.py \
   --chain eth \
   --address-file scripts/addresses/addrs.txt \
-  --host 127.0.0.1 \
-  --port 6380 \
-  --image ghcr.io/lunaticabs/agent-audit:v1.0.0
+  --image ghcr.io/lunaticabs/agent-audit:v2.0.0
 ```
 
-Use Kubernetes Job and Pod state as the runtime source of truth:
+Each Job mounts a node-local `hostPath` at `/opt/agent-audit/runs`, so the run
+survives Pod cleanup. See [k3s/README.md](k3s/README.md) for the full deployment,
+secret, and multi-node caveats.
 
-```bash
-k3s kubectl -n agent-audit get jobs,pods -w
-```
+## Development checks
 
-Redis is the input queue, not final state storage. Audit evidence and run files are written to MongoDB through the runner's internal `sync-run` flow.
-
-See [`k3s/README.md`](k3s/README.md) for details.
-
-## 4. `eval_docker/` and `EVMbench/`: Evaluation System
-
-The evaluation system targets EVMbench Detect. It reuses the Codex and security tooling from the production image, but switches the data source from "chain address plus source service" to "local audit repository mounted by EVMbench".
-
-`eval_docker/` provides the evaluation runner:
-
-```bash
-./eval_docker/build.sh
-APIAPI_API_KEY=... ./eval_docker/run.sh --audit-dir /path/to/audit
-```
-
-Evaluation runner rules:
-
-- The Codex working directory is the benchmark-provided audit repo.
-- Final output must be written to `submission/audit.md`.
-- The production address/chain data plane is intentionally disabled.
-- Production pipeline commands such as `agent-audit init-run`, `fetch-source`, and `sync-run` are blocked by the evaluation guard.
-- Temporary notes, logs, and tool outputs may be created under the benchmark-local repository, but the grader reads only `submission/audit.md`.
-
-`EVMbench/` provides an overlay script that injects the `agent-audit-codex` adapter into an EVMbench checkout:
-
-```bash
-./EVMbench/overlay.sh --evmbench-dir /path/to/evmbench
-```
-
-Then build and run Detect from the EVMbench checkout:
-
-```bash
-cd /path/to/evmbench
-uv sync
-docker build -f ploit/Dockerfile -t ploit-builder:latest --target ploit-builder .
-uv run docker_build.py --split debug
-
-APIAPI_API_KEY=... \
-uv run python -m evmbench.nano.entrypoint \
-  evmbench.audit_split=debug \
-  evmbench.mode=detect \
-  evmbench.apply_gold_solution=False \
-  evmbench.log_to_run_dir=True \
-  evmbench.solver=evmbench.nano.solver.EVMbenchSolver \
-  evmbench.solver.agent_id=agent-audit-codex \
-  runner.concurrency=1
-```
-
-See [`eval_docker/README.md`](eval_docker/README.md) and [`EVMbench/README.md`](EVMbench/README.md) for details.
-
-## Workflows
-
-### A. Local Development and Material Preparation
-
-```text
-cargo build
-  -> agent-audit init-run
-  -> runs/<run_id>/input
-  -> runs/<run_id>/artifacts
-  -> runs/<run_id>/slither_project / foundry_project / echidna_project
-  -> runs/<run_id>/reports/materials_manifest.json
-```
-
-This flow validates the CLI, source provider, dependency analysis, and material aggregation. The agent can then continue from the prepared run workspace and call Slither, Foundry, Echidna, cast/anvil, and other tools as needed.
-
-### B. Single Production Audit
-
-```text
-docker runner
-  -> Codex reads FULL_PROMPT and AGENTS.md
-  -> Codex calls agent-audit CLI to prepare evidence
-  -> Codex runs security tools as needed
-  -> Codex writes report / findings
-  -> agent-audit sync-run archives run files to Mongo
-```
-
-This flow is suitable for manual audits, prompt debugging, image validation, and reproducing a single target.
-
-### C. Batch Parallel Audit
-
-```text
-address file or external scheduler
-  -> Redis Stream message(task_id, full_prompt, image)
-  -> dispatcher
-  -> Kubernetes Job
-  -> same docker runner as single audit
-  -> Mongo archive
-```
-
-This flow is suitable for large address batches. Effective parallelism is determined mainly by k3s scheduling capacity, runner Job CPU and memory requests/limits, and node resources.
-
-### D. EVMbench Detect Evaluation
-
-```text
-EVMbench task
-  -> mounted local audit repository
-  -> eval runner
-  -> Codex uses local tools only
-  -> submission/audit.md
-```
-
-This flow is for benchmark evaluation. It does not access the production source/RPC/Mongo data plane and does not use the address/chain pipeline to generate audit materials.
-
-## Development Checks
-
-Recommended command after code changes:
+Only the dispatcher and xtask remain Rust:
 
 ```bash
 cargo xtask check
 ```
 
-Equivalent command:
+Equivalent commands:
 
 ```bash
-cargo run -p xtask -- check
-```
-
-Fixed check order:
-
-```text
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 ```
 
-For documentation or deployment changes, at least confirm that the README and script commands still match the subdirectory documentation.
+Docker packaging checks:
+
+```bash
+docker build -f docker/Dockerfile --target smoke-test -t agent-audit:smoke-test .
+```
+
+## Results
+
+The earlier pipeline scanned 8,255 Ethereum mainnet contracts end to end and
+confirmed 6,466 vulnerabilities, reproducing exploits on 432 contracts against
+forked mainnet state. The report is still available at
+[docs/chain-scan-report.md](docs/chain-scan-report.md).
+
+## Security notes
+
+- The container is the isolation boundary. DSH runs with full filesystem access
+  and no approval prompts inside it. In k3s, all Jobs share the node-local runs
+  root, so a runner can read sibling runs; use per-run volumes for tenant
+  isolation.
+- `.env` holds the DeepSeek, Etherscan, and RPC credentials. Do not commit it;
+  do not mount it into a container you do not trust.
+- Session-log and package-inventory upload extensions are disabled in the DSH
+  home patch. Telemetry is disabled by default.
+- `runs/` contains audit evidence and may contain sensitive target details.

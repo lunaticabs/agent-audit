@@ -1,0 +1,43 @@
+# Home-level patch applied over every DSH profile in this image.
+#
+# The container is the isolation boundary, so the agent gets full access to the
+# workspace instead of interactive approval prompts. Model routing uses the
+# official DeepSeek API through the bundled deepseek-official adapter.
+
+- id: agent-default-model
+  config:
+    provider: deepseek-official
+    model: !!js process.env.DSH_MODEL || 'deepseek-flash'
+
+- id: llm-deepseek
+  config:
+    apiKeyEnv: DEEPSEEK_API_KEY
+    reasoningEffort: !!js process.env.DSH_REASONING_EFFORT || 'max'
+
+- id: system-prompt
+  config:
+    personaPrefix: >-
+      You are an expert smart contract security auditor. You work autonomously,
+      prefer evidence over speculation, and keep the audit workspace durable and
+      reviewable.
+
+- id: sandbox-policy
+  config:
+    mode: danger-full-access
+    workspaceRoot: !!js process.cwd()
+
+- id: approval
+  config:
+    policy: never
+
+# Audit material is private. Keep the conversation on the model endpoint and do
+# not send session-log or package-inventory request extensions.
+- id: session-log-deepseek
+  disabled: true
+
+- id: plugin-package-inventory-deepseek
+  disabled: true
+
+# Titles are useful in a GUI; batch audits do not need a second model call.
+- id: session-title-llm
+  disabled: true

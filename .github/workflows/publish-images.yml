@@ -27,7 +27,7 @@ jobs:
           - name: agent-audit
             image: agent-audit
             dockerfile: docker/Dockerfile
-            description: Codex-first smart contract audit runner
+            description: DeepSeek Harness smart contract audit runner
           - name: agent-audit-dispatcher
             image: agent-audit-dispatcher
             dockerfile: docker/dispatcher.Dockerfile

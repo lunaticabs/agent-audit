@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use clap::Parser;
 use k8s_openapi::api::batch::v1::Job;
 use k8s_openapi::api::core::v1::{
-    Container, EmptyDirVolumeSource, EnvFromSource, EnvVar, PodSpec, PodTemplateSpec,
+    Container, EnvFromSource, EnvVar, HostPathVolumeSource, PodSpec, PodTemplateSpec,
     ResourceRequirements, SecretEnvSource, Volume, VolumeMount,
 };
 use k8s_openapi::apimachinery::pkg::api::resource::Quantity;
@@ -74,8 +74,12 @@ struct Cli {
     runner_job_memory_request: Option<String>,
     #[arg(long, env = "DISPATCHER_RUNNER_JOB_MEMORY_LIMIT")]
     runner_job_memory_limit: Option<String>,
-    #[arg(long, env = "DISPATCHER_RUNNER_RUNS_VOLUME_SIZE_LIMIT")]
-    runner_runs_volume_size_limit: Option<String>,
+    #[arg(
+        long,
+        env = "DISPATCHER_RUNNER_RUNS_HOST_PATH",
+        default_value = "/var/lib/agent-audit/runs"
+    )]
+    runner_runs_host_path: String,
 }
 
 #[derive(Debug, Clone)]
@@ -94,7 +98,7 @@ struct DispatcherConfig {
     runner_job_cpu_limit: Option<String>,
     runner_job_memory_request: Option<String>,
     runner_job_memory_limit: Option<String>,
-    runner_runs_volume_size_limit: Option<String>,
+    runner_runs_host_path: String,
 }
 
 impl From<Cli> for DispatcherConfig {
@@ -114,7 +118,7 @@ impl From<Cli> for DispatcherConfig {
             runner_job_cpu_limit: trimmed_option(value.runner_job_cpu_limit),
             runner_job_memory_request: trimmed_option(value.runner_job_memory_request),
             runner_job_memory_limit: trimmed_option(value.runner_job_memory_limit),
-            runner_runs_volume_size_limit: trimmed_option(value.runner_runs_volume_size_limit),
+            runner_runs_host_path: value.runner_runs_host_path.trim().to_string(),
         }
     }
 }
@@ -425,18 +429,20 @@ fn build_job(config: &DispatcherConfig, task: &TaskMessage, job_name: &str) -> J
             value: Some(task.task_id.clone()),
             ..Default::default()
         },
+        EnvVar {
+            name: "RUN_ID".to_string(),
+            value: Some(run_id_for_task(&task.task_id)),
+            ..Default::default()
+        },
     ];
 
     let resources = build_resources(config);
 
     let volume = Volume {
         name: "runs".to_string(),
-        empty_dir: Some(EmptyDirVolumeSource {
-            size_limit: config
-                .runner_runs_volume_size_limit
-                .as_ref()
-                .map(|value| Quantity(value.clone())),
-            ..Default::default()
+        host_path: Some(HostPathVolumeSource {
+            path: config.runner_runs_host_path.clone(),
+            type_: Some("DirectoryOrCreate".to_string()),
         }),
         ..Default::default()
     };
@@ -527,6 +533,26 @@ fn first_stream_entry(reply: StreamReadReply) -> Option<StreamId> {
     let mut keys = reply.keys.into_iter();
     let key = keys.next()?;
     key.ids.into_iter().next()
+}
+
+fn run_id_for_task(task_id: &str) -> String {
+    let sanitized = sanitize_task_id(task_id);
+    let max_len = 80usize;
+    if sanitized.len() <= max_len {
+        return sanitized;
+    }
+
+    let suffix = short_hash(task_id);
+    let body_limit = max_len.saturating_sub(suffix.len() + 1).max(1);
+    let truncated = sanitized[..body_limit].trim_end_matches('-');
+    format!(
+        "{}-{suffix}",
+        if truncated.is_empty() {
+            "task"
+        } else {
+            truncated
+        }
+    )
 }
 
 fn job_name_for_task(task_id: &str) -> String {
@@ -663,10 +689,8 @@ mod tests {
         assert!(job_name.contains('-'));
     }
 
-    #[test]
-    fn long_task_id_label_uses_short_job_slug() {
-        let task_id = "smoke-enqueue-20260710t215744512848z-eth-0001-005327e0817a-c1ee6f84";
-        let config = DispatcherConfig {
+    fn test_config() -> DispatcherConfig {
+        DispatcherConfig {
             namespace: "agent-audit".to_string(),
             redis_stream: "agent-audit:tasks".to_string(),
             redis_group: "agent-audit-dispatcher".to_string(),
@@ -681,8 +705,41 @@ mod tests {
             runner_job_cpu_limit: None,
             runner_job_memory_request: None,
             runner_job_memory_limit: None,
-            runner_runs_volume_size_limit: None,
+            runner_runs_host_path: "/var/lib/agent-audit/runs".to_string(),
+        }
+    }
+
+    #[test]
+    fn job_mounts_host_runs_path_and_passes_run_id() {
+        let task = TaskMessage {
+            task_id: "Audit 2026/05/05:Mainnet".to_string(),
+            full_prompt: "audit".to_string(),
+            image: None,
         };
+        let job = build_job(&test_config(), &task, &job_name_for_task(&task.task_id));
+        let pod_spec = job.spec.expect("job spec").template.spec.expect("pod spec");
+
+        let volume = pod_spec
+            .volumes
+            .as_ref()
+            .and_then(|volumes| volumes.first())
+            .and_then(|volume| volume.host_path.as_ref())
+            .expect("host path volume");
+        assert_eq!(volume.path, "/var/lib/agent-audit/runs");
+        assert_eq!(volume.type_.as_deref(), Some("DirectoryOrCreate"));
+
+        let env = pod_spec.containers[0].env.as_ref().expect("env");
+        let run_id = env
+            .iter()
+            .find(|item| item.name == "RUN_ID")
+            .and_then(|item| item.value.as_deref());
+        assert_eq!(run_id, Some("audit-2026-05-05-mainnet"));
+    }
+
+    #[test]
+    fn long_task_id_label_uses_short_job_slug() {
+        let task_id = "smoke-enqueue-20260710t215744512848z-eth-0001-005327e0817a-c1ee6f84";
+        let config = test_config();
         let task = TaskMessage {
             task_id: task_id.to_string(),
             full_prompt: "audit".to_string(),

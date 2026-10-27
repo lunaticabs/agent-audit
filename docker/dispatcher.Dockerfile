@@ -1,4 +1,4 @@
-ARG RUST_VERSION=1.88.0
+ARG RUST_VERSION=1.99.1
 
 FROM docker.io/library/ubuntu:22.04 AS builder
 
@@ -23,7 +23,6 @@ WORKDIR /build
 
 COPY Cargo.toml Cargo.lock ./
 COPY dispatcher ./dispatcher
-COPY src ./src
 COPY xtask ./xtask
 
 RUN cargo build --release -p agent-audit-dispatcher

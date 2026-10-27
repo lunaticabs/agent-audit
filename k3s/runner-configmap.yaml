@@ -4,7 +4,7 @@ metadata:
   name: agent-audit-runner-config
   namespace: agent-audit
 data:
-  DISPATCHER_RUNNER_IMAGE: ghcr.io/lunaticabs/agent-audit:v1.3.0
+  DISPATCHER_RUNNER_IMAGE: ghcr.io/lunaticabs/agent-audit:v2.0.0
   DISPATCHER_RUNNER_ENV_SECRET: agent-audit-runner-env
   DISPATCHER_RUNNER_IMAGE_PULL_SECRET: ""
   DISPATCHER_RUNNER_JOB_PULL_POLICY: IfNotPresent
@@ -13,4 +13,5 @@ data:
   DISPATCHER_RUNNER_JOB_CPU_LIMIT: "2000m"
   DISPATCHER_RUNNER_JOB_MEMORY_REQUEST: "1Gi"
   DISPATCHER_RUNNER_JOB_MEMORY_LIMIT: "4Gi"
-  DISPATCHER_RUNNER_RUNS_VOLUME_SIZE_LIMIT: "10Gi"
+  # Node-local durable run root. Every Job mounts it at /opt/agent-audit/runs.
+  DISPATCHER_RUNNER_RUNS_HOST_PATH: /var/lib/agent-audit/runs

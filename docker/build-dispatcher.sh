@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DOCKER_DIR="${ROOT_DIR}/docker"
 IMAGE_REPO="${IMAGE_REPO:-agent-audit-dispatcher}"
-IMAGE_TAG="${IMAGE_TAG:-0.1}"
+IMAGE_TAG="${IMAGE_TAG:-2.0.0}"
 
 docker build \
   -f "${DOCKER_DIR}/dispatcher.Dockerfile" \
