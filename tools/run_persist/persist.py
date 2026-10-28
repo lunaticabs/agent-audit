@@ -26,6 +26,12 @@ INCLUDED_TOP_LEVEL_DIRS = (
     "test",
 )
 INCLUDED_ROOT_FILES = frozenset({"foundry.toml"})
+#: Nested build/dependency trees inside an included directory. `harness/` is
+#: kept (its .t.sol and src files are evidence), but its cache/out/lib trees are
+#: not part of the audit record.
+EXCLUDED_PATH_SEGMENTS = frozenset(
+    {"cache", "out", "lib", "broadcast", "node_modules", ".git"}
+)
 SKIPPED_REL_PATHS = frozenset({".run.lock"})
 FINAL_REPORT_REL_PATH = "reports/final_report.json"
 
@@ -439,6 +445,8 @@ def collect_run_materials(
             first_segment not in INCLUDED_TOP_LEVEL_DIRS
             and rel_path not in INCLUDED_ROOT_FILES
         ):
+            continue
+        if any(segment in EXCLUDED_PATH_SEGMENTS for segment in rel_path.split("/")[:-1]):
             continue
 
         try:
