@@ -11,7 +11,7 @@ and choose your own approach.
 
 ## Output
 
-- Write `reports/final_report.json` before finishing; `reports/audit.md` is optional.
+- Write `reports/final_report.json` before finishing.
 - Save raw evidence under `artifacts/` and fetched source under `sources/`.
 - A confirmed finding must cite artifact paths. Unsupported claims are hypotheses.
 - The runner persists this directory automatically. Do not look for an archive command.

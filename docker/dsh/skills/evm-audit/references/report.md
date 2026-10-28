@@ -46,5 +46,3 @@ a measured balance/accounting delta.
 
 Keep unsupported claims in `hypotheses`. Report missing RPC/source/tool access
 and rate limits under `limitations`; do not present a blocked audit as complete.
-`reports/audit.md` may mirror the same conclusions; do not create a second,
-inconsistent report.
