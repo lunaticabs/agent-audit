@@ -65,6 +65,7 @@ RUN apt-get update \
         less \
         procps \
         python3 \
+        python3-pip \
         ripgrep \
         unzip \
         xz-utils \
@@ -99,6 +100,12 @@ RUN mkdir -p /opt/agent-audit/vendor/forge-std \
     && git submodule update --init --depth 1 \
     && rm -rf .git
 
+# MongoDB persistence uses the official Python driver. The version is pinned
+# so the archive schema cannot drift with the base image's pip resolution.
+COPY tools/run_persist/requirements.txt /tmp/run_persist-requirements.txt
+RUN python3 -m pip install --no-cache-dir -r /tmp/run_persist-requirements.txt \
+    && rm -f /tmp/run_persist-requirements.txt
+
 WORKDIR /opt/agent-audit
 
 COPY --from=heimdall-builder /root/.cargo/bin/heimdall /usr/local/bin/heimdall
@@ -108,6 +115,8 @@ COPY docker/dsh/skills ./dsh-home/skills
 # Post-run statistics: the entrypoint derives runs/<run_id>/stats/metrics.json
 # from the finished run directory. Stdlib only; never changes the audit result.
 COPY tools/audit_stats ./tools/audit_stats
+# Per-run MongoDB persistence: one runs_meta document plus this run's material.
+COPY tools/run_persist ./tools/run_persist
 
 RUN chmod +x /opt/agent-audit/entrypoint.sh \
     && mkdir -p /opt/agent-audit/runs /opt/agent-audit/dsh-home
@@ -140,6 +149,10 @@ RUN bash -lc 'set -euo pipefail \
     && test -f /opt/agent-audit/dsh-home/skills/evm-audit/references/tools.md \
     && test -f /opt/agent-audit/dsh-home/skills/evm-audit/references/report.md \
     && test -f /opt/agent-audit/dsh-home/skills/evm-audit/references/chains.md \
-    && PYTHONPATH=/opt/agent-audit/tools python3 -m audit_stats --version'
+    && PYTHONPATH=/opt/agent-audit/tools python3 -m audit_stats --version \
+    && python3 -c "import pymongo; print(pymongo.version)" \
+    && PYTHONPATH=/opt/agent-audit/tools python3 -m run_persist --help >/dev/null \
+    && PYTHONPATH=/opt/agent-audit/tools python3 -m unittest discover \
+        -s /opt/agent-audit/tools/run_persist/tests -t /opt/agent-audit/tools >/dev/null'
 
 FROM runtime AS final

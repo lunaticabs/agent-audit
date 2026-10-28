@@ -39,6 +39,10 @@ DSH_REASONING_EFFORT=max
 ETHERSCAN_API_KEY=...
 ETHERSCAN_API_URL=https://api.etherscan.io/v2/api
 RPC_URL=...
+
+# Optional: per-run MongoDB mirror. Persistence is skipped when URI is unset.
+AGENT_AUDIT_MONGO_URI=mongodb://user:password@host:27017/?authSource=admin
+AGENT_AUDIT_MONGO_DB=agent
 ```
 
 `DEEPSEEK_API_KEY` is required. The image uses the official DeepSeek endpoint
@@ -59,6 +63,10 @@ variables into the container if present:
 DEEPSEEK_API_KEY DSH_MODEL DSH_REASONING_EFFORT
 ETHERSCAN_API_KEY ETHERSCAN_API_URL RPC_URL
 TASK_ID RUN_ID AGENT_AUDIT_PERSIST_DIR
+AGENT_AUDIT_MONGO_URI AGENT_AUDIT_MONGO_DB
+AGENT_AUDIT_MONGO_RUNS_META_COLLECTION AGENT_AUDIT_MONGO_RUNS_FILES_COLLECTION
+AGENT_AUDIT_MONGO_MAX_INLINE_FILE_BYTES AGENT_AUDIT_MONGO_TIMEOUT_MS
+AGENT_AUDIT_MONGO_RETRIES AGENT_AUDIT_MONGO_PERSIST
 ```
 
 An already-exported variable wins over the same key in `.env`; image defaults
@@ -113,24 +121,36 @@ artifacts/
 reports/
 logs/agent.stdout.log
 logs/agent.stderr.log
+logs/stats.log
+logs/persist.log
+stats/metrics.json
 ```
 
 The entrypoint runs DSH headless with the run directory as its working
 directory. When the audit exits, an exit trap writes `input/run_meta.json`
 (status, exit code, timings), captures the final answer in
 `reports/final_answer.md`, derives `stats/metrics.json` (set
-`AGENT_AUDIT_STATS=0` to skip it), optionally copies the run to
-`AGENT_AUDIT_PERSIST_DIR`, and calls `sync`.
+`AGENT_AUDIT_STATS=0` to skip it), persists the run to MongoDB when
+`AGENT_AUDIT_MONGO_URI` is set (set `AGENT_AUDIT_MONGO_PERSIST=0` to skip it),
+and optionally copies the run to `AGENT_AUDIT_PERSIST_DIR`.
 
 `stats/` is derived data: severity normalization, evidence-path checks, fork
 reproduction, tool usage, and anomalies. The collector never changes the audit
 exit code; failures land in `logs/stats.log`. Aggregation happens outside the
 container, see [../tools/audit_stats/README.md](../tools/audit_stats/README.md).
 
+The MongoDB mirror is also one run per write: one `runs_meta` document with
+top-level `target_address` / `target_chain` and embedded `stats`, plus one
+`runs_files` document per file under that run's `input/`, `reports/`,
+`artifacts/`, and `sources/`. `stats/`, `logs/`, `test/`, build caches, and
+batch-level directories are not archived. A database failure lands in
+`logs/persist.log` and does not change the audit exit code. See
+[../tools/run_persist/README.md](../tools/run_persist/README.md).
+
 `docker/run.sh` bind-mounts the host `runs/` directory at
 `/opt/agent-audit/runs`, so evidence is durable as it is written. k3s uses a
 hostPath volume at the same mount point; see [../k3s/README.md](../k3s/README.md).
-There is no MongoDB or other archive backend.
+The run directory remains the source of truth even when MongoDB is enabled.
 
 ## Runtime contents
 
@@ -141,6 +161,7 @@ There is no MongoDB or other archive backend.
 - Echidna
 - Heimdall
 - `jq`, `curl`, `git`, and the usual shell
+- Python 3 with `pymongo` for the per-run MongoDB mirror
 - vendored `forge-std` for offline harnesses
 - the `evm-audit` skill under `DSH_HOME` (the run's entry point)
 

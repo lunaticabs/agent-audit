@@ -5,8 +5,11 @@
 
 ## 1. 约束
 
-- **run 目录是唯一真相。** 没有 MongoDB、没有中央队列状态。`runs/<run_id>/` 里的
-  `input/`、`reports/`、`artifacts/`、`test/` 是审计证据；统计只能从这些文件派生。
+- **run 目录是唯一真相。** `runs/<run_id>/` 里的 `input/`、`reports/`、`artifacts/`、
+  `test/` 是审计证据；统计只能从这些文件派生。MongoDB 的 `runs_meta` /
+  `runs_files` 是同一条 run 的镜像，不是统计的独立事实源；`runs_meta.stats`
+  就是该 run 的 `stats/metrics.json`，可供中央查询，但口径仍以 run 目录为准。
+  没有中央队列状态。
 - **报告是 agent 写的。** `final_report.json` 是不可信输入：字段会漂移、严重度词表会
   漂移、证据路径可能不存在。统计工具必须归一化、记录异常，并且永不因为报告坏了而崩溃。
 - **统计是派生物。** `stats/metrics.json` 可以随时删除重建；它不进入 git，也不影响审计退出码。
@@ -151,7 +154,8 @@ Redis -> dispatcher -> runner Job -> runs/<run_id>/stats/metrics.json (hostPath)
 ### 单节点（当前形态）
 
 `runner Job` 的 hostPath 已经挂载 `/var/lib/agent-audit/runs`，metrics 与证据同目录。
-在节点上跑：
+如果配置了 MongoDB，同一条 metrics 也会写进 `runs_meta.stats`；下面的文件聚合仍然
+是默认路径，不依赖数据库。在节点上跑：
 
 ```bash
 PYTHONPATH=/opt/agent-audit/tools python3 -m audit_stats report \

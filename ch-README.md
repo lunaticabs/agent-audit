@@ -5,15 +5,15 @@
 - **单次审计**：`docker/run.sh` 为一个完整 prompt 拉起一个容器。
 - **并行审计**：k3s dispatcher 把 Redis 消息转换成一次性 Kubernetes Job。
 
-没有数据库归档，没有 Rust 审计 CLI，也没有固定审计流水线。run 目录就是持久化产物；agent 通过 Etherscan、RPC 和已安装工具直接工作。
+没有 Rust 审计 CLI，也没有固定审计流水线。run 目录是主产物；配置 MongoDB 后，entrypoint 会在每条地址审计结束时把该 run 镜像到 `runs_meta` / `runs_files` 一次，批次级目录不会入库。agent 通过 Etherscan、RPC 和已安装工具直接工作。
 
 ## 本次重构
 
 - agent 从 Codex 换成 **DeepSeek Harness headless CLI 模式**，API 换成 DeepSeek 官方接口（`deepseek-official`），不再使用 OpenRouter。
-- 删除旧 Rust `agent-audit` 流水线（`src/`）。源码拉取、依赖启发式、材料聚合和 Mongo 归档全部移除，改成 agent 直接调用 Etherscan v2 / RPC，加一个很小的容器 entrypoint。
+- 删除旧 Rust `agent-audit` 流水线（`src/`）。源码拉取、依赖启发式和材料聚合改成 agent 直接调用 Etherscan v2 / RPC，加一个很小的容器 entrypoint。
 - 删除 `eval_docker/` 和 `EVMbench/`。这个仓库只做审计，不做 agent 评测。
 - 删除按工具/流程拆分的 skill，只保留一个主 `evm-audit` skill 和可用工具声明。审计方法由 agent 自己决定。
-- 删除 MongoDB 归档。每次审计写入 `runs/<run_id>/`；Docker 直接 bind mount，k3s 使用节点本地 hostPath。
+- 恢复 MongoDB 归档，但改成**每条 run 一次**：一个 `runs_meta` 文档（`target_address` / `target_chain` 展平，内嵌 `stats`）加该 run 自己的 `runs_files` 材料。由 entrypoint 在审计结束时触发，不写批次级文档。run 目录仍是本地主产物；Docker 直接 bind mount，k3s 使用节点本地 hostPath。
 - 保留原有链集合、容器工具列表和 k3s 大规模部署能力。
 
 ## 架构
@@ -26,6 +26,7 @@
 批量审计：
   地址列表 -> Redis Stream -> dispatcher -> Kubernetes Job
            -> 同一个 runner 镜像 -> /var/lib/agent-audit/runs/<run_id>
+           ->（配置后）该 run 的 runs_meta + runs_files
 ```
 
 | 目录 | 作用 |
@@ -34,6 +35,7 @@
 | `k3s/` | Redis 队列、dispatcher Deployment、runner Job 模板、hostPath runs |
 | `dispatcher/` | Rust 实现的 Redis → Kubernetes Job 桥 |
 | `scripts/` | 批量入队脚本和地址列表 |
+| `tools/` | 审计后统计（`audit_stats`）和每条 run 的 MongoDB 持久化（`run_persist`） |
 | `xtask/` | 格式化、lint、测试检查 |
 | `docs/` | 长报告 |
 
@@ -62,9 +64,28 @@ reports/final_report.json     # 必须的结构化报告
 reports/final_answer.md       # DSH stdout
 logs/agent.stdout.log
 logs/agent.stderr.log
+logs/stats.log
+logs/persist.log
+stats/metrics.json
 ```
 
-entrypoint 在退出时自动写 metadata、保存 stdout 并 `sync`。agent 不需要、也没有持久化命令可调用。
+entrypoint 在退出时自动写 metadata、保存 stdout、生成 `stats/metrics.json`，并在配置了 `AGENT_AUDIT_MONGO_URI` 时把该 run 镜像到 MongoDB 一次。agent 不需要、也无法触发持久化。
+
+## MongoDB 持久化
+
+持久化发生在审计进程退出、`stats/metrics.json` 生成之后，每条 run 一次：
+
+- `runs_meta`：一个文档，`target_address` / `target_chain` 是一级字段，完整
+  metrics 对象放在 `stats`；另有状态、起止时间、时长、区块号、文件数、总字节数、
+  `has_final_report`。
+- `runs_files`：该 run 的 `input/`、`reports/`、`artifacts/`、`sources/` 下每个
+  文件一个文档。`stats/`、`logs/`、`test/`、`out/`、`cache/` 和批次级目录不入库。
+
+在 `.env` 或 k3s runner secret 里设置 `AGENT_AUDIT_MONGO_URI` 等变量；
+`AGENT_AUDIT_MONGO_PERSIST=0` 可关闭。数据库失败只写
+`logs/persist.log`，不改变审计退出码。历史 `runs_meta` 里嵌套的
+`target.address` / `target.chain` 保持原样，不迁移；新文档使用展平 schema。
+细节见 [tools/run_persist/README.md](tools/run_persist/README.md)。
 
 ## 审计能力
 
@@ -160,6 +181,13 @@ cargo xtask check
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
+```
+
+Python 检查：
+
+```bash
+PYTHONPATH=tools python3 -m unittest discover -s tools/audit_stats/tests -t tools -v
+PYTHONPATH=tools python3 -m unittest discover -s tools/run_persist/tests -t tools -v
 ```
 
 Docker 打包检查：

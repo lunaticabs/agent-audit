@@ -10,23 +10,29 @@ image:
 - **Single audit** — `docker/run.sh` launches one container for one prompt.
 - **Parallel audit** — k3s dispatcher turns Redis messages into one-shot Jobs.
 
-There is no database archive, no Rust audit CLI, and no fixed audit pipeline.
-The run directory is the durable artifact; the agent works against Etherscan,
-RPC, and the installed tools directly.
+There is no Rust audit CLI and no fixed audit pipeline. The run directory is
+the primary artifact; when MongoDB is configured, the entrypoint mirrors each
+finished run into `runs_meta` and `runs_files` exactly once, after that address
+audit ends. Batch-level directories are never persisted. The agent works against
+Etherscan, RPC, and the installed tools directly.
 
 ## What changed
 
 - The agent is **DeepSeek Harness in headless CLI mode**, using the official
   DeepSeek API (`deepseek-official`), not Codex/OpenRouter.
 - The old Rust `agent-audit` pipeline (`src/`) is gone. Its source fetching,
-  dependency heuristics, material aggregation, and Mongo archive were replaced
-  by direct Etherscan v2/RPC access and a small container entrypoint.
+  dependency heuristics, and material aggregation were replaced by direct
+  Etherscan v2/RPC access and a small container entrypoint.
 - `eval_docker/` and `EVMbench/` were removed. This repository is for audits,
   not agent benchmarking.
 - The per-tool workflow skills were replaced by **one main `evm-audit` skill**
   plus a declared tool catalog. The agent chooses its own method.
-- MongoDB archival is gone. Each run is persisted under `runs/<run_id>/`;
-  Docker bind-mounts it and k3s mounts a node-local hostPath.
+- MongoDB archival is restored as a **per-run mirror**: one `runs_meta`
+  document (flattened `target_address` / `target_chain`, embedded `stats`) and
+  this run's own `runs_files` material. It is triggered once by the entrypoint
+  at the end of each address audit; there are no batch-level documents. The
+  run directory remains the source of truth, and Docker/k3s still keep it
+  locally.
 - The supported chain set, the container tool list, and the k3s deployment are
   preserved.
 
@@ -40,6 +46,7 @@ Single audit:
 Parallel audit:
   address list -> Redis Stream -> dispatcher -> Kubernetes Jobs
                -> same runner image -> /var/lib/agent-audit/runs/<run_id>
+               -> (if configured) runs_meta + runs_files for that run
 ```
 
 | Path | Role |
@@ -48,7 +55,7 @@ Parallel audit:
 | `k3s/` | Redis queue, dispatcher Deployment, runner Job template, hostPath runs |
 | `dispatcher/` | Rust Redis-to-Kubernetes-Job bridge |
 | `scripts/` | Batch enqueue helper and address lists |
-| `tools/` | Post-run statistics (`audit_stats`) |
+| `tools/` | Post-run statistics (`audit_stats`) and per-run MongoDB persistence (`run_persist`) |
 | `xtask/` | Workspace formatting, linting, and test checks |
 | `docs/` | Long-form reports |
 
@@ -81,11 +88,34 @@ reports/final_answer.md       # captured DSH stdout
 logs/agent.stdout.log
 logs/agent.stderr.log
 logs/stats.log                # stats collector output
+logs/persist.log              # MongoDB persistence result
 stats/metrics.json            # derived post-run metrics
 ```
 
-The entrypoint writes the final metadata and captures stdout on exit. The
-agent does not run a persistence command; there is none.
+The entrypoint writes the final metadata, captures stdout, derives
+`stats/metrics.json`, and (when `AGENT_AUDIT_MONGO_URI` is set) mirrors the run
+to MongoDB once. The agent cannot trigger and does not need to trigger
+persistence.
+
+## MongoDB persistence
+
+Persistence happens after the audit process exits and after
+`stats/metrics.json` is collected. It is one persistence step per run:
+
+- `runs_meta`: one document with `target_address` and `target_chain` at the top
+  level, the full metrics object under `stats`, plus status, timestamps,
+  duration, block number, file count, total bytes, and `has_final_report`.
+- `runs_files`: one document per workspace file under that run's `input/`,
+  `reports/`, `artifacts/`, and `sources/` directories. `stats/`, `logs/`,
+  `test/`, `out/`, `cache/`, and batch-level directories are not archived.
+
+Set `AGENT_AUDIT_MONGO_URI` and its companions in `.env` or the k3s runner
+secret. `AGENT_AUDIT_MONGO_PERSIST=0` disables the mirror. A database failure is
+logged to `logs/persist.log` but does not change the audit exit code.
+
+The old nested `target.address` / `target.chain` documents already in
+`runs_meta` are left untouched; new documents use the flattened schema and add
+`stats`. See [tools/run_persist/README.md](tools/run_persist/README.md).
 
 ## Audit capability
 
@@ -208,6 +238,13 @@ Equivalent commands:
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
+```
+
+Python checks:
+
+```bash
+PYTHONPATH=tools python3 -m unittest discover -s tools/audit_stats/tests -t tools -v
+PYTHONPATH=tools python3 -m unittest discover -s tools/run_persist/tests -t tools -v
 ```
 
 Docker packaging checks:

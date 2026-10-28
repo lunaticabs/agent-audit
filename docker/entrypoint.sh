@@ -32,6 +32,21 @@ optional:
   AGENT_AUDIT_STATS_MODULE
                        Python path containing the audit_stats package.
                        Default: /opt/agent-audit/tools
+  AGENT_AUDIT_MONGO_URI
+                       MongoDB URI. Persistence is skipped when this is unset.
+  AGENT_AUDIT_MONGO_DB   Database name. Default: agent
+  AGENT_AUDIT_MONGO_RUNS_META_COLLECTION
+                       Metadata collection. Default: runs_meta
+  AGENT_AUDIT_MONGO_RUNS_FILES_COLLECTION
+                       Per-run file collection. Default: runs_files
+  AGENT_AUDIT_MONGO_MAX_INLINE_FILE_BYTES
+                       Skip files larger than this instead of failing the run.
+                       Default: 8388608
+  AGENT_AUDIT_MONGO_PERSIST
+                       Set to 0 to skip MongoDB persistence.
+  AGENT_AUDIT_PERSIST_MODULE
+                       Python path containing the run_persist package.
+                       Default: /opt/agent-audit/tools
   -h, --help           Show this help message
 
 The container persists the whole run directory. In the single-audit Docker
@@ -221,6 +236,33 @@ finalize() {
         PYTHONPATH="${stats_module}${PYTHONPATH:+:${PYTHONPATH}}" \
           python3 -m audit_stats collect "${RUN_DIR}" \
           >/dev/null 2>"${RUN_DIR}/logs/stats.log" || true
+      fi
+    fi
+
+    # Persist exactly one finished run: one runs_meta document (target
+    # flattened, stats embedded) plus that run's own runs_files material.
+    # This runs once per address audit and never walks a batch-level directory.
+    # A database failure is logged but does not change the audit exit code.
+    if [[ "${AGENT_AUDIT_MONGO_PERSIST:-1}" != "0" ]]; then
+      local persist_module="${AGENT_AUDIT_PERSIST_MODULE:-${PROJECT_ROOT}/tools}"
+      if [[ -z "${AGENT_AUDIT_MONGO_URI:-}" ]]; then
+        printf 'mongo persistence skipped: AGENT_AUDIT_MONGO_URI is not configured\n' \
+          >>"${RUN_DIR}/logs/persist.log" 2>/dev/null || true
+      elif ! command -v python3 >/dev/null 2>&1; then
+        printf 'mongo persistence skipped: python3 is not available\n' \
+          >>"${RUN_DIR}/logs/persist.log" 2>/dev/null || true
+      elif [[ ! -d "${persist_module}/run_persist" ]]; then
+        printf 'mongo persistence skipped: %s/run_persist not found\n' "$persist_module" \
+          >>"${RUN_DIR}/logs/persist.log" 2>/dev/null || true
+      else
+        local persist_code=0
+        PYTHONPATH="${persist_module}${PYTHONPATH:+:${PYTHONPATH}}" \
+          python3 -m run_persist "${RUN_DIR}" \
+          >>"${RUN_DIR}/logs/persist.log" 2>&1 || persist_code=$?
+        if [[ "$persist_code" -ne 0 ]]; then
+          printf 'agent-audit: mongo persistence failed (exit=%s); see %s/logs/persist.log\n' \
+            "$persist_code" "${RUN_DIR}" >&2
+        fi
       fi
     fi
 

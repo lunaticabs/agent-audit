@@ -13,11 +13,13 @@ Redis Stream
   -> agent-audit runner (DSH headless + tools)
   -> /opt/agent-audit/runs/<run_id>
   -> hostPath /var/lib/agent-audit/runs/<run_id>
+  -> (when configured) runs_meta + runs_files for that run
 ```
 
-There is no database, no archive service, and no long-running runner
-Deployment. The run directory is the durable artifact. The dispatcher only
-creates Jobs; it does not assemble prompts or write task state.
+There is no long-running runner Deployment and no batch-level archive process.
+The run directory is the primary durable artifact; the runner entrypoint mirrors
+that one run to MongoDB after the audit finishes. The dispatcher only creates
+Jobs; it does not assemble prompts or write task state.
 
 ## Build images
 
@@ -69,9 +71,14 @@ Fill [runner-secret.example.yaml](runner-secret.example.yaml):
 - `DSH_REASONING_EFFORT` — `off`, `low`, `high`, or `max`
 - `ETHERSCAN_API_KEY`, `ETHERSCAN_API_URL` — direct Etherscan v2 access
 - `RPC_URL` — archive RPC for fork tests and fuzzing
+- `AGENT_AUDIT_MONGO_URI`, `AGENT_AUDIT_MONGO_DB`,
+  `AGENT_AUDIT_MONGO_RUNS_META_COLLECTION`,
+  `AGENT_AUDIT_MONGO_RUNS_FILES_COLLECTION` — per-run MongoDB mirror. Unset the
+  URI to disable it for a deployment.
 
-No Mongo or Codex/OpenRouter values are used. Remove stale keys from existing
-secrets before applying.
+For a smoke test, point `AGENT_AUDIT_MONGO_DB` at a non-production database
+(for example `Test`). Never validate against the production database. Remove
+stale Codex/OpenRouter keys from existing secrets before applying.
 
 For the default in-cluster Redis, `redis://agent-audit-redis:6379/0` is enough
 in the dispatcher secret.
@@ -171,11 +178,35 @@ reports/final_answer.md      # stdout captured from DSH
 logs/agent.stdout.log
 logs/agent.stderr.log
 logs/stats.log               # stats collector output
+logs/persist.log             # MongoDB persistence result
 stats/metrics.json           # derived post-run metrics
 ```
 
 DSH session files live under the image's `DSH_HOME`, outside the run directory;
 the audit evidence and final answer are captured in `runs/`.
+
+## MongoDB archive
+
+When `AGENT_AUDIT_MONGO_URI` is set in the runner secret, the entrypoint writes
+one persistence record per address audit:
+
+- `runs_meta`: `_id` is the run id; `target_address` / `target_chain` are
+  top-level fields; the full `stats/metrics.json` object is under `stats`;
+  status, timestamps, duration, block number, file count, total bytes, and
+  `has_final_report` stay top-level.
+- `runs_files`: one document per file under that run's `input/`, `reports/`,
+  `artifacts/`, and `sources/`. Batch-level directories are never walked.
+
+Create the indexes once after the first deployment (safe to re-run):
+
+```bash
+PYTHONPATH=tools python3 -m run_persist --init-db
+```
+
+The historical nested `target.address` / `target.chain` documents are not
+migrated. New documents use the flattened schema. A persistence failure is
+logged in `runs/<run_id>/logs/persist.log` and does not change the audit exit
+code. See [../tools/run_persist/README.md](../tools/run_persist/README.md).
 
 ## Round statistics
 
@@ -206,6 +237,10 @@ PYTHONPATH=tools python3 -m audit_stats report --runs-root /central/runs --expec
 A CronJob mounting the same hostPath can run this on a schedule. The dispatcher
 now injects `AGENT_AUDIT_IMAGE`, so results can be stratified by image tag; add
 a `batch_id` field to the Redis message when you need per-batch completion.
+
+The MongoDB mirror is independent of this file-based aggregation. It stores the
+same `stats/metrics.json` inside `runs_meta`, so a central consumer can query
+`runs_meta.stats` without reaching a node-local hostPath.
 See [docs/audit-statistics.md](../docs/audit-statistics.md) for metric
 definitions and failure modes.
 
