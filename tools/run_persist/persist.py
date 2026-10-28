@@ -446,8 +446,10 @@ def collect_run_materials(
             and rel_path not in INCLUDED_ROOT_FILES
         ):
             continue
-        if any(segment in EXCLUDED_PATH_SEGMENTS for segment in rel_path.split("/")[:-1]):
-            continue
+        if first_segment in {"harness", "test"}:
+            nested_dirs = rel_path.split("/")[1:-1]
+            if any(segment in EXCLUDED_PATH_SEGMENTS for segment in nested_dirs):
+                continue
 
         try:
             resolved = path.resolve()
