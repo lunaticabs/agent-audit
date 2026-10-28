@@ -425,6 +425,7 @@ def aggregate(
             "runs_high_plus": runs_high_plus,
             "rate_high_plus": ratio(runs_high_plus, len(evaluable)),
             "runs_below_high": runs_low_only,
+            "rate_below_high": ratio(runs_low_only, len(evaluable)),
             "max_severity_by_run": max_severity_counts,
         },
         "fork": {
@@ -580,7 +581,11 @@ def render_markdown(summary: Dict[str, Any], metrics: Sequence[Dict[str, Any]]) 
             [
                 ["Any finding", detection["runs_any_finding"], format_pct(detection["rate_any"])],
                 ["High or critical", detection["runs_high_plus"], format_pct(detection["rate_high_plus"])],
-                ["Below high (no high/critical)", detection["runs_below_high"], "n/a"],
+                [
+                    "Below high (no high/critical)",
+                    detection["runs_below_high"],
+                    format_pct(detection["rate_below_high"]),
+                ],
             ],
         )
     )
@@ -588,6 +593,11 @@ def render_markdown(summary: Dict[str, Any], metrics: Sequence[Dict[str, Any]]) 
     out.append(
         "Denominator for rates is the {n} evaluable run(s): report parsed, schema current or "
         "legacy, run not failed, report status not `blocked`.".format(n=detection["denominator"])
+    )
+    out.append("")
+    out.append(
+        "`Below high` counts evaluable runs with at least one finding and no high/critical; "
+        "zero-finding runs are not in this row."
     )
     out.append("")
 

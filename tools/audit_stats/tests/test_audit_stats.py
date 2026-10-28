@@ -506,6 +506,17 @@ class AggregateTests(unittest.TestCase):
         verified = {row["key"]: row for row in summary["strata"]["by_verified"]}
         self.assertEqual(verified["unverified"]["runs"], 1)
 
+    def test_below_high_rate_is_rendered(self):
+        metrics = [
+            _metric("a", findings=1, high_plus=1, severity="high"),
+            _metric("b", findings=1, high_plus=0, severity="low"),
+        ]
+        summary = aggregate(metrics)
+        self.assertEqual(summary["detection"]["runs_below_high"], 1)
+        self.assertEqual(summary["detection"]["rate_below_high"], 0.5)
+        markdown = render_markdown(summary, metrics)
+        self.assertIn("| Below high (no high/critical) | 1 | 50.0% |", markdown)
+
     def test_anomalies_are_counted(self):
         metrics = [
             _metric("a", anomalies=("evidence_missing", "schema_legacy")),
