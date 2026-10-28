@@ -5,11 +5,21 @@
 - `runs_meta` — one document per run. `target_address` and `target_chain` are
   top-level fields; the full `stats/metrics.json` object is embedded under
   `stats`; `runs_files` counts and timestamps stay top-level.
-- `runs_files` — one document per archived workspace file. Only the run's own
-  `input/`, `reports/`, `artifacts/`, `sources/`, `harness/`, and `test/`
-  directories (plus a root `foundry.toml`) are read. Batch-level directories
-  (`runs/_stats`, `runs/k3s-batch-*`, `batch_logs/`) are never walked because
-  the entrypoint passes a single run directory.
+- `runs_files` — one document for every regular file under that run directory,
+  including logs, stats, build output, and root files. `.run.lock`,
+  `logs/persist.log`, and symlinks escaping the run are skipped; files over the
+  inline limit are recorded in
+  `skipped_files`. Batch-level directories (`runs/_stats`, `runs/k3s-batch-*`,
+  `batch_logs/`) are never walked because the entrypoint passes a single run
+  directory.
+- `runs_meta.materials` — one manifest entry per archived file with
+  `rel_path`, `kind`, `size_bytes`, and `sha256`. This is the evidence index
+  used to resolve paths cited by the report.
+
+`block_number` is resolved from `input/run_meta.json`, the report, or
+`artifacts/pinned_block.json`. If none has one, `run_persist` calls
+`eth_blockNumber` on `AGENT_AUDIT_RPC_URL` / `RPC_URL` at archive time and
+records `block_number_source`.
 
 The entrypoint calls this once, after `stats/metrics.json` has been collected
 and before the optional `AGENT_AUDIT_PERSIST_DIR` copy. The database write is
@@ -24,9 +34,11 @@ not change the audit exit code.
 | `AGENT_AUDIT_MONGO_DB` | `agent` | Database name. |
 | `AGENT_AUDIT_MONGO_RUNS_META_COLLECTION` | `runs_meta` | Metadata collection. |
 | `AGENT_AUDIT_MONGO_RUNS_FILES_COLLECTION` | `runs_files` | File collection. |
-| `AGENT_AUDIT_MONGO_MAX_INLINE_FILE_BYTES` | `8388608` | Larger files are skipped, not fatal. |
+| `AGENT_AUDIT_MONGO_MAX_INLINE_FILE_BYTES` | `8388608` | Larger files are listed in `skipped_files`, not fatal. |
 | `AGENT_AUDIT_MONGO_TIMEOUT_MS` | `5000` | Server-selection/connect timeout. |
 | `AGENT_AUDIT_MONGO_RETRIES` | `3` | Attempts for a transient failure. |
+| `AGENT_AUDIT_RPC_URL` / `RPC_URL` | unset | Used for `eth_blockNumber` when the run saved no block. |
+| `AGENT_AUDIT_RPC_TIMEOUT_MS` | `5000` | Timeout for that RPC call. |
 | `AGENT_AUDIT_MONGO_CHUNK_SIZE` | `500` | File upserts per `bulk_write`. |
 | `AGENT_AUDIT_MONGO_PERSIST` | `1` | Set to `0` to disable persistence. |
 
@@ -65,9 +77,13 @@ do not need a database:
   "target_address": "0x...",
   "target_chain": "eth",
   "block_number": "26000000",
+  "block_number_source": "pinned_block",
   "has_final_report": true,
-  "file_count": 41,
-  "total_size_bytes": 332222,
+  "file_count": 188,
+  "total_size_bytes": 4026773,
+  "materials": [
+    {"rel_path": "artifacts/slither.json", "kind": "json", "size_bytes": 25067, "sha256": "..."}
+  ],
   "stats": { "...": "verbatim stats/metrics.json" }
 }
 ```

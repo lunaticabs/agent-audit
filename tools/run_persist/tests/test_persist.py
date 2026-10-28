@@ -13,7 +13,14 @@ from run_persist import (
     collect_run_materials,
     write_run,
 )
-from run_persist.persist import FileMaterial, _iter_chunks, _sanitize_bson_value, resolve_status
+from run_persist.persist import (
+    FileMaterial,
+    _iter_chunks,
+    _sanitize_bson_value,
+    fetch_block_number,
+    resolve_block_number,
+    resolve_status,
+)
 
 
 def _write_json(path: Path, payload: Any) -> None:
@@ -94,6 +101,7 @@ def make_run(root: Path, *, with_metrics: bool = True) -> Path:
     _write_text(run / "foundry.toml", "[profile.default]\n")
     _write_text(run / "out" / "Main.bin", "deployment output\n")
     _write_text(run / "logs" / "agent.stdout.log", "log\n")
+    _write_text(run / "logs" / "persist.log", "self-referential persistence log\n")
     _write_text(run / "batch_material" / "batch.json", '{"batch": true}\n')
     _write_json(run / "stats" / "metrics.json", {"sentinel": "must not be archived"})
 
@@ -118,7 +126,7 @@ def make_run(root: Path, *, with_metrics: bool = True) -> Path:
 
 
 class CollectMaterialsTests(unittest.TestCase):
-    def test_only_per_run_material_is_archived(self) -> None:
+    def test_every_run_file_is_archived(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             run = make_run(Path(tmp))
             material_set = collect_run_materials(
@@ -137,12 +145,13 @@ class CollectMaterialsTests(unittest.TestCase):
             self.assertIn("harness/foundry.toml", paths)
             self.assertIn("harness/test/Fork.t.sol", paths)
             self.assertIn("foundry.toml", paths)
-            self.assertNotIn("harness/cache/cache.json", paths)
-            self.assertNotIn("harness/out/Fork.t.sol/Fork.json", paths)
-            self.assertNotIn("stats/metrics.json", paths)
-            self.assertNotIn("logs/agent.stdout.log", paths)
-            self.assertNotIn("out/Main.bin", paths)
-            self.assertNotIn("batch_material/batch.json", paths)
+            self.assertIn("harness/cache/cache.json", paths)
+            self.assertIn("harness/out/Fork.t.sol/Fork.json", paths)
+            self.assertIn("stats/metrics.json", paths)
+            self.assertIn("logs/agent.stdout.log", paths)
+            self.assertNotIn("logs/persist.log", paths)
+            self.assertIn("out/Main.bin", paths)
+            self.assertIn("batch_material/batch.json", paths)
 
             report_doc = next(
                 material.doc
@@ -195,6 +204,55 @@ class CollectMaterialsTests(unittest.TestCase):
             self.assertEqual(len(doc["sha256"]), 64)
 
 
+class BlockNumberTests(unittest.TestCase):
+    def test_resolves_pinned_block_when_report_has_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run = make_run(Path(tmp))
+            report_path = run / "reports" / "final_report.json"
+            report = json.loads(report_path.read_text())
+            report["target"].pop("block_number", None)
+            report_path.write_text(json.dumps(report), encoding="utf-8")
+            _write_json(
+                run / "artifacts" / "pinned_block.json",
+                {"data": {"number": "0x1910921"}},
+            )
+            value, source = resolve_block_number(report, {}, run)
+            self.assertEqual(value, str(int("0x1910921", 16)))
+            self.assertEqual(source, "pinned_block")
+
+    def test_rpc_fetch_returns_decimal_block(self) -> None:
+        class _Response:
+            def __enter__(self) -> "_Response":
+                return self
+
+            def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+                return None
+
+            def read(self, _limit: int) -> bytes:
+                return b'{"jsonrpc":"2.0","id":1,"result":"0x10"}'
+
+        import run_persist.persist as persist_module
+        from unittest.mock import patch
+
+        with patch.object(persist_module.urllib.request, "urlopen", return_value=_Response()):
+            value, error = fetch_block_number("http://user:pass@localhost:8545", 1000)
+        self.assertEqual(value, "16")
+        self.assertIsNone(error)
+
+    def test_rpc_fetch_failure_is_not_fatal(self) -> None:
+        import run_persist.persist as persist_module
+        from unittest.mock import patch
+
+        with patch.object(
+            persist_module.urllib.request,
+            "urlopen",
+            side_effect=OSError("boom"),
+        ):
+            value, error = fetch_block_number("http://localhost:8545", 1000)
+        self.assertIsNone(value)
+        self.assertIn("rpc request failed", error or "")
+
+
 class MetaDocumentTests(unittest.TestCase):
     def test_flattens_target_and_embeds_stats(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -221,10 +279,22 @@ class MetaDocumentTests(unittest.TestCase):
             self.assertEqual(doc["target_chain"], "eth")
             self.assertNotIn("target", doc)
             self.assertEqual(doc["stats"], metrics)
-            self.assertEqual(doc["block_number"], "26000000")
             self.assertTrue(doc["has_final_report"])
             self.assertEqual(doc["file_count"], material_set.file_count)
             self.assertEqual(doc["total_size_bytes"], material_set.total_size_bytes)
+            self.assertEqual(len(doc["materials"]), material_set.file_count)
+            self.assertEqual(
+                {item["rel_path"] for item in doc["materials"]},
+                {item.doc["rel_path"] for item in material_set.materials},
+            )
+            self.assertTrue(
+                all(
+                    set(item) == {"rel_path", "kind", "size_bytes", "sha256"}
+                    for item in doc["materials"]
+                )
+            )
+            self.assertEqual(doc["block_number"], "26000000")
+            self.assertEqual(doc["block_number_source"], "report")
             self.assertEqual(doc["created_at"].isoformat(), "2026-10-28T01:00:00+00:00")
             self.assertEqual(doc["finished_at"].isoformat(), "2026-10-28T01:10:00+00:00")
             self.assertEqual(doc["duration_seconds"], 600.0)
@@ -247,6 +317,35 @@ class MetaDocumentTests(unittest.TestCase):
             self.assertIsNone(doc["stats"])
             self.assertEqual(doc["stats_error"], "stats/metrics.json: missing")
             self.assertIsNone(payload.meta_doc["stats"])
+
+    def test_block_is_absent_without_evidence_or_rpc(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run = make_run(Path(tmp))
+            report_path = run / "reports" / "final_report.json"
+            report = json.loads(report_path.read_text())
+            report["target"].pop("block_number", None)
+            report_path.write_text(json.dumps(report), encoding="utf-8")
+            payload = build_run_payload(run, rpc_url=None)
+            self.assertIsNone(payload.meta_doc["block_number"])
+            self.assertNotIn("block_number_source", payload.meta_doc)
+
+    def test_rpc_block_is_written_when_evidence_has_none(self) -> None:
+        import run_persist.persist as persist_module
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run = make_run(Path(tmp))
+            report_path = run / "reports" / "final_report.json"
+            report = json.loads(report_path.read_text())
+            report["target"].pop("block_number", None)
+            report_path.write_text(json.dumps(report), encoding="utf-8")
+            with patch.object(
+                persist_module, "fetch_block_number", return_value=("26300000", None)
+            ):
+                payload = build_run_payload(run, rpc_url="http://rpc.invalid")
+            self.assertEqual(payload.meta_doc["block_number"], "26300000")
+            self.assertEqual(payload.meta_doc["block_number_source"], "rpc")
+            self.assertNotIn("block_number_error", payload.meta_doc)
 
     def test_prompt_fallback_for_failed_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

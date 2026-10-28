@@ -105,10 +105,20 @@ Persistence happens after the audit process exits and after
 - `runs_meta`: one document with `target_address` and `target_chain` at the top
   level, the full metrics object under `stats`, plus status, timestamps,
   duration, block number, file count, total bytes, and `has_final_report`.
-- `runs_files`: one document per workspace file under that run's `input/`,
-  `reports/`, `artifacts/`, `sources/`, `harness/`, and `test/` directories,
-  plus a root `foundry.toml`. `stats/`, `logs/`, `out/`, `cache/`, `lib/`, and
-  batch-level directories are not archived.
+- `runs_files`: one document for **every regular file under that run's
+  directory** (artifacts, sources, reports, harness, tests, logs, stats, build
+  output, and the root files). `.run.lock`, `logs/persist.log` (written after
+  collection), and symlinks that escape the run are skipped; files over
+  `AGENT_AUDIT_MONGO_MAX_INLINE_FILE_BYTES` are listed in
+  `skipped_files` instead of being silently dropped. Batch-level directories
+  are never walked.
+- `runs_meta.materials`: one manifest entry per archived file (`rel_path`,
+  `kind`, `size_bytes`, `sha256`), so every path cited in the report can be
+  resolved from the run document itself.
+- `block_number` comes from `run_meta`, the report, or
+  `artifacts/pinned_block.json`. If none of those has it, `run_persist` calls
+  `eth_blockNumber` on `RPC_URL` at archive time; `block_number_source` records
+  which source was used.
 
 Set `AGENT_AUDIT_MONGO_URI` and its companions in `.env` or the k3s runner
 secret. `AGENT_AUDIT_MONGO_PERSIST=0` disables the mirror. A database failure is

@@ -13,6 +13,7 @@ from .persist import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_MAX_INLINE_FILE_BYTES,
     DEFAULT_RETRIES,
+    DEFAULT_RPC_TIMEOUT_MS,
     DEFAULT_TIMEOUT_MS,
     PersistConfig,
     build_run_payload,
@@ -96,6 +97,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="MongoDB server-selection timeout in milliseconds.",
     )
     parser.add_argument(
+        "--rpc-url",
+        default=None,
+        help=(
+            "RPC used to record block_number when the run did not save one. "
+            "Default: AGENT_AUDIT_RPC_URL or RPC_URL."
+        ),
+    )
+    parser.add_argument(
+        "--rpc-timeout-ms",
+        type=int,
+        default=None,
+        help="RPC request timeout in milliseconds. Default: 5000.",
+    )
+    parser.add_argument(
         "--retries",
         type=int,
         default=None,
@@ -149,6 +164,17 @@ def _config_from_args(args: argparse.Namespace) -> PersistConfig:
         if args.chunk_size is not None
         else _env_int("AGENT_AUDIT_MONGO_CHUNK_SIZE", DEFAULT_CHUNK_SIZE)
     )
+    rpc_url = (
+        args.rpc_url
+        or os.getenv("AGENT_AUDIT_RPC_URL", "").strip()
+        or os.getenv("RPC_URL", "").strip()
+        or None
+    )
+    rpc_timeout_ms = (
+        args.rpc_timeout_ms
+        if args.rpc_timeout_ms is not None
+        else _env_int("AGENT_AUDIT_RPC_TIMEOUT_MS", DEFAULT_RPC_TIMEOUT_MS)
+    )
 
     if max_inline <= 0:
         raise ValueError("--max-inline-file-bytes must be > 0")
@@ -156,6 +182,8 @@ def _config_from_args(args: argparse.Namespace) -> PersistConfig:
         raise ValueError("--timeout-ms must be > 0")
     if chunk_size <= 0:
         raise ValueError("--chunk-size must be > 0")
+    if rpc_timeout_ms <= 0:
+        raise ValueError("--rpc-timeout-ms must be > 0")
 
     return PersistConfig(
         uri=uri,
@@ -165,6 +193,8 @@ def _config_from_args(args: argparse.Namespace) -> PersistConfig:
         max_inline_file_bytes=max_inline,
         timeout_ms=timeout_ms,
         chunk_size=chunk_size,
+        rpc_url=rpc_url,
+        rpc_timeout_ms=rpc_timeout_ms,
     )
 
 
@@ -185,9 +215,17 @@ def _print_json(payload: Dict[str, Any], *, stream: Any = None) -> None:
     (stream or sys.stdout).flush()
 
 
-def _run_dry(run_dir: str, max_inline_file_bytes: int) -> int:
+def _run_dry(
+    run_dir: str,
+    max_inline_file_bytes: int,
+    rpc_url: Optional[str],
+    rpc_timeout_ms: int,
+) -> int:
     payload = build_run_payload(
-        run_dir, max_inline_file_bytes=max_inline_file_bytes
+        run_dir,
+        max_inline_file_bytes=max_inline_file_bytes,
+        rpc_url=rpc_url,
+        rpc_timeout_ms=rpc_timeout_ms,
     )
     meta = payload.meta_doc
     summary = {
@@ -198,6 +236,9 @@ def _run_dry(run_dir: str, max_inline_file_bytes: int) -> int:
         "target_address": meta.get("target_address"),
         "target_chain": meta.get("target_chain"),
         "block_number": meta.get("block_number"),
+        "block_number_source": meta.get("block_number_source"),
+        "block_number_error": meta.get("block_number_error"),
+        "material_count": len(meta.get("materials") or []),
         "created_at": (
             meta.get("created_at").isoformat()
             if hasattr(meta.get("created_at"), "isoformat")
@@ -305,8 +346,19 @@ def main(argv: Optional[list[str]] = None) -> int:
                 DEFAULT_MAX_INLINE_FILE_BYTES,
             )
         )
+        rpc_url = (
+            args.rpc_url
+            or os.getenv("AGENT_AUDIT_RPC_URL", "").strip()
+            or os.getenv("RPC_URL", "").strip()
+            or None
+        )
+        rpc_timeout_ms = (
+            args.rpc_timeout_ms
+            if args.rpc_timeout_ms is not None
+            else _env_int("AGENT_AUDIT_RPC_TIMEOUT_MS", DEFAULT_RPC_TIMEOUT_MS)
+        )
         try:
-            return _run_dry(run_dir, max_inline)
+            return _run_dry(run_dir, max_inline, rpc_url, rpc_timeout_ms)
         except Exception as exc:  # noqa: BLE001 - CLI boundary
             _print_json(
                 {"ok": False, "dry_run": True, "error": _redact_error(exc)},

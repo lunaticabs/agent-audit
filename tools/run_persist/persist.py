@@ -1,39 +1,26 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import math
 import re
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-#: Files that belong to one finished audit. Directories outside this allowlist
-#: are either derived (`stats/`, `logs/`) or tooling caches (`out/`, `lib/`,
-#: `cache/`, `broadcast/`) and are deliberately not sent to MongoDB.
-#: `harness/` and `test/` are included because the report often cites the
-#: Foundry harness as reproduction evidence. Batch-level material such as
-#: `runs/_stats` or `runs/k3s-batch-*` is never read because only the single
-#: run directory passed by the entrypoint is walked.
-INCLUDED_TOP_LEVEL_DIRS = (
-    "input",
-    "reports",
-    "artifacts",
-    "sources",
-    "harness",
-    "test",
-)
-INCLUDED_ROOT_FILES = frozenset({"foundry.toml"})
-#: Nested build/dependency trees inside an included directory. `harness/` is
-#: kept (its .t.sol and src files are evidence), but its cache/out/lib trees are
-#: not part of the audit record.
-EXCLUDED_PATH_SEGMENTS = frozenset(
-    {"cache", "out", "lib", "broadcast", "node_modules", ".git"}
-)
-SKIPPED_REL_PATHS = frozenset({".run.lock"})
+#: Every regular file under the single run directory is archived, because the
+#: report may cite any of them as evidence. Batch-level directories such as
+#: `runs/_stats` or `runs/k3s-batch-*` are never touched: the entrypoint passes
+#: exactly one run directory. `.run.lock` is runtime state, not evidence.
+SKIPPED_REL_PATHS = frozenset({".run.lock", "logs/persist.log"})
 FINAL_REPORT_REL_PATH = "reports/final_report.json"
+PINNED_BLOCK_REL_PATH = "artifacts/pinned_block.json"
 
 DEFAULT_MAX_INLINE_FILE_BYTES = 8 * 1024 * 1024
 DEFAULT_CHUNK_SIZE = 500
@@ -42,6 +29,7 @@ DEFAULT_CHUNK_SIZE = 500
 #: safe bound.
 MAX_BULK_BYTES = 12 * 1024 * 1024
 DEFAULT_TIMEOUT_MS = 5_000
+DEFAULT_RPC_TIMEOUT_MS = 5_000
 DEFAULT_RETRIES = 3
 MAX_SKIPPED_SAMPLES = 20
 
@@ -89,6 +77,8 @@ class PersistConfig:
     max_inline_file_bytes: int = DEFAULT_MAX_INLINE_FILE_BYTES
     timeout_ms: int = DEFAULT_TIMEOUT_MS
     chunk_size: int = DEFAULT_CHUNK_SIZE
+    rpc_url: Optional[str] = None
+    rpc_timeout_ms: int = DEFAULT_RPC_TIMEOUT_MS
 
 
 @dataclass(frozen=True)
@@ -301,29 +291,136 @@ def resolve_target(
     return (address or None, chain or None)
 
 
-def resolve_block_number(report: Any, run_meta: Any) -> Optional[str]:
-    if isinstance(run_meta, dict):
-        value = _as_text(run_meta.get("block_number"))
-        if value:
-            return value
-    if not isinstance(report, dict):
+def _normalize_block_number(value: Any) -> Optional[str]:
+    raw = _as_text(value)
+    if not raw:
         return None
-    for key in ("block_number", "fork_block_number"):
-        value = _as_text(report.get(key))
-        if value:
-            return value
-    target = report.get("target")
-    if isinstance(target, dict):
-        value = _as_text(target.get("block_number"))
-        if value:
-            return value
-    scope = report.get("scope")
-    if isinstance(scope, dict):
-        for key in ("block_number", "fork_block_number"):
-            value = _as_text(scope.get(key))
+    try:
+        if raw.lower().startswith("0x"):
+            return str(int(raw, 16))
+        return str(int(raw, 10))
+    except ValueError:
+        return None
+
+
+def _pinned_block_number(run_dir: Path) -> Optional[str]:
+    payload, error = read_json_file(run_dir / PINNED_BLOCK_REL_PATH)
+    if error or not isinstance(payload, dict):
+        return None
+    for key in ("data", "result"):
+        container = payload.get(key)
+        if isinstance(container, dict):
+            value = _normalize_block_number(container.get("number"))
             if value:
                 return value
-    return None
+    return _normalize_block_number(payload.get("number"))
+
+
+def resolve_block_number(
+    report: Any,
+    run_meta: Any,
+    run_dir: Optional[Path] = None,
+) -> Tuple[Optional[str], Optional[str]]:
+    """Return ``(block_number, source)`` from durable run evidence."""
+
+    if isinstance(run_meta, dict):
+        value = _normalize_block_number(run_meta.get("block_number"))
+        if value:
+            return value, "run_meta"
+    if isinstance(report, dict):
+        for key in ("block_number", "fork_block_number"):
+            value = _normalize_block_number(report.get(key))
+            if value:
+                return value, "report"
+        target = report.get("target")
+        if isinstance(target, dict):
+            value = _normalize_block_number(target.get("block_number"))
+            if value:
+                return value, "report"
+        scope = report.get("scope")
+        if isinstance(scope, dict):
+            for key in ("block_number", "fork_block_number"):
+                value = _normalize_block_number(scope.get(key))
+                if value:
+                    return value, "report"
+    if run_dir is not None:
+        value = _pinned_block_number(Path(run_dir))
+        if value:
+            return value, "pinned_block"
+    return None, None
+
+
+def fetch_block_number(
+    rpc_url: Optional[str],
+    timeout_ms: int = DEFAULT_RPC_TIMEOUT_MS,
+) -> Tuple[Optional[str], Optional[str]]:
+    """Ask the target chain's RPC for the current block at archive time.
+
+    Standard library only. Basic-auth credentials embedded in ``RPC_URL`` are
+    converted to an Authorization header and never echoed in errors.
+    """
+
+    raw_url = (rpc_url or "").strip()
+    if not raw_url:
+        return None, "rpc_url_missing"
+
+    try:
+        parts = urllib.parse.urlsplit(raw_url)
+    except ValueError:
+        return None, "invalid_rpc_url"
+
+    scheme = parts.scheme.lower()
+    if scheme not in {"http", "https"}:
+        return None, "unsupported_rpc_scheme"
+    host = parts.hostname or ""
+    if not host:
+        return None, "invalid_rpc_url"
+    if ":" in host and not host.startswith("["):
+        host = "[{}]".format(host)
+    netloc = host
+    if parts.port is not None:
+        netloc = "{}:{}".format(netloc, parts.port)
+    path = parts.path or "/"
+    clean_url = urllib.parse.urlunsplit(
+        (parts.scheme, netloc, path, parts.query, "")
+    )
+
+    headers = {"Content-Type": "application/json"}
+    if parts.username is not None:
+        username = urllib.parse.unquote(parts.username)
+        password = urllib.parse.unquote(parts.password or "")
+        token = base64.b64encode(
+            "{}:{}".format(username, password).encode("utf-8")
+        ).decode("ascii")
+        headers["Authorization"] = "Basic " + token
+
+    body = json.dumps(
+        {"jsonrpc": "2.0", "id": 1, "method": "eth_blockNumber", "params": []}
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        clean_url, data=body, headers=headers, method="POST"
+    )
+    try:
+        with urllib.request.urlopen(
+            request, timeout=max(0.1, timeout_ms / 1000.0)
+        ) as response:
+            raw = response.read(1024 * 1024)
+    except Exception as exc:  # noqa: BLE001 - network boundary
+        # Do not include the URL or response body: RPC URLs often carry keys.
+        return None, "{}: rpc request failed".format(type(exc).__name__)
+
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return None, "invalid_rpc_response"
+    if not isinstance(payload, dict):
+        return None, "invalid_rpc_response"
+    if payload.get("error"):
+        return None, "rpc_error"
+    value = _normalize_block_number(payload.get("result"))
+    if not value:
+        return None, "invalid_rpc_result"
+    return value, None
 
 
 def resolve_status(run_meta: Any) -> str:
@@ -417,8 +514,11 @@ def collect_run_materials(
 ) -> MaterialSet:
     """Walk exactly one run directory and build ``runs_files`` documents.
 
-    A file larger than ``max_inline_file_bytes`` is skipped, not fatal: one
-    oversized tool log must not prevent the run metadata from being archived.
+    Every regular file under the run is archived, so any path cited in the
+    report can be resolved from MongoDB. Batch-level directories are outside
+    this walk because only one run directory is passed in. A file larger than
+    ``max_inline_file_bytes`` is skipped and listed in the run metadata, not
+    treated as a fatal error.
     """
 
     run_path = Path(run_dir).resolve()
@@ -440,16 +540,6 @@ def collect_run_materials(
             continue
         if rel_path in SKIPPED_REL_PATHS:
             continue
-        first_segment = rel_path.split("/", 1)[0]
-        if (
-            first_segment not in INCLUDED_TOP_LEVEL_DIRS
-            and rel_path not in INCLUDED_ROOT_FILES
-        ):
-            continue
-        if first_segment in {"harness", "test"}:
-            nested_dirs = rel_path.split("/")[1:-1]
-            if any(segment in EXCLUDED_PATH_SEGMENTS for segment in nested_dirs):
-                continue
 
         try:
             resolved = path.resolve()
@@ -506,6 +596,9 @@ def build_meta_document(
     metrics: Any,
     material_set: MaterialSet,
     stats_error: Optional[str] = None,
+    block_number: Optional[str] = None,
+    block_number_source: Optional[str] = None,
+    block_number_error: Optional[str] = None,
     now: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     """Build the single flattened ``runs_meta`` document for one run.
@@ -545,7 +638,10 @@ def build_meta_document(
     target_address, target_chain = resolve_target(
         metrics, report, request, run_meta, prompt
     )
-    block_number = resolve_block_number(report, run_meta)
+    if block_number is None and block_number_source is None:
+        block_number, block_number_source = resolve_block_number(
+            report, run_meta, run_path
+        )
 
     stats_doc: Optional[Dict[str, Any]] = None
     if isinstance(metrics, dict):
@@ -563,9 +659,22 @@ def build_meta_document(
         "has_final_report": (run_path / FINAL_REPORT_REL_PATH).is_file(),
         "file_count": material_set.file_count,
         "total_size_bytes": material_set.total_size_bytes,
+        "materials": [
+            {
+                "rel_path": material.doc["rel_path"],
+                "kind": material.doc.get("kind"),
+                "size_bytes": material.size_bytes,
+                "sha256": material.doc["sha256"],
+            }
+            for material in material_set.materials
+        ],
         "stats": stats_doc,
     }
 
+    if block_number_source:
+        doc["block_number_source"] = block_number_source
+    if block_number is None and block_number_error:
+        doc["block_number_error"] = block_number_error
     if material_set.skipped_count:
         doc["skipped_file_count"] = material_set.skipped_count
         doc["skipped_files"] = list(material_set.skipped_samples)
@@ -638,6 +747,8 @@ def build_run_payload(
     run_dir: Any,
     *,
     max_inline_file_bytes: int = DEFAULT_MAX_INLINE_FILE_BYTES,
+    rpc_url: Optional[str] = None,
+    rpc_timeout_ms: int = DEFAULT_RPC_TIMEOUT_MS,
     now: Optional[datetime] = None,
 ) -> RunPayload:
     """Load one finished run and build the documents without touching MongoDB."""
@@ -668,7 +779,16 @@ def build_run_payload(
         or parse_timestamp((request or {}).get("created_at"))
         or payload_now
     )
-    block_number = resolve_block_number(report, run_meta)
+    block_number, block_number_source = resolve_block_number(
+        report, run_meta, run_path
+    )
+    block_number_error = None
+    if block_number is None and rpc_url:
+        block_number, block_number_error = fetch_block_number(
+            rpc_url, rpc_timeout_ms
+        )
+        if block_number:
+            block_number_source = "rpc"
 
     material_set = collect_run_materials(
         run_path,
@@ -684,6 +804,9 @@ def build_run_payload(
         metrics=metrics,
         material_set=material_set,
         stats_error=stats_error,
+        block_number=block_number,
+        block_number_source=block_number_source,
+        block_number_error=block_number_error,
         now=payload_now,
     )
     return RunPayload(
@@ -701,7 +824,10 @@ def persist_run(run_dir: Any, config: PersistConfig) -> PersistResult:
 
     started = time.time()
     payload = build_run_payload(
-        run_dir, max_inline_file_bytes=config.max_inline_file_bytes
+        run_dir,
+        max_inline_file_bytes=config.max_inline_file_bytes,
+        rpc_url=config.rpc_url,
+        rpc_timeout_ms=config.rpc_timeout_ms,
     )
 
     client = _mongo_client(config)

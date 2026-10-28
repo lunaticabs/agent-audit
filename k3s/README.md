@@ -70,7 +70,8 @@ Fill [runner-secret.example.yaml](runner-secret.example.yaml):
   stronger model
 - `DSH_REASONING_EFFORT` — `off`, `low`, `high`, or `max`
 - `ETHERSCAN_API_KEY`, `ETHERSCAN_API_URL` — direct Etherscan v2 access
-- `RPC_URL` — archive RPC for fork tests and fuzzing
+- `RPC_URL` — archive RPC for fork tests, fuzzing, and the archive-time
+  `eth_blockNumber` fallback
 - `AGENT_AUDIT_MONGO_URI`, `AGENT_AUDIT_MONGO_DB`,
   `AGENT_AUDIT_MONGO_RUNS_META_COLLECTION`,
   `AGENT_AUDIT_MONGO_RUNS_FILES_COLLECTION` — per-run MongoDB mirror. Unset the
@@ -194,9 +195,15 @@ one persistence record per address audit:
   top-level fields; the full `stats/metrics.json` object is under `stats`;
   status, timestamps, duration, block number, file count, total bytes, and
   `has_final_report` stay top-level.
-- `runs_files`: one document per file under that run's `input/`, `reports/`,
-  `artifacts/`, `sources/`, `harness/`, and `test/`, plus a root
-  `foundry.toml`. Batch-level directories are never walked.
+- `runs_files`: one document for every regular file under that run's
+  directory, including logs, stats, build output, and root files.
+  `logs/persist.log` and oversized files are handled specially; batch-level
+  directories are never walked.
+- `materials`: one manifest entry per archived file (`rel_path`, `kind`,
+  `size_bytes`, `sha256`) inside `runs_meta`, so evidence paths can be checked
+  from the run document alone. `block_number` is taken from saved evidence
+  first, then fetched with `eth_blockNumber` from `RPC_URL`; the source is
+  stored in `block_number_source`.
 
 Create the indexes once after the first deployment (safe to re-run):
 

@@ -9,9 +9,11 @@ from .persist import (
     build_meta_document,
     build_run_payload,
     collect_run_materials,
+    fetch_block_number,
     init_indexes,
     persist_run,
     read_json_file,
+    resolve_block_number,
     write_run,
 )
 
@@ -24,9 +26,11 @@ __all__ = [
     "build_meta_document",
     "build_run_payload",
     "collect_run_materials",
+    "fetch_block_number",
     "init_indexes",
     "persist_run",
     "read_json_file",
+    "resolve_block_number",
     "write_run",
 ]
 

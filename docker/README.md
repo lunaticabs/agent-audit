@@ -67,6 +67,7 @@ AGENT_AUDIT_MONGO_URI AGENT_AUDIT_MONGO_DB
 AGENT_AUDIT_MONGO_RUNS_META_COLLECTION AGENT_AUDIT_MONGO_RUNS_FILES_COLLECTION
 AGENT_AUDIT_MONGO_MAX_INLINE_FILE_BYTES AGENT_AUDIT_MONGO_TIMEOUT_MS
 AGENT_AUDIT_MONGO_RETRIES AGENT_AUDIT_MONGO_PERSIST
+AGENT_AUDIT_RPC_TIMEOUT_MS
 ```
 
 An already-exported variable wins over the same key in `.env`; image defaults
@@ -141,10 +142,15 @@ container, see [../tools/audit_stats/README.md](../tools/audit_stats/README.md).
 
 The MongoDB mirror is also one run per write: one `runs_meta` document with
 top-level `target_address` / `target_chain` and embedded `stats`, plus one
-`runs_files` document per file under that run's `input/`, `reports/`,
-`artifacts/`, `sources/`, `harness/`, and `test/`, plus a root
-`foundry.toml`. `stats/`, `logs/`, build caches, and batch-level directories are
-not archived. A database failure lands in
+`runs_files` document for every regular file under that run's directory,
+including logs, stats, build output, and root files. `.run.lock`,
+`logs/persist.log`, and symlinks that escape the run are skipped, and oversized
+files are listed in
+`skipped_files`. The meta document also carries a `materials` manifest with
+`rel_path`, `kind`, `size_bytes`, and `sha256` for each file. `block_number` is
+taken from saved evidence first, then fetched with `eth_blockNumber` from
+`RPC_URL`; the source is stored in `block_number_source`. Batch-level
+directories are never walked. A database failure lands in
 `logs/persist.log` and does not change the audit exit code. See
 [../tools/run_persist/README.md](../tools/run_persist/README.md).
 

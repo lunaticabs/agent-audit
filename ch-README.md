@@ -78,9 +78,16 @@ entrypoint 在退出时自动写 metadata、保存 stdout、生成 `stats/metric
 - `runs_meta`：一个文档，`target_address` / `target_chain` 是一级字段，完整
   metrics 对象放在 `stats`；另有状态、起止时间、时长、区块号、文件数、总字节数、
   `has_final_report`。
-- `runs_files`：该 run 的 `input/`、`reports/`、`artifacts/`、`sources/`、
-  `harness/`、`test/` 下每个文件一个文档，另加根目录 `foundry.toml`。
-  `stats/`、`logs/`、`out/`、`cache/`、`lib/` 和批次级目录不入库。
+- `runs_files`：该 run 目录下**每个普通文件**一个文档（artifacts、sources、
+  reports、harness、test、logs、stats、构建产物和根目录文件都算）。`.run.lock`、
+  归档完成前才写入的 `logs/persist.log` 和逃出 run 目录的软链会跳过；超过
+  `AGENT_AUDIT_MONGO_MAX_INLINE_FILE_BYTES` 的文件会列入 `skipped_files`，
+  不会静默丢失。批次级目录永远不会被遍历。
+- `runs_meta.materials`：每个归档文件一条清单（`rel_path`、`kind`、
+  `size_bytes`、`sha256`），报告里引用的路径可以直接在 run 文档里查到。
+- `block_number` 先从 `run_meta`、报告或 `artifacts/pinned_block.json` 取；
+  都没有时，`run_persist` 在归档时调用 `RPC_URL` 的 `eth_blockNumber`，
+  并用 `block_number_source` 记录来源。
 
 在 `.env` 或 k3s runner secret 里设置 `AGENT_AUDIT_MONGO_URI` 等变量；
 `AGENT_AUDIT_MONGO_PERSIST=0` 可关闭。数据库失败只写
