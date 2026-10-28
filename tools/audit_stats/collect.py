@@ -585,22 +585,40 @@ def coverage_claims(
 # --- function coverage ------------------------------------------------------
 
 
+_ABI_ITEM_TYPES = {"function", "event", "error", "constructor", "fallback", "receive"}
+
+
+def _looks_like_abi_entry(entry: Any) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    kind = entry.get("type")
+    if isinstance(kind, str) and kind in _ABI_ITEM_TYPES:
+        return True
+    # Older ABI JSON omits `type` but still has these fields.
+    if isinstance(entry.get("inputs"), list) and any(
+        key in entry for key in ("outputs", "constant", "payable", "stateMutability")
+    ):
+        return True
+    return False
+
+
 def _abi_entries(payload: Any, depth: int = 0) -> List[Dict[str, Any]]:
     """Find an ABI list in common Etherscan/Blockscout/Sourcify shapes.
 
     Agents save ABIs in different wrappers: `{"abi": [...]}`, Etherscan's
     `{"result": [{"ABI": "..."}]}`, or Sourcify's `{"output": {"abi": [...]}}`.
-    Recursion is bounded and only follows known keys.
+    A bare JSON list is only treated as an ABI when its entries look like ABI
+    items: GitHub tag lists and other metadata also happen to be lists of
+    objects with a `name`.
     """
     if depth > 3:
         return []
 
     if isinstance(payload, list):
         entries = [entry for entry in payload if isinstance(entry, dict)]
-        if not entries:
-            return []
-        if any(entry.get("type") or entry.get("name") for entry in entries):
-            return entries
+        valid = [entry for entry in entries if _looks_like_abi_entry(entry)]
+        if valid:
+            return valid
         for item in entries:
             nested = _abi_entries(item, depth + 1)
             if nested:
@@ -611,7 +629,7 @@ def _abi_entries(payload: Any, depth: int = 0) -> List[Dict[str, Any]]:
         for key in ("abi", "ABI"):
             value = payload.get(key)
             if isinstance(value, list):
-                entries = [entry for entry in value if isinstance(entry, dict)]
+                entries = [entry for entry in value if _looks_like_abi_entry(entry)]
                 if entries:
                     return entries
             elif isinstance(value, str) and value.strip():
@@ -620,7 +638,7 @@ def _abi_entries(payload: Any, depth: int = 0) -> List[Dict[str, Any]]:
                 except json.JSONDecodeError:
                     continue
                 if isinstance(decoded, list):
-                    entries = [entry for entry in decoded if isinstance(entry, dict)]
+                    entries = [entry for entry in decoded if _looks_like_abi_entry(entry)]
                     if entries:
                         return entries
         for key in ("result", "output", "metadata", "contract"):
@@ -631,15 +649,9 @@ def _abi_entries(payload: Any, depth: int = 0) -> List[Dict[str, Any]]:
     return []
 
 
-def _load_target_abi(run_dir: Path) -> Dict[str, Any]:
-    """Find the target ABI in `sources/` or `artifacts/`.
-
-    Agents do not always save `*.abi.json`; a Blockscout contract response, an
-    Etherscan `getsourcecode` payload, or a Sourcify response can carry the same
-    ABI. Scan top-level JSON files in both directories and keep the candidate
-    with the most functions.
-    """
-    candidates: List[Tuple[str, List[Dict[str, Any]]]] = []
+def _load_target_abi_candidates(run_dir: Path) -> List[Dict[str, Any]]:
+    """Build ABI candidates from top-level JSON in `sources/` and `artifacts/`."""
+    candidates: List[Dict[str, Any]] = []
     seen: set = set()
     for base in (run_dir / "sources", run_dir / "artifacts"):
         if not base.is_dir():
@@ -658,50 +670,46 @@ def _load_target_abi(run_dir: Path) -> Dict[str, Any]:
             if error:
                 continue
             entries = _abi_entries(payload)
-            if entries:
-                candidates.append((path.relative_to(run_dir).as_posix(), entries))
+            if not entries:
+                continue
 
-    best: Optional[Tuple[str, Dict[str, set], Dict[str, set]]] = None
-    for source, entries in candidates:
-        functions: Dict[str, set] = {}
-        mutability: Dict[str, set] = {}
-        for entry in entries:
-            if entry.get("type") not in (None, "function"):
+            functions: Dict[str, set] = {}
+            mutability: Dict[str, set] = {}
+            for entry in entries:
+                if entry.get("type") not in (None, "function"):
+                    continue
+                name = entry.get("name")
+                if not isinstance(name, str) or not name:
+                    continue
+                inputs = ",".join(
+                    str(item.get("type", ""))
+                    for item in entry.get("inputs", [])
+                    if isinstance(item, dict)
+                )
+                mode = entry.get("stateMutability")
+                if not isinstance(mode, str):
+                    mode = "view" if entry.get("constant") else "nonpayable"
+                functions.setdefault(name, set()).add(inputs)
+                mutability.setdefault(name, set()).add(mode)
+            if not functions:
                 continue
-            name = entry.get("name")
-            if not isinstance(name, str) or not name:
-                continue
-            inputs = ",".join(
-                str(item.get("type", ""))
-                for item in entry.get("inputs", [])
-                if isinstance(item, dict)
+
+            state_changing = {
+                name
+                for name, modes in mutability.items()
+                if any(mode in {"nonpayable", "payable"} for mode in modes)
+            }
+            candidates.append(
+                {
+                    "source": path.relative_to(run_dir).as_posix(),
+                    "functions": functions,
+                    "state_changing": state_changing,
+                    "overloaded": sorted(
+                        name for name, signatures in functions.items() if len(signatures) > 1
+                    ),
+                }
             )
-            mode = entry.get("stateMutability")
-            if not isinstance(mode, str):
-                mode = "view" if entry.get("constant") else "nonpayable"
-            functions.setdefault(name, set()).add(inputs)
-            mutability.setdefault(name, set()).add(mode)
-        if not functions:
-            continue
-        if best is None or len(functions) > len(best[1]):
-            best = (source, functions, mutability)
-
-    if best is None:
-        return {"source": None, "functions": {}, "state_changing": set(), "overloaded": []}
-
-    source, functions, mutability = best
-    state_changing = {
-        name
-        for name, modes in mutability.items()
-        if any(mode in {"nonpayable", "payable"} for mode in modes)
-    }
-    overloaded = sorted(name for name, signatures in functions.items() if len(signatures) > 1)
-    return {
-        "source": source,
-        "functions": functions,
-        "state_changing": state_changing,
-        "overloaded": overloaded,
-    }
+    return candidates
 
 
 def _trace_calls(run_dir: Path, address: str, contract_name: str) -> Dict[str, Any]:
@@ -754,9 +762,14 @@ def _trace_calls(run_dir: Path, address: str, contract_name: str) -> Dict[str, A
 
 
 def _harness_calls(
-    run_dir: Path, harness_files: Sequence[str], abi_names: set
+    run_dir: Path, harness_files: Sequence[str]
 ) -> Tuple[set, bool, int]:
-    """Static fallback: methods called on any variable whose name is in the ABI."""
+    """Collect every method name referenced by the harness.
+
+    The caller intersects this with the chosen ABI. Keeping the raw set lets
+    ABI selection score candidates against what the harness actually calls,
+    including when a wrong candidate would otherwise win on function count.
+    """
     names: set = set()
     fallback = False
     read_files = 0
@@ -768,9 +781,7 @@ def _harness_calls(
         if re.search(r"\.call\s*\{\s*value", text):
             fallback = True
         for match in HARNESS_CALL_RE.finditer(text):
-            method = match.group(2)
-            if method in abi_names:
-                names.add(method)
+            names.add(match.group(2))
     return names, fallback, read_files
 
 
@@ -786,26 +797,60 @@ def audit_function_coverage(
     It is an upper bound when a referenced call sits in a branch that never ran.
     `trace_coverage` is the conservative lower bound, but it only sees traces the
     agent actually saved.
+
+    ABI selection is scored rather than "largest wins": the agent often saves
+    several ABIs (target, owner, vault, upstream tags), and the largest one may
+    belong to a different contract. Candidates are ranked by overlap with
+    observed calls, then by an explicit `sources/abi.json`, target address/name
+    hints, and finally size.
     """
-    abi = _load_target_abi(run_dir)
-    abi_names: set = set(abi["functions"])
+    candidates = _load_target_abi_candidates(run_dir)
     trace = _trace_calls(run_dir, target_address, target_name)
     harness_names, harness_fallback, harness_files_read = _harness_calls(
-        run_dir, harness_files, abi_names
+        run_dir, harness_files
     )
+    observed = set(trace["functions"]) | harness_names
 
-    if abi_names:
-        trace_names = trace["functions"] & abi_names
-        unexpected = sorted(trace["functions"] - abi_names)
+    target_address_lower = target_address.strip().lower()
+    target_slug = re.sub(r"[^a-z0-9]", "", target_name.lower())
+
+    def candidate_score(candidate: Dict[str, Any]) -> Tuple[int, int, int, int, int]:
+        functions = set(candidate["functions"])
+        overlap = len(functions & observed)
+        source = candidate["source"].lower()
+        abi_hint = 1 if source.endswith("/abi.json") else 0
+        address_hint = 1 if target_address_lower and target_address_lower in source else 0
+        source_slug = re.sub(r"[^a-z0-9]", "", source)
+        name_hint = 1 if target_slug and target_slug in source_slug else 0
+        size = len(functions)
+        # When nothing overlaps, prefer the smaller plausible ABI so an
+        # unrelated 100-function artifact cannot dominate the denominator.
+        return (overlap, abi_hint, address_hint, name_hint, size if overlap else -size)
+
+    best: Optional[Dict[str, Any]] = None
+    if candidates:
+        best = max(candidates, key=candidate_score)
+
+    if best is None:
+        functions: Dict[str, set] = {}
+        abi_source: Optional[str] = None
+        state_changing: set = set()
+        overloaded: List[str] = []
     else:
-        trace_names = set(trace["functions"])
-        unexpected = []
+        functions = best["functions"]
+        abi_source = best["source"]
+        state_changing = best["state_changing"]
+        overloaded = best["overloaded"]
 
-    covered = trace_names | harness_names
+    abi_names: set = set(functions)
+    trace_names = trace["functions"] & abi_names
+    harness_funcs = harness_names & abi_names
+    covered = trace_names | harness_funcs
+
     basis = "none"
     if trace["files"] and covered:
-        basis = "trace+harness" if harness_names else "trace"
-    elif harness_names:
+        basis = "trace+harness" if harness_funcs else "trace"
+    elif harness_funcs:
         basis = "harness"
 
     def rate(numerator: int) -> Optional[float]:
@@ -813,13 +858,13 @@ def audit_function_coverage(
             return None
         return numerator / len(abi_names)
 
-    state_changing = set(abi["state_changing"])
     return {
         "abi_available": bool(abi_names),
-        "abi_source": abi["source"],
+        "abi_source": abi_source,
+        "abi_candidates": len(candidates),
         "abi_functions": len(abi_names),
         "abi_state_changing": len(state_changing),
-        "overloaded": abi["overloaded"],
+        "overloaded": overloaded,
         "basis": basis,
         "covered": len(covered),
         "coverage": rate(len(covered)),
@@ -830,9 +875,9 @@ def audit_function_coverage(
             len(covered & state_changing) / len(state_changing) if state_changing else None
         ),
         "uncovered": sorted(abi_names - covered),
-        "trace_only": sorted(trace_names - harness_names),
-        "harness_only": sorted(harness_names - trace_names),
-        "unexpected_in_trace": unexpected[:20],
+        "trace_only": sorted(trace_names - harness_funcs),
+        "harness_only": sorted(harness_funcs - trace_names),
+        "unexpected_in_trace": sorted(trace["functions"] - abi_names)[:20] if abi_names else [],
         "fallback_exercised": bool(harness_fallback or trace["fallback_calls"]),
         "fallback_calls": trace["fallback_calls"],
         "trace_files": trace["files"],

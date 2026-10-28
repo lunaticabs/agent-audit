@@ -202,6 +202,20 @@ class EvidencePathTests(unittest.TestCase):
     def test_absolute_path_rejected(self):
         self.assertEqual(resolve_evidence(self.run, str(self.root / "outside.txt"))[0], "absolute")
 
+    def test_line_suffixes_and_notes_are_stripped(self):
+        for ref in (
+            "sources/A.sol:12",
+            "sources/A.sol:12-34",
+            "sources/A.sol:12-34,56-78",
+            "sources/A.sol#L12-L30",
+            "sources/A.sol (lines 12-34)",
+            "sources/A.sol lines 12-34",
+        ):
+            self.assertEqual(resolve_evidence(self.run, ref)[0], "ok", ref)
+
+    def test_line_suffix_does_not_bypass_escape_check(self):
+        self.assertEqual(resolve_evidence(self.run, "../outside.txt:12")[0], "escape")
+
     @unittest.skipIf(os.name == "nt", "symlink semantics differ on Windows")
     def test_symlink_escape_rejected(self):
         (self.run / "sources" / "link.txt").symlink_to(self.root / "outside.txt")
@@ -303,6 +317,44 @@ class CollectTests(unittest.TestCase):
         coverage = metrics["function_coverage"]
         self.assertEqual(coverage["abi_source"], "artifacts/etherscan_getsourcecode.json")
         self.assertEqual(coverage["abi_functions"], 3)
+
+    def test_non_abi_json_list_is_ignored(self):
+        run = make_run(self.root)
+        (run / "sources" / "Foo.abi.json").unlink()
+        _write_json(
+            run / "artifacts" / "gh_tags.json",
+            [{"name": "v1.0.0"}, {"name": "v1.1.0"}],
+        )
+        metrics = collect_run(run, now="2026-01-01T00:00:00Z")
+        coverage = metrics["function_coverage"]
+        self.assertFalse(coverage["abi_available"])
+        self.assertIsNone(coverage["coverage"])
+        self.assertIsNone(coverage["abi_source"])
+
+    def test_abi_selection_uses_observed_overlap(self):
+        run = make_run(self.root)
+        (run / "sources" / "Foo.abi.json").unlink()
+        _write_json(
+            run / "sources" / "abi.json",
+            [
+                {"type": "function", "name": "f{}".format(index), "inputs": []}
+                for index in range(10)
+            ],
+        )
+        _write_json(
+            run / "artifacts" / "target.json",
+            {
+                "abi": [
+                    {"type": "function", "name": "beta", "inputs": [], "stateMutability": "nonpayable"},
+                    {"type": "function", "name": "gamma", "inputs": [], "stateMutability": "view"},
+                ]
+            },
+        )
+        metrics = collect_run(run, now="2026-01-01T00:00:00Z")
+        coverage = metrics["function_coverage"]
+        self.assertEqual(coverage["abi_source"], "artifacts/target.json")
+        self.assertEqual(coverage["abi_functions"], 2)
+        self.assertIn("beta", coverage["harness_only"])
 
     def test_legacy_report_is_graceful(self):
         run = make_legacy_run(self.root)

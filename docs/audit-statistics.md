@@ -46,7 +46,7 @@
 
 ### B. 证据与复现（"结论有多硬"）
 
-- **证据解析率**：报告引用的每个路径是否真的存在于 run 目录内。
+- **证据解析率**：先剥离 `:行号`、行号区间和尾注，再判断报告引用的路径是否真的存在于 run 目录内。
 - **无证据发现数**：`findings` 里 `evidence` 为空的条目。
 - **复现链接率**：`reproduction` 提到的测试名是否存在于 harness。
 - **复现通过率**：链接到的测试是否在 forge 日志里 PASS。
@@ -59,7 +59,9 @@
 - **fuzz 强度**：fuzz 测试数、实际执行的 runs 数。
 - **函数覆盖**：目标 ABI 里有多少函数被 trace 实际调用过、多少只被 harness 静态引用。
   `coverage` 取两者并集（上界），`trace_coverage` 只信 trace（下界）。state-changing
-  函数单独统计。这是行/分支覆盖的“可执行替代”，不要求源码进 Foundry 项目。
+  函数单独统计。ABI 候选按“与 trace/harness 调用重叠 → `sources/abi.json` →
+  目标地址/名称提示 → 规模”排序，避免选到无关的大 ABI。这是行/分支覆盖的“可执行替代”，
+  不要求源码进 Foundry 项目。
 
 ### C. 效率与成本（"一轮值不值"）
 
@@ -211,6 +213,9 @@ rsync -a --include='*/' --include='stats/' --include='stats/metrics.json' \
 - 稳定性：本地 WETH9 run 与 k3s WETH9 run（同地址、同 prompt、同 model）构成真实
   重复审计对：6 个并集 finding 中匹配 4 个（66.7%），2 个严重度 +1，4 对全部由
   `function` 锚定；纯标题 Jaccard 仅 22.2%，说明函数锚定的必要性。
+- 20 地址 k3s 批量：20/20 完成、0 失败；146 个发现（5 critical、9 high），
+  11/20 run 有高危；fork 复现 71/146；证据 577/577 可解析；函数覆盖 33.2%
+  （trace 26.1%、state-changing 39.2%）；p50 15.0m、p90 26.6m。
 
 ## 8. 缺口与下一步
 

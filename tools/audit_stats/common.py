@@ -169,19 +169,23 @@ def iter_run_dirs(runs_root: Path) -> Iterator[Path]:
         yield child
 
 
-def resolve_evidence(run_dir: Path, ref: Any) -> Tuple[str, Optional[Path]]:
-    """Resolve an evidence reference inside a run directory.
+def _strip_ref_annotation(text: str) -> str:
+    """Drop line/column and prose annotations from an evidence reference.
 
-    Returns ``(status, path)`` where status is one of ``ok``, ``missing``,
-    ``escape``, ``absolute``, ``invalid``.
-
-    The agent controls the report, so a reference is never followed outside
-    the run directory: absolute paths, ``..`` traversal, and symlinks that
-    point out of the tree are all rejected.
+    Reports cite evidence as `path:12`, `path:12-34`, `path#L12-L30`, or
+    `path (lines 12-34)`. Only the path is a filesystem object.
     """
-    if not isinstance(ref, str):
-        return "invalid", None
-    text = ref.strip()
+    stripped = text.strip()
+    stripped = re.sub(r"\s+\([^()]*\)\s*$", "", stripped)
+    stripped = re.sub(r"#L\d+(?:-L?\d+)?$", "", stripped)
+    stripped = re.sub(r":\d+(?:-\d+)?(?:,\s*\d+(?:-\d+)?)*$", "", stripped)
+    stripped = re.sub(
+        r"\s+lines?\s+\d+(?:\s*[-\u2013]\s*\d+)?$", "", stripped, flags=re.IGNORECASE
+    )
+    return stripped.strip()
+
+
+def _check_evidence_path(run_dir: Path, text: str) -> Tuple[str, Optional[Path]]:
     if not text or "\x00" in text:
         return "invalid", None
     if os.path.isabs(text) or re.match(r"^[A-Za-z]:[\\/]", text):
@@ -202,6 +206,35 @@ def resolve_evidence(run_dir: Path, ref: Any) -> Tuple[str, Optional[Path]]:
     except (OSError, ValueError):
         return "invalid", target
     return "ok", target
+
+
+def resolve_evidence(run_dir: Path, ref: Any) -> Tuple[str, Optional[Path]]:
+    """Resolve an evidence reference inside a run directory.
+
+    Returns ``(status, path)`` where status is one of ``ok``, ``missing``,
+    ``escape``, ``absolute``, ``invalid``.
+
+    The agent controls the report, so a reference is never followed outside
+    the run directory: absolute paths, ``..`` traversal, and symlinks that
+    point out of the tree are all rejected. Line suffixes and trailing
+    parenthetical notes are stripped before the check.
+    """
+    if not isinstance(ref, str):
+        return "invalid", None
+    text = ref.strip()
+    if not text:
+        return "invalid", None
+
+    stripped = _strip_ref_annotation(text)
+    candidates = [stripped] if stripped == text or not stripped else [stripped, text]
+    first_status: Optional[Tuple[str, Optional[Path]]] = None
+    for candidate in candidates:
+        status, target = _check_evidence_path(run_dir, candidate)
+        if status == "ok":
+            return status, target
+        if first_status is None:
+            first_status = (status, target)
+    return first_status if first_status is not None else ("invalid", None)
 
 
 def read_text_capped(path: Path, limit: int = MAX_TEXT_BYTES) -> Optional[str]:

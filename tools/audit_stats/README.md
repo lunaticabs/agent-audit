@@ -112,6 +112,13 @@ bound but only sees traces the agent saved. State-changing coverage excludes
 not compiled into the Foundry project, so `forge coverage` would measure the
 harness, not the target.
 
+ABI selection is scored, not "largest wins": agents save several ABIs (target,
+owner, vault, upstream metadata), and a large unrelated file can otherwise
+dominate the denominator. Candidates are ranked by overlap with trace/harness
+calls, then an explicit `sources/abi.json`, target address/name hints, and
+finally size. Bare JSON lists only count when their entries look like ABI items,
+which keeps GitHub tag lists out.
+
 **Stability overlap.** For a target with two or more evaluable runs, findings are
 matched one-to-one. A pair is anchored by the `function` field when the function
 sets overlap and title similarity is at least 0.35; without a function anchor the
@@ -130,9 +137,10 @@ upgrades. Pure title Jaccard on the same pair was 0.22, which is why the
 function anchor exists.
 
 **Evidence resolution.** Every `evidence` path is checked inside the run
-directory. Absolute paths, `..` traversal, and symlinks that escape the run are
-rejected and counted as `refs_outside_run`. Existence is checked; semantic
-support for the claim is not.
+directory. Line suffixes (`:12`, `:12-34`, `:12-34,56-78`), `#L12-L30`, and
+trailing parenthetical notes are stripped first. Absolute paths, `..` traversal,
+and symlinks that escape the run are rejected and counted as
+`refs_outside_run`. Existence is checked; semantic support for the claim is not.
 
 **Overclaim.** The report says a coverage flag is `true` but no artifact on disk
 supports it (`sources/` or Etherscan response; slither/heimdall output;
