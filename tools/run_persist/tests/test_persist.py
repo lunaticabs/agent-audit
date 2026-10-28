@@ -36,6 +36,7 @@ def make_run(root: Path, *, with_metrics: bool = True) -> Path:
         "stats",
         "logs",
         "test",
+        "harness",
         "out",
         "batch_material",
     ):
@@ -85,6 +86,8 @@ def make_run(root: Path, *, with_metrics: bool = True) -> Path:
     _write_text(run / "artifacts" / "trace.log", "trace\n")
     _write_json(run / "sources" / "Main.sol.json", {"source": "contract Main {}"})
     _write_text(run / "test" / "Run.t.sol", "contract RunTest {}\n")
+    _write_text(run / "harness" / "foundry.toml", "[profile.default]\n")
+    _write_text(run / "foundry.toml", "[profile.default]\n")
     _write_text(run / "out" / "Main.bin", "deployment output\n")
     _write_text(run / "logs" / "agent.stdout.log", "log\n")
     _write_text(run / "batch_material" / "batch.json", '{"batch": true}\n')
@@ -125,9 +128,11 @@ class CollectMaterialsTests(unittest.TestCase):
             self.assertIn("reports/final_report.json", paths)
             self.assertIn("artifacts/evidence.json", paths)
             self.assertIn("sources/Main.sol.json", paths)
+            self.assertIn("test/Run.t.sol", paths)
+            self.assertIn("harness/foundry.toml", paths)
+            self.assertIn("foundry.toml", paths)
             self.assertNotIn("stats/metrics.json", paths)
             self.assertNotIn("logs/agent.stdout.log", paths)
-            self.assertNotIn("test/Run.t.sol", paths)
             self.assertNotIn("out/Main.bin", paths)
             self.assertNotIn("batch_material/batch.json", paths)
 

@@ -12,10 +12,20 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 #: Files that belong to one finished audit. Directories outside this allowlist
 #: are either derived (`stats/`, `logs/`) or tooling caches (`out/`, `lib/`,
-#: `cache/`, `test/`) and are deliberately not sent to MongoDB. Batch-level
-#: material such as `runs/_stats` or `runs/k3s-batch-*` is never read because
-#: only the single run directory passed by the entrypoint is walked.
-INCLUDED_TOP_LEVEL_DIRS = ("input", "reports", "artifacts", "sources")
+#: `cache/`, `broadcast/`) and are deliberately not sent to MongoDB.
+#: `harness/` and `test/` are included because the report often cites the
+#: Foundry harness as reproduction evidence. Batch-level material such as
+#: `runs/_stats` or `runs/k3s-batch-*` is never read because only the single
+#: run directory passed by the entrypoint is walked.
+INCLUDED_TOP_LEVEL_DIRS = (
+    "input",
+    "reports",
+    "artifacts",
+    "sources",
+    "harness",
+    "test",
+)
+INCLUDED_ROOT_FILES = frozenset({"foundry.toml"})
 SKIPPED_REL_PATHS = frozenset({".run.lock"})
 FINAL_REPORT_REL_PATH = "reports/final_report.json"
 
@@ -425,7 +435,10 @@ def collect_run_materials(
         if rel_path in SKIPPED_REL_PATHS:
             continue
         first_segment = rel_path.split("/", 1)[0]
-        if first_segment not in INCLUDED_TOP_LEVEL_DIRS:
+        if (
+            first_segment not in INCLUDED_TOP_LEVEL_DIRS
+            and rel_path not in INCLUDED_ROOT_FILES
+        ):
             continue
 
         try:

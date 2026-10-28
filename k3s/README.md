@@ -195,7 +195,8 @@ one persistence record per address audit:
   status, timestamps, duration, block number, file count, total bytes, and
   `has_final_report` stay top-level.
 - `runs_files`: one document per file under that run's `input/`, `reports/`,
-  `artifacts/`, and `sources/`. Batch-level directories are never walked.
+  `artifacts/`, `sources/`, `harness/`, and `test/`, plus a root
+  `foundry.toml`. Batch-level directories are never walked.
 
 Create the indexes once after the first deployment (safe to re-run):
 

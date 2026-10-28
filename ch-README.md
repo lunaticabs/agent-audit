@@ -78,8 +78,9 @@ entrypoint 在退出时自动写 metadata、保存 stdout、生成 `stats/metric
 - `runs_meta`：一个文档，`target_address` / `target_chain` 是一级字段，完整
   metrics 对象放在 `stats`；另有状态、起止时间、时长、区块号、文件数、总字节数、
   `has_final_report`。
-- `runs_files`：该 run 的 `input/`、`reports/`、`artifacts/`、`sources/` 下每个
-  文件一个文档。`stats/`、`logs/`、`test/`、`out/`、`cache/` 和批次级目录不入库。
+- `runs_files`：该 run 的 `input/`、`reports/`、`artifacts/`、`sources/`、
+  `harness/`、`test/` 下每个文件一个文档，另加根目录 `foundry.toml`。
+  `stats/`、`logs/`、`out/`、`cache/`、`lib/` 和批次级目录不入库。
 
 在 `.env` 或 k3s runner secret 里设置 `AGENT_AUDIT_MONGO_URI` 等变量；
 `AGENT_AUDIT_MONGO_PERSIST=0` 可关闭。数据库失败只写

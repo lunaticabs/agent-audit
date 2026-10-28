@@ -6,9 +6,10 @@
   top-level fields; the full `stats/metrics.json` object is embedded under
   `stats`; `runs_files` counts and timestamps stay top-level.
 - `runs_files` — one document per archived workspace file. Only the run's own
-  `input/`, `reports/`, `artifacts/`, and `sources/` are read. Batch-level
-  directories (`runs/_stats`, `runs/k3s-batch-*`, `batch_logs/`) are never
-  walked because the entrypoint passes a single run directory.
+  `input/`, `reports/`, `artifacts/`, `sources/`, `harness/`, and `test/`
+  directories (plus a root `foundry.toml`) are read. Batch-level directories
+  (`runs/_stats`, `runs/k3s-batch-*`, `batch_logs/`) are never walked because
+  the entrypoint passes a single run directory.
 
 The entrypoint calls this once, after `stats/metrics.json` has been collected
 and before the optional `AGENT_AUDIT_PERSIST_DIR` copy. The database write is

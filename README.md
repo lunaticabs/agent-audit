@@ -106,8 +106,9 @@ Persistence happens after the audit process exits and after
   level, the full metrics object under `stats`, plus status, timestamps,
   duration, block number, file count, total bytes, and `has_final_report`.
 - `runs_files`: one document per workspace file under that run's `input/`,
-  `reports/`, `artifacts/`, and `sources/` directories. `stats/`, `logs/`,
-  `test/`, `out/`, `cache/`, and batch-level directories are not archived.
+  `reports/`, `artifacts/`, `sources/`, `harness/`, and `test/` directories,
+  plus a root `foundry.toml`. `stats/`, `logs/`, `out/`, `cache/`, `lib/`, and
+  batch-level directories are not archived.
 
 Set `AGENT_AUDIT_MONGO_URI` and its companions in `.env` or the k3s runner
 secret. `AGENT_AUDIT_MONGO_PERSIST=0` disables the mirror. A database failure is

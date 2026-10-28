@@ -142,8 +142,9 @@ container, see [../tools/audit_stats/README.md](../tools/audit_stats/README.md).
 The MongoDB mirror is also one run per write: one `runs_meta` document with
 top-level `target_address` / `target_chain` and embedded `stats`, plus one
 `runs_files` document per file under that run's `input/`, `reports/`,
-`artifacts/`, and `sources/`. `stats/`, `logs/`, `test/`, build caches, and
-batch-level directories are not archived. A database failure lands in
+`artifacts/`, `sources/`, `harness/`, and `test/`, plus a root
+`foundry.toml`. `stats/`, `logs/`, build caches, and batch-level directories are
+not archived. A database failure lands in
 `logs/persist.log` and does not change the audit exit code. See
 [../tools/run_persist/README.md](../tools/run_persist/README.md).
 
