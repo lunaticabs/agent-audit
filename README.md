@@ -82,6 +82,7 @@ input/prompt.txt              # durable copy of the caller request
 input/request.json            # normalized request
 input/run_meta.json           # status, exit code, timings
 artifacts/                    # evidence produced by the agent
+artifacts/replay/             # our own post-exit re-run of the claimed tests
 sources/                      # optional fetched source
 reports/final_report.json     # required structured report
 reports/final_answer.md       # captured DSH stdout
@@ -207,8 +208,10 @@ secret, and multi-node caveats.
 
 ## Run statistics
 
-Every finished run gets a derived `stats/metrics.json` (the entrypoint collects
-it on exit; `AGENT_AUDIT_STATS=0` disables it). Aggregate a round:
+On exit the entrypoint re-runs the fork tests each finding names, from outside
+the agent's own artifacts (`artifacts/replay/`, `AGENT_AUDIT_REPLAY=0` disables
+it), then derives `stats/metrics.json` (`AGENT_AUDIT_STATS=0` disables it).
+Aggregate a round:
 
 ```bash
 # collect metrics for runs that do not have them yet
@@ -216,17 +219,27 @@ PYTHONPATH=tools python3 -m audit_stats collect --runs-root runs
 
 # round report: summary.json, REPORT.md, runs.csv, findings.csv
 PYTHONPATH=tools python3 -m audit_stats report --runs-root runs --expected 120
+
+# findings that need a human look: TRIAGE.md, triage.csv
+PYTHONPATH=tools python3 -m audit_stats triage --runs-root runs
 ```
 
 The report covers findings and severity, fork-reproduction coverage (linked test
-passed, restricted to fork-backed runs), trace-based function coverage (which
-ABI functions the run exercised), cross-run stability (function-anchored
-title similarity and severity drift when a target was audited more than once), evidence resolution,
+passed, how many of those were re-run and attested by the post-exit replay, and
+a separate state-sensitivity diagnostic, restricted to fork-backed runs),
+trace-based function coverage (which ABI functions the run exercised), cross-run
+stability (function-anchored title similarity and severity drift when a target
+was audited more than once), evidence resolution,
 declared-vs-observed coverage, tool usage, schema grades, anomalies, and latency
 percentiles, with strata by model, chain, verified status, and schema grade. It treats
 `final_report.json` as untrusted: severity is normalized, evidence paths must
 stay inside the run directory, and a bad report lands in the funnel with an
 anomaly code instead of an exception.
+
+`audit_stats triage` lists the findings behind those numbers that still need a
+human: unreproduced, attested only by the agent's own log, missing evidence, or
+not state-sensitive — plus runs with integrity anomalies such as
+`repro_contradicted_by_replay` or `forge_log_test_unknown`.
 
 `stats/` is derived and safe to delete. On k3s the metrics land on the
 node-local hostPath with the run; multi-node aggregation rsyncs only

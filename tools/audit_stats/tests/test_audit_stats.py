@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import os
 import tempfile
@@ -777,6 +778,311 @@ class FunctionCoverageAggregateTests(unittest.TestCase):
         self.assertEqual(coverage["state_changing_coverage"], 0.8)
         self.assertEqual(coverage["runs_fully_covered"], 1)
         self.assertEqual(coverage["uncovered_functions"][0], {"function": "f1", "runs": 1})
+
+
+def _replay_payload(
+    status: str = "PASS",
+    delta_status: str | None = "FAIL",
+    test: str = "test_alpha",
+    block: int = 1000,
+    delta_block: int = 900,
+    sha256: str = "0" * 64,
+) -> dict:
+    return {
+        "schema_version": 1,
+        "status": "ok",
+        "reason": None,
+        "block": block,
+        "block_source": "pinned_block_file",
+        "delta": 100,
+        "delta_block": delta_block,
+        "tests": {
+            test: {
+                "root": "test",
+                "file": "test/Foo.t.sol",
+                "sha256": sha256,
+                "status": status,
+                "block": block,
+                "log": "artifacts/replay/root/block-{}.log".format(block),
+                "delta_status": delta_status,
+                "delta_block": delta_block,
+                "state_sensitive": status == "PASS" and delta_status == "FAIL",
+            }
+        },
+        "errors": [],
+    }
+
+
+class ForkMarkerTests(unittest.TestCase):
+    """A fork marker counts only inside a function body, never in a comment."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _codes(self, metrics):
+        return {entry["code"] for entry in metrics["anomalies"]}
+
+    def test_comment_only_marker_does_not_back_the_fork(self):
+        run = make_run(self.root)
+        _write(
+            run / "test" / "Foo.t.sol",
+            "contract FooTest {\n"
+            "  // vm.createSelectFork(vm.envString(\"RPC_URL\")) belongs here\n"
+            "  function test_alpha() public { }\n"
+            "}\n",
+        )
+        metrics = collect_run(run, now="2026-01-01T00:00:00Z")
+        self.assertFalse(metrics["fork"]["fork_backed"])
+        self.assertEqual(metrics["fork"]["fork_signals"], [])
+        self.assertIn("createSelectFork", metrics["fork"]["fork_markers_comment_only"])
+        self.assertIn("fork_marker_not_in_test_body", self._codes(metrics))
+
+    def test_marker_at_file_scope_is_rejected(self):
+        run = make_run(self.root)
+        _write(
+            run / "test" / "Foo.t.sol",
+            "contract FooTest {\n"
+            "  string internal constant URL = \"--fork-url\";\n"
+            "  function test_alpha() public { }\n"
+            "}\n",
+        )
+        metrics = collect_run(run, now="2026-01-01T00:00:00Z")
+        self.assertFalse(metrics["fork"]["fork_backed"])
+        self.assertIn("fork-url", metrics["fork"]["fork_markers_outside_functions"])
+
+    def test_marker_in_setup_backs_the_fork(self):
+        run = make_run(self.root)
+        _write(
+            run / "test" / "Foo.t.sol",
+            "contract FooTest {\n"
+            "  function setUp() public { vm.createSelectFork(vm.envString(\"RPC_URL\")); }\n"
+            "  function test_alpha() public { }\n"
+            "}\n",
+        )
+        metrics = collect_run(run, now="2026-01-01T00:00:00Z")
+        self.assertTrue(metrics["fork"]["fork_backed"])
+        sites = metrics["fork"]["fork_marker_sites"]
+        self.assertEqual(sites[0]["function"], "setUp")
+        self.assertEqual(sites[0]["file"], "test/Foo.t.sol")
+
+    def test_pinned_block_file_backs_the_fork(self):
+        run = make_run(self.root)
+        _write(run / "test" / "Foo.t.sol", "contract FooTest {\n  function test_alpha() public { }\n}\n")
+        _write_json(run / "artifacts" / "pinned_block.json", {"block_number": 19000000})
+        metrics = collect_run(run, now="2026-01-01T00:00:00Z")
+        self.assertTrue(metrics["fork"]["fork_backed"])
+        self.assertEqual(metrics["fork"]["pinned_block"], 19000000)
+
+
+class ReplayIngestionTests(unittest.TestCase):
+    """The collector trusts a replay row over the agent's own forge log."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _codes(self, metrics):
+        return {entry["code"] for entry in metrics["anomalies"]}
+
+    def test_replay_pass_attests_the_finding(self):
+        run = make_run(self.root)
+        _write_json(run / "artifacts" / "replay" / "replay.json", _replay_payload())
+        metrics = collect_run(run, now="2026-01-01T00:00:00Z")
+
+        self.assertTrue(metrics["fork"]["replay"]["present"])
+        self.assertEqual(metrics["fork"]["replay"]["status"], "ok")
+        self.assertEqual(metrics["fork"]["replay"]["replayed_tests"], 1)
+        self.assertEqual(metrics["fork"]["findings_repro"]["passed"], 1)
+        self.assertEqual(metrics["fork"]["findings_repro"]["attested"], 1)
+        self.assertNotIn("repro_unattested", self._codes(metrics))
+
+        finding = metrics["findings"][0]
+        self.assertEqual(finding["repro_source"], "replay")
+        self.assertTrue(finding["repro_attested"])
+        self.assertEqual(finding["repro_replays"][0]["status"], "PASS")
+
+    def test_replay_failure_overrides_a_passing_agent_log(self):
+        run = make_run(self.root)  # the agent's artifacts/forge_test.log says PASS
+        _write_json(
+            run / "artifacts" / "replay" / "replay.json",
+            _replay_payload(status="FAIL", delta_status=None),
+        )
+        metrics = collect_run(run, now="2026-01-01T00:00:00Z")
+
+        self.assertEqual(metrics["fork"]["findings_repro"]["passed"], 0)
+        self.assertEqual(metrics["fork"]["findings_repro"]["attested"], 0)
+        self.assertFalse(metrics["findings"][0]["repro_passed"])
+        self.assertIn("repro_contradicted_by_replay", self._codes(metrics))
+
+    def test_state_sensitivity_is_counted_separately(self):
+        run = make_run(self.root)
+        _write_json(run / "artifacts" / "replay" / "replay.json", _replay_payload())
+        metrics = collect_run(run, now="2026-01-01T00:00:00Z")
+
+        repro = metrics["fork"]["findings_repro"]
+        self.assertEqual(repro["state_sensitive"], 1)
+        self.assertEqual(repro["state_sensitive_of_passed"], 1.0)
+        self.assertEqual(metrics["fork"]["replay"]["state_sensitive_tests"], 1)
+        self.assertTrue(metrics["findings"][0]["repro_state_sensitive"])
+
+    def test_unreplayed_pass_is_flagged(self):
+        run = make_run(self.root)
+        _write_json(
+            run / "artifacts" / "replay" / "replay.json",
+            _replay_payload(test="test_beta"),
+        )
+        metrics = collect_run(run, now="2026-01-01T00:00:00Z")
+
+        self.assertEqual(metrics["fork"]["findings_repro"]["passed"], 1)
+        self.assertEqual(metrics["fork"]["findings_repro"]["attested"], 0)
+        self.assertEqual(metrics["findings"][0]["repro_source"], "agent_log")
+        self.assertIn("repro_unattested", self._codes(metrics))
+
+    def test_skipped_replay_is_reported_not_fatal(self):
+        run = make_run(self.root)
+        _write_json(
+            run / "artifacts" / "replay" / "replay.json",
+            {
+                "schema_version": 1,
+                "status": "skipped",
+                "reason": "RPC_URL is not configured",
+                "tests": {},
+                "errors": [],
+            },
+        )
+        metrics = collect_run(run, now="2026-01-01T00:00:00Z")
+
+        self.assertTrue(metrics["fork"]["replay"]["present"])
+        self.assertEqual(metrics["fork"]["replay"]["status"], "skipped")
+        self.assertIn("fork_replay_skipped", self._codes(metrics))
+
+    def test_replay_log_without_results_does_not_verify_the_fork(self):
+        run = make_run(self.root)
+        _write(
+            run / "artifacts" / "replay" / "test" / "block-1.log",
+            "[agent-audit replay] command: forge test --fork-url https://x/redacted\n"
+            "Error: compilation failed\n",
+        )
+        _write_json(
+            run / "artifacts" / "replay" / "replay.json",
+            {
+                "schema_version": 1,
+                "status": "error",
+                "reason": "replay produced no test results",
+                "tests": {},
+                "errors": ["replay produced no test results"],
+            },
+        )
+        metrics = collect_run(run, now="2026-01-01T00:00:00Z")
+        self.assertFalse(metrics["fork"]["fork_verified"])
+        self.assertIn("fork_replay_failed", self._codes(metrics))
+
+    def test_fork_verified_needs_runtime_corroboration(self):
+        run = make_run(self.root)
+        metrics = collect_run(run, now="2026-01-01T00:00:00Z")
+        # createSelectFork is in a test body, but no pinned block, no fork log
+        # signal and no replay: the static marker alone is not enough.
+        self.assertTrue(metrics["fork"]["fork_backed"])
+        self.assertFalse(metrics["fork"]["fork_verified"])
+
+        replay_run = make_run(self.root, name="run-2")
+        _write_json(replay_run / "artifacts" / "replay" / "replay.json", _replay_payload())
+        verified = collect_run(replay_run, now="2026-01-01T00:00:00Z")
+        self.assertTrue(verified["fork"]["fork_verified"])
+
+
+class ForgeLogIntegrityTests(unittest.TestCase):
+    """A PASS for a test that is not in the harness cannot come from forge."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _codes(self, metrics):
+        return {entry["code"] for entry in metrics["anomalies"]}
+
+    def test_apostrophe_in_a_comment_does_not_drop_the_test(self):
+        run = make_run(self.root)
+        _write(
+            run / "test" / "Foo.t.sol",
+            "contract FooTest {\n"
+            "  function test_alpha() public {\n"
+            "    // Bob front-runs Alice's reduction to 0.5.\n"
+            "    assertTrue(true);\n"
+            "  }\n"
+            "}\n",
+        )
+        metrics = collect_run(run, now="2026-01-01T00:00:00Z")
+        self.assertIn("test_alpha", metrics["fork"]["tests"])
+        self.assertEqual(metrics["fork"]["forge"]["tests_in_log_not_in_harness"], [])
+
+    def test_pass_for_an_unknown_test_is_flagged(self):
+        run = make_run(self.root)
+        _write(
+            run / "artifacts" / "forge_extra.log",
+            "[PASS] test_ghost() (gas: 1)\n"
+            "Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 1ms\n",
+        )
+        metrics = collect_run(run, now="2026-01-01T00:00:00Z")
+
+        self.assertIn("test_ghost", metrics["fork"]["forge"]["tests_in_log_not_in_harness"])
+        self.assertIn("forge_log_test_unknown", self._codes(metrics))
+        detail = next(
+            entry["detail"] for entry in metrics["anomalies"] if entry["code"] == "forge_log_test_unknown"
+        )
+        self.assertIn("test_ghost", detail)
+
+    def test_fail_for_an_unknown_test_is_not_flagged(self):
+        run = make_run(self.root)
+        _write(
+            run / "artifacts" / "forge_extra.log",
+            "[FAIL] test_removed() (gas: 1)\n"
+            "Suite result: failed. 0 passed; 1 failed; 0 skipped; finished in 1ms\n",
+        )
+        metrics = collect_run(run, now="2026-01-01T00:00:00Z")
+        self.assertIn("test_removed", metrics["fork"]["forge"]["tests_in_log_not_in_harness"])
+        self.assertNotIn("forge_log_test_unknown", self._codes(metrics))
+
+
+class OutputColumnTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_csv_exposes_replay_columns(self):
+        run = make_run(self.root)
+        _write_json(run / "artifacts" / "replay" / "replay.json", _replay_payload())
+        metrics = collect_run(run, now="2026-01-01T00:00:00Z")
+        summary = aggregate([metrics], generated_at="2026-01-01T00:00:00Z")
+
+        out = self.root / "out"
+        write_outputs(out, summary, [metrics])
+
+        with (out / "findings.csv").open(encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        target = next(row for row in rows if row["id"] == "F-1")
+        self.assertEqual(target["repro_source"], "replay")
+        self.assertEqual(target["repro_attested"], "1")
+        self.assertEqual(target["repro_state_sensitive"], "1")
+
+        with (out / "runs.csv").open(encoding="utf-8", newline="") as handle:
+            run_row = next(csv.DictReader(handle))
+        self.assertEqual(run_row["repro_attested"], "1")
+        self.assertEqual(run_row["repro_state_sensitive"], "1")
+        self.assertEqual(run_row["replay_status"], "ok")
 
 
 if __name__ == "__main__":

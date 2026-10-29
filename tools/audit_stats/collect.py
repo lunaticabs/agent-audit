@@ -27,9 +27,17 @@ from .common import (
     read_json,
     read_text_capped,
     resolve_evidence,
-    strip_ansi,
     utc_now_iso,
 )
+from .forge import (
+    TEST_NAME_RE,
+    fork_log_signals,
+    fork_signal_sites,
+    iter_test_functions,
+    merge_forge_logs,
+    parse_forge_log,
+)
+from .replay import load_replay, read_pinned_block, replay_index
 
 #: Directories that belong to dependency/tooling trees, not to the audit
 #: harness. `lib/forge-std` alone ships dozens of `.t.sol` files.
@@ -43,20 +51,6 @@ HARNESS_EXCLUDE_DIRS = {
     "vendor",
 }
 
-FORK_MARKERS = (
-    "createSelectFork",
-    "createFork",
-    "forkBlockNumber",
-    'envString("RPC_URL")',
-    "envString('RPC_URL')",
-    "fork-url",
-)
-
-TEST_NAME_RE = re.compile(r"\b(test[A-Za-z0-9_]+)")
-TEST_FUNC_RE = re.compile(r"function\s+(test[A-Za-z0-9_]*)\s*\(")
-FORGE_TEST_LINE_RE = re.compile(r"^\[(PASS|FAIL|SKIP)\b[^\]]*\]\s+([A-Za-z0-9_]+)")
-FORGE_SUITE_RE = re.compile(r"^Suite result:\s*(\w+)\.\s*(\d+) passed;\s*(\d+) failed;\s*(\d+) skipped")
-FORGE_RUNS_RE = re.compile(r"\bruns:\s*(\d+)")
 SLITHER_RESULT_RE = re.compile(r"(\d+)\s+result\(s\)\s+found")
 SLITHER_IMPACT_RE = re.compile(r"Number of\s+(\w+)\s+issues:\s*(\d+)")
 ADDRESS_RE = re.compile(r"0x[a-fA-F0-9]{40}")
@@ -88,42 +82,6 @@ def _iter_harness_files(run_dir: Path) -> List[Path]:
     return files
 
 
-def _merge_test_status(current: Optional[str], incoming: str) -> str:
-    rank = {"PASS": 0, "SKIP": 1, "FAIL": 2}
-    if current is None:
-        return incoming
-    return incoming if rank.get(incoming, 0) >= rank.get(current, 0) else current
-
-
-def _parse_forge_log(text: str) -> Dict[str, Any]:
-    status: Dict[str, str] = {}
-    fuzz_runs: Dict[str, int] = {}
-    suites: List[Dict[str, Any]] = []
-
-    for raw_line in strip_ansi(text).splitlines():
-        line = raw_line.strip()
-        match = FORGE_TEST_LINE_RE.match(line)
-        if match:
-            name = match.group(2)
-            status[name] = _merge_test_status(status.get(name), match.group(1))
-            runs = FORGE_RUNS_RE.search(line)
-            if runs:
-                fuzz_runs[name] = max(fuzz_runs.get(name, 0), int(runs.group(1)))
-            continue
-        suite = FORGE_SUITE_RE.match(line)
-        if suite:
-            suites.append(
-                {
-                    "status": suite.group(1),
-                    "passed": int(suite.group(2)),
-                    "failed": int(suite.group(3)),
-                    "skipped": int(suite.group(4)),
-                }
-            )
-
-    return {"tests": status, "fuzz_runs": fuzz_runs, "suites": suites}
-
-
 def audit_forge(run_dir: Path, harness_tests: Sequence[str]) -> Dict[str, Any]:
     artifacts = run_dir / "artifacts"
     logs: List[Path] = []
@@ -134,10 +92,9 @@ def audit_forge(run_dir: Path, harness_tests: Sequence[str]) -> Dict[str, Any]:
                 if name.endswith(".log") or name.endswith(".txt"):
                     logs.append(Path(root) / name)
 
-    merged: Dict[str, str] = {}
-    fuzz_runs: Dict[str, int] = {}
-    suites: List[Dict[str, Any]] = []
     parsed_logs: List[str] = []
+    parsed_texts: List[str] = []
+    fork_signals: Dict[str, List[str]] = {}
 
     for path in logs:
         text = read_text_capped(path, MAX_TEXT_BYTES)
@@ -145,15 +102,20 @@ def audit_forge(run_dir: Path, harness_tests: Sequence[str]) -> Dict[str, Any]:
             continue
         if "Suite result:" not in text and "[PASS]" not in text and "[FAIL" not in text:
             continue
-        parsed = _parse_forge_log(text)
+        parsed = parse_forge_log(text)
         if not parsed["tests"] and not parsed["suites"]:
             continue
-        parsed_logs.append(path.relative_to(run_dir).as_posix())
-        for name, value in parsed["tests"].items():
-            merged[name] = _merge_test_status(merged.get(name), value)
-        for name, value in parsed["fuzz_runs"].items():
-            fuzz_runs[name] = max(fuzz_runs.get(name, 0), value)
-        suites.extend(parsed["suites"])
+        relative = path.relative_to(run_dir).as_posix()
+        parsed_logs.append(relative)
+        parsed_texts.append(text)
+        signals = fork_log_signals(text)
+        if signals:
+            fork_signals[relative] = signals
+
+    merged_all = merge_forge_logs(parsed_texts)
+    merged: Dict[str, str] = merged_all["tests"]
+    fuzz_runs = merged_all["fuzz_runs"]
+    suites = merged_all["suites"]
 
     passed = sum(1 for value in merged.values() if value == "PASS")
     failed = sum(1 for value in merged.values() if value == "FAIL")
@@ -167,35 +129,57 @@ def audit_forge(run_dir: Path, harness_tests: Sequence[str]) -> Dict[str, Any]:
         "skipped": skipped,
         "suite_ok": all(suite["status"] in {"ok", "OK"} for suite in suites) if suites else None,
         "fuzz_runs": max(fuzz_runs.values()) if fuzz_runs else 0,
+        "fork_log_signals": fork_signals,
         "tests_in_harness_not_in_log": sorted(set(harness_tests) - set(merged)),
         "tests_in_log_not_in_harness": sorted(set(merged) - set(harness_tests)),
         "status_by_test": merged,
     }
 
 
+def _pinned_block(run_dir: Path) -> Optional[int]:
+    """The fork block the agent claims, shared with the replay module."""
+    return read_pinned_block(run_dir)
+
+
 def audit_harness(run_dir: Path) -> Dict[str, Any]:
+    """Scan `.t.sol` files for tests and for fork markers inside function bodies.
+
+    Only a marker inside a function body (`testXxx`, `setUp`, or a helper) makes
+    a run fork-backed. The previous implementation matched the marker anywhere
+    in the file, so a comment or a string was enough. Rejected sites are still
+    reported so the aggregate can show how often that happened.
+    """
     harness_files = _iter_harness_files(run_dir)
-    harness_text: List[str] = []
     harness_bytes = 0
     tests: Dict[str, str] = {}
+    marker_sites: List[Dict[str, str]] = []
+    outside_functions: set = set()
+    comment_only: set = set()
 
     for path in harness_files:
         text = read_text_capped(path, MAX_TEXT_BYTES)
         if not text:
             continue
-        harness_text.append(text)
+        relative = path.relative_to(run_dir).as_posix()
         try:
             harness_bytes += path.stat().st_size
         except OSError:
             pass
-        for match in TEST_FUNC_RE.finditer(text):
-            tests[match.group(1)] = path.relative_to(run_dir).as_posix()
+        for name, _body, _index in iter_test_functions(text):
+            tests[name] = relative
 
-    combined = "\n".join(harness_text)
-    markers = sorted({marker for marker in FORK_MARKERS if marker in combined})
+        signals = fork_signal_sites(text)
+        for item in signals["in_functions"]:
+            marker_sites.append(
+                {"marker": item["marker"], "function": item["function"], "file": relative}
+            )
+        outside_functions.update(signals["outside_functions"])
+        comment_only.update(signals["comment_only"])
 
-    pinned_block = (run_dir / "artifacts" / "pinned_block.json").exists()
-    if pinned_block:
+    markers = sorted({item["marker"] for item in marker_sites})
+    pinned_block_number = _pinned_block(run_dir)
+    pinned_block_file = (run_dir / "artifacts" / "pinned_block.json").exists()
+    if pinned_block_file:
         markers.append("artifacts/pinned_block.json")
 
     fuzz_tests = [name for name in tests if "fuzz" in name.lower()]
@@ -205,8 +189,13 @@ def audit_harness(run_dir: Path) -> Dict[str, Any]:
         "bytes": harness_bytes,
         "tests": sorted(tests),
         "tests_fuzz": sorted(fuzz_tests),
+        "test_files": dict(sorted(tests.items())),
         "fork_backed": bool(markers),
         "fork_signals": markers,
+        "fork_marker_sites": marker_sites,
+        "fork_markers_outside_functions": sorted(outside_functions),
+        "fork_markers_comment_only": sorted(comment_only),
+        "pinned_block": pinned_block_number,
     }
 
 
@@ -320,13 +309,24 @@ def _audit_evidence_items(run_dir: Path, items: Sequence[Dict[str, Any]]) -> Dic
     }
 
 
+def _replay_row(replay_tests: Dict[str, Dict[str, Any]], name: str) -> Optional[Dict[str, Any]]:
+    row = replay_tests.get(name)
+    if not isinstance(row, dict):
+        return None
+    if row.get("status") not in {"PASS", "FAIL", "SKIP"}:
+        return None
+    return row
+
+
 def _collect_findings(
     run_dir: Path,
     raw_findings: Sequence[Dict[str, Any]],
     harness_tests: Sequence[str],
     forge_status: Dict[str, str],
+    replay_tests: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     harness_set = set(harness_tests)
+    replay_tests = replay_tests or {}
     rows: List[Dict[str, Any]] = []
 
     severity_counts = {name: 0 for name in SEVERITY_ORDER}
@@ -372,8 +372,35 @@ def _collect_findings(
         reproduction_text = " ".join(as_text(item) for item in as_list(reproduction)).strip()
         repro_tests = sorted(set(TEST_NAME_RE.findall(reproduction_text)))
         repro_linked = [name for name in repro_tests if name in harness_set]
-        repro_passed = [name for name in repro_linked if forge_status.get(name) == "PASS"]
         repro_missing = [name for name in repro_tests if name not in harness_set]
+
+        # A replay row wins over the agent's own log: it was produced after the
+        # agent exited, with the command and block recorded next to the output.
+        repro_passed: List[str] = []
+        replays: List[Dict[str, Any]] = []
+        for name in repro_linked:
+            row = _replay_row(replay_tests, name)
+            if row is not None:
+                replays.append(
+                    {
+                        "test": name,
+                        "status": row.get("status"),
+                        "delta_status": row.get("delta_status"),
+                        "state_sensitive": row.get("state_sensitive"),
+                        "sha256": row.get("sha256"),
+                    }
+                )
+                if row.get("status") == "PASS":
+                    repro_passed.append(name)
+            elif forge_status.get(name) == "PASS":
+                repro_passed.append(name)
+
+        attested = [name for name in repro_passed if _replay_row(replay_tests, name) is not None]
+        repro_attested = bool(repro_passed) and len(attested) == len(repro_passed)
+        repro_source = None
+        if repro_passed:
+            repro_source = "replay" if repro_attested else "agent_log"
+        repro_state_sensitive = any(item.get("state_sensitive") is True for item in replays)
 
         if not severity_ok:
             anomalies.append(
@@ -407,6 +434,10 @@ def _collect_findings(
                 "repro_linked": repro_linked,
                 "repro_passed": repro_passed,
                 "repro_test_missing": repro_missing,
+                "repro_source": repro_source,
+                "repro_attested": repro_attested,
+                "repro_state_sensitive": repro_state_sensitive,
+                "repro_replays": replays,
             }
         )
 
@@ -913,6 +944,49 @@ def _duration_seconds(meta: Dict[str, Any]) -> Tuple[Optional[float], Optional[f
     return declared_value, computed
 
 
+def _replay_summary(
+    payload: Optional[Dict[str, Any]], tests: Dict[str, Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Describe the post-exit replay for the metrics record.
+
+    `replayed_tests` counts tests we re-ran ourselves; `state_sensitive_tests`
+    counts those that passed at the pinned block and failed at the earlier one.
+    """
+    if not isinstance(payload, dict):
+        return {
+            "present": False,
+            "status": None,
+            "reason": "no replay record",
+            "block": None,
+            "block_source": None,
+            "delta": None,
+            "delta_block": None,
+            "tests": 0,
+            "replayed_tests": 0,
+            "state_sensitive_tests": 0,
+            "duration_ms": None,
+            "errors": [],
+        }
+
+    replayed = sum(1 for row in tests.values() if row.get("status") in {"PASS", "FAIL", "SKIP"})
+    state_sensitive = sum(1 for row in tests.values() if row.get("state_sensitive") is True)
+    return {
+        "present": True,
+        "schema_version": payload.get("schema_version"),
+        "status": payload.get("status"),
+        "reason": payload.get("reason"),
+        "block": payload.get("block"),
+        "block_source": payload.get("block_source"),
+        "delta": payload.get("delta"),
+        "delta_block": payload.get("delta_block"),
+        "tests": len(tests),
+        "replayed_tests": replayed,
+        "state_sensitive_tests": state_sensitive,
+        "duration_ms": payload.get("duration_ms"),
+        "errors": [as_text(item)[:200] for item in (payload.get("errors") or [])][:8],
+    }
+
+
 def collect_run(run_dir: Any, now: Optional[str] = None) -> Dict[str, Any]:
     """Derive a metrics record for one run directory."""
     started_at = time.time()
@@ -989,6 +1063,8 @@ def collect_run(run_dir: Any, now: Optional[str] = None) -> Dict[str, Any]:
 
     harness = audit_harness(run_path)
     forge = audit_forge(run_path, harness["tests"])
+    replay_payload = load_replay(run_path)
+    replay_tests = replay_index(replay_payload)
     fork = dict(harness)
     fork["forge"] = {key: value for key, value in forge.items() if key != "status_by_test"}
     fork["forge"]["passed_tests"] = sorted(
@@ -997,11 +1073,25 @@ def collect_run(run_dir: Any, now: Optional[str] = None) -> Dict[str, Any]:
     fork["forge"]["failed_tests"] = sorted(
         name for name, value in forge["status_by_test"].items() if value == "FAIL"
     )
+    fork["replay"] = _replay_summary(replay_payload, replay_tests)
+    # Count only the agent's own logs here: our replay always writes a header,
+    # so a compile failure would otherwise look like runtime corroboration.
+    agent_log_signals = {
+        path: signals
+        for path, signals in forge["fork_log_signals"].items()
+        if not path.startswith("artifacts/replay/")
+    }
+    fork["forge"]["agent_fork_log_signals"] = agent_log_signals
+    fork["fork_verified"] = bool(fork["fork_backed"]) and bool(
+        fork.get("pinned_block") is not None
+        or agent_log_signals
+        or fork["replay"]["replayed_tests"] > 0
+    )
     function_coverage = audit_function_coverage(
         run_path, harness["files"], target_address, target_name
     )
     finding_rows, finding_summary = _collect_findings(
-        run_path, raw_findings, harness["tests"], forge["status_by_test"]
+        run_path, raw_findings, harness["tests"], forge["status_by_test"], replay_tests
     )
     anomalies.extend(finding_summary["anomalies"])
 
@@ -1057,6 +1147,24 @@ def collect_run(run_dir: Any, now: Optional[str] = None) -> Dict[str, Any]:
             }
         )
 
+    # A PASS line for a test that exists nowhere in the harness cannot have come
+    # from `forge test`. Only PASS is flagged: a FAIL for a test the agent later
+    # deleted is unremarkable, a PASS for one that never existed is not.
+    unknown_pass = sorted(
+        name
+        for name in forge["tests_in_log_not_in_harness"]
+        if forge["status_by_test"].get(name) == "PASS"
+    )
+    if unknown_pass:
+        anomalies.append(
+            {
+                "code": "forge_log_test_unknown",
+                "detail": "{} PASS line(s) for tests not in the harness: {}".format(
+                    len(unknown_pass), ", ".join(unknown_pass[:5])
+                ),
+            }
+        )
+
     coverage = coverage_claims(report_dict, tooling, fork, volume)
     for key in coverage["overclaims"]:
         anomalies.append({"code": "declared_coverage_overclaim", "detail": key})
@@ -1094,6 +1202,12 @@ def collect_run(run_dir: Any, now: Optional[str] = None) -> Dict[str, Any]:
 
     repro_linked = sum(1 for row in finding_rows if row["repro_linked"])
     repro_passed = sum(1 for row in finding_rows if row["repro_passed"])
+    repro_attested = sum(
+        1 for row in finding_rows if row["repro_passed"] and row["repro_attested"]
+    )
+    repro_state_sensitive = sum(
+        1 for row in finding_rows if row["repro_state_sensitive"] and row["repro_passed"]
+    )
     findings_total = len(finding_rows)
     repro_rate = (repro_passed / findings_total) if findings_total else None
 
@@ -1101,9 +1215,69 @@ def collect_run(run_dir: Any, now: Optional[str] = None) -> Dict[str, Any]:
         "linked": repro_linked,
         "passed": repro_passed,
         "rate": repro_rate,
+        "attested": repro_attested,
+        "attested_rate": (repro_attested / findings_total) if findings_total else None,
+        "state_sensitive": repro_state_sensitive,
+        "state_sensitive_of_passed": (
+            repro_state_sensitive / repro_passed if repro_passed else None
+        ),
         "fork_backed": bool(harness["fork_backed"]),
         "fork_rate": repro_rate if harness["fork_backed"] else None,
     }
+
+    if replay_payload is not None:
+        replay_status = as_text(replay_payload.get("status"))
+        if replay_status == "error":
+            anomalies.append(
+                {
+                    "code": "fork_replay_failed",
+                    "detail": as_text(replay_payload.get("reason"))[:200] or "replay error",
+                }
+            )
+        elif replay_status == "skipped":
+            anomalies.append(
+                {
+                    "code": "fork_replay_skipped",
+                    "detail": as_text(replay_payload.get("reason"))[:200] or "replay skipped",
+                }
+            )
+        else:
+            unverified = [
+                row["id"] for row in finding_rows if row["repro_passed"] and not row["repro_attested"]
+            ]
+            if unverified:
+                anomalies.append(
+                    {
+                        "code": "repro_unattested",
+                        "detail": "{} finding(s) not re-run: {}".format(
+                            len(unverified), ", ".join(unverified[:5])
+                        ),
+                    }
+                )
+            contradicted = [
+                row["id"]
+                for row in finding_rows
+                if row["repro_replays"]
+                and not row["repro_passed"]
+                and any(item.get("status") == "FAIL" for item in row["repro_replays"])
+            ]
+            if contradicted:
+                anomalies.append(
+                    {
+                        "code": "repro_contradicted_by_replay",
+                        "detail": "{} finding(s): {}".format(
+                            len(contradicted), ", ".join(contradicted[:5])
+                        ),
+                    }
+                )
+
+    if fork["fork_markers_comment_only"]:
+        anomalies.append(
+            {
+                "code": "fork_marker_not_in_test_body",
+                "detail": ",".join(fork["fork_markers_comment_only"]),
+            }
+        )
 
     return {
         "stats_schema_version": STATS_SCHEMA_VERSION,

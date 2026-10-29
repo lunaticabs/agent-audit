@@ -59,17 +59,22 @@ input/prompt.txt              # 调用方请求
 input/request.json            # 规范化请求
 input/run_meta.json           # 状态、退出码、耗时
 artifacts/                    # agent 产出的证据
+artifacts/replay/             # agent 退出后我们自己重跑声称测试的日志与结论
 sources/                      # 可选：拉取到的源码
 reports/final_report.json     # 必须的结构化报告
 reports/final_answer.md       # DSH stdout
 logs/agent.stdout.log
 logs/agent.stderr.log
+logs/replay.log
 logs/stats.log
 logs/persist.log
 stats/metrics.json
 ```
 
-entrypoint 在退出时自动写 metadata、保存 stdout、生成 `stats/metrics.json`，并在配置了 `AGENT_AUDIT_MONGO_URI` 时把该 run 镜像到 MongoDB 一次。agent 不需要、也无法触发持久化。
+entrypoint 在退出时自动写 metadata、保存 stdout；审计成功退出后先做一次**退出后重放**
+（`artifacts/replay/`，`AGENT_AUDIT_REPLAY=0` 可关闭），再生成 `stats/metrics.json`，
+并在配置了 `AGENT_AUDIT_MONGO_URI` 时把该 run 镜像到 MongoDB 一次。agent 不需要、
+也无法触发持久化。
 
 ## MongoDB 持久化
 
@@ -154,17 +159,30 @@ python3 scripts/enqueue_redis.py \
 
 ## 运行统计
 
-每个 run 结束时，入口脚本会生成派生的 `stats/metrics.json`（`AGENT_AUDIT_STATS=0` 可关闭）。聚合一轮：
+每个 run 结束时，入口脚本会生成派生的 `stats/metrics.json`（`AGENT_AUDIT_STATS=0` 可关闭）。
+
+生成之前还有一次**退出后重放**：按报告里每条 finding 声称的测试名，用固定 argv 重跑
+`forge test --fork-url`，并把命令、块号、脱敏后的 RPC 和 harness 文件 sha256 一起写进
+`artifacts/replay/`。统计优先信这份记录，只有它之外的 PASS 才回退到 agent 自己的日志。
+随后在 `block - delta` 再跑一次，用来判断断言是否真的依赖链上状态（只作诊断，不进复现率）。
+总预算 `AGENT_AUDIT_REPLAY_TIMEOUT_MS`（默认 900 秒），跨块间隔
+`AGENT_AUDIT_REPLAY_BLOCK_DELTA`（默认 7200）。
+
+聚合一轮：
 
 ```bash
 # 为还没有 metrics 的 run 补齐
 PYTHONPATH=tools python3 -m audit_stats collect --runs-root runs
 
+# 需要人工看的发现：TRIAGE.md、triage.csv
+PYTHONPATH=tools python3 -m audit_stats triage --runs-root runs
+
 # 一轮报告：summary.json、REPORT.md、runs.csv、findings.csv
 PYTHONPATH=tools python3 -m audit_stats report --runs-root runs --expected 120
 ```
 
-统计覆盖漏洞数与严重度、fork 复现覆盖率（只算有 fork 证据的 run）、函数覆盖率
+统计覆盖漏洞数与严重度、fork 复现覆盖率（只算有 fork 证据的 run；另有"经过重放确认"
+与"状态敏感"两个分项）、函数覆盖率
 （trace 与 harness 引用到的 ABI 函数）、同一目标重复审计的函数锚定标题相似度与严重度漂移、
 证据解析率、"声明覆盖 vs 磁盘观察"、工具使用、schema 分布、异常码和时长分位数，
 并按模型、链、是否已验证、schema 代际分层。`final_report.json` 按不可信输入处理：严重度归一化、

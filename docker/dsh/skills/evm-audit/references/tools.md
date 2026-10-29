@@ -122,6 +122,19 @@ Fork harness pattern:
 Use `vm.createSelectFork(vm.envString("RPC_URL"))`, `vm.deal`, `vm.prank` or
 `vm.startPrank`, and `bound`. Save the harness and trace under `artifacts/`.
 
+Record the block you forked at in `artifacts/pinned_block.json`:
+
+```json
+{ "block": 21000000, "chain_id": 1 }
+```
+
+Saving the raw `eth_getBlockByNumber` response for that block also works.
+
+After the run exits, the harness is replayed at that block and at an earlier
+one; without this file the replay falls back to the chain head and its verdict
+is weaker. Keep fork markers inside a function body (`setUp`, a helper, or the
+test itself) — a marker in a comment is not counted as fork evidence.
+
 Property/sequence fuzzing:
 
 ```bash

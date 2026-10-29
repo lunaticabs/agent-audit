@@ -10,6 +10,8 @@ from . import __version__
 from .aggregate import aggregate, load_metrics, write_outputs
 from .collect import collect_run, metrics_path, write_run_metrics
 from .common import format_pct, format_seconds, iter_run_dirs
+from .replay import run_replay, write_replay
+from .triage import console_summary, triage, write_outputs as write_triage
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -17,7 +19,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="audit_stats",
         description=(
             "Derive post-run statistics from agent-audit run directories. "
-            "`collect` writes runs/<run_id>/stats/metrics.json; `report` aggregates them."
+            "`collect` writes runs/<run_id>/stats/metrics.json; `triage` lists findings that "
+            "need a human look; `report` aggregates them."
         ),
     )
     parser.add_argument("--version", action="version", version="audit_stats {}".format(__version__))
@@ -30,6 +33,42 @@ def build_parser() -> argparse.ArgumentParser:
     collect.add_argument("--print", dest="print_json", action="store_true", help="print metrics JSON")
     collect.add_argument("--now", help="override collection timestamp (tests, backfills)")
     collect.add_argument("--quiet", action="store_true")
+
+    replay = subparsers.add_parser(
+        "replay",
+        help="re-run the claimed fork tests after the agent exits",
+        description=(
+            "Rebuild fork-reproduction evidence from outside the agent's own logs: re-run the "
+            "tests named by each finding, at the pinned block and at block minus delta."
+        ),
+    )
+    replay.add_argument("run_dir", help="one run directory")
+    replay.add_argument("--rpc-url", help="RPC endpoint (default: $RPC_URL)")
+    replay.add_argument("--block", type=int, help="fork block (default: pinned block file, else chain head)")
+    replay.add_argument(
+        "--delta", type=int, help="blocks between the two runs (default: $AGENT_AUDIT_REPLAY_BLOCK_DELTA)"
+    )
+    replay.add_argument(
+        "--budget-ms", type=int, help="total budget (default: $AGENT_AUDIT_REPLAY_TIMEOUT_MS)"
+    )
+    replay.add_argument("--json", dest="print_json", action="store_true", help="print the replay record")
+    replay.add_argument("--quiet", action="store_true")
+
+    triage = subparsers.add_parser(
+        "triage",
+        help="list findings that need a human look",
+        description=(
+            "List findings whose reproduction is missing, not reproduced, only present in the "
+            "agent's log, or not state-sensitive; plus runs with integrity anomalies."
+        ),
+    )
+    triage.add_argument("--runs-root", default="runs", help="run root (default: runs)")
+    triage.add_argument("--out", help="output directory (default: <runs-root>/_stats)")
+    triage.add_argument("--backfill", action="store_true", help="collect missing metrics first")
+    triage.add_argument("--limit", type=int, default=20, help="rows to print (default: 20)")
+    triage.add_argument("--json", dest="print_json", action="store_true", help="print the triage JSON")
+    triage.add_argument("--now", help="override generation timestamp (tests, backfills)")
+    triage.add_argument("--quiet", action="store_true")
 
     report = subparsers.add_parser("report", help="aggregate metrics into a round report")
     report.add_argument("--runs-root", default="runs", help="run root (default: runs)")
@@ -119,6 +158,75 @@ def command_collect(args: argparse.Namespace) -> int:
     return 1 if failures else 0
 
 
+def command_replay(args: argparse.Namespace) -> int:
+    run_dir = Path(args.run_dir)
+    if not run_dir.is_dir():
+        print("replay: not a directory: {}".format(run_dir), file=sys.stderr)
+        return 2
+
+    payload = run_replay(
+        run_dir,
+        rpc_url=args.rpc_url,
+        block=args.block,
+        delta=args.delta,
+        budget=args.budget_ms,
+    )
+    write_replay(run_dir, payload)
+
+    if args.print_json:
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    elif not args.quiet:
+        tests = payload.get("tests") or {}
+        state_sensitive = sum(1 for row in tests.values() if row.get("state_sensitive") is True)
+        print(
+            "replay: status={} tests={} state_sensitive={} block={} delta_block={}".format(
+                payload.get("status"),
+                len(tests),
+                state_sensitive,
+                payload.get("block"),
+                payload.get("delta_block"),
+            ),
+            file=sys.stderr,
+        )
+        if payload.get("reason"):
+            print("  reason: {}".format(payload["reason"]), file=sys.stderr)
+        for error in (payload.get("errors") or [])[:5]:
+            print("  error: {}".format(error), file=sys.stderr)
+
+    return 0 if payload.get("status") == "ok" else 1
+
+
+def command_triage(args: argparse.Namespace) -> int:
+    runs_root = Path(args.runs_root)
+    if not runs_root.is_dir():
+        print("triage: not a directory: {}".format(runs_root), file=sys.stderr)
+        return 2
+
+    loaded = load_metrics(runs_root, backfill=args.backfill, now=args.now)
+    if not loaded["metrics"]:
+        print("triage: no metrics found under {}".format(runs_root), file=sys.stderr)
+        print("triage: run `audit_stats collect --runs-root {}` first".format(runs_root), file=sys.stderr)
+        return 1
+
+    payload = triage(
+        loaded["metrics"],
+        missing=loaded["missing"],
+        errors=loaded["errors"],
+        now=args.now,
+    )
+    out_dir = Path(args.out) if args.out else runs_root / "_stats"
+    paths = write_triage(out_dir, payload)
+
+    if args.print_json:
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    elif not args.quiet:
+        for line in console_summary(payload, limit=args.limit):
+            print(line)
+        for key, path in paths.items():
+            print("  {}: {}".format(key, path))
+    return 0
+
+
 def command_report(args: argparse.Namespace) -> int:
     runs_root = Path(args.runs_root)
     if not runs_root.is_dir():
@@ -170,10 +278,14 @@ def command_report(args: argparse.Namespace) -> int:
             )
         )
         print(
-            "  fork_repro={passed}/{total} ({rate}); evidence={resolved}/{refs} ({er})".format(
+            "  fork_repro={passed}/{total} ({rate}); attested={attested} ({ar}); "
+            "state_sensitive={state_sensitive}; evidence={resolved}/{refs} ({er})".format(
                 passed=fork["repro_passed"],
                 total=fork["findings"],
                 rate=format_pct(fork["repro_rate"]),
+                attested=fork["repro_attested"],
+                ar=format_pct(fork["repro_attested_rate"]),
+                state_sensitive=fork["repro_state_sensitive"],
                 resolved=evidence["refs_resolved"],
                 refs=evidence["refs_total"],
                 er=format_pct(evidence["resolution_rate"]),
@@ -226,6 +338,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "collect":
         return command_collect(args)
+    if args.command == "replay":
+        return command_replay(args)
+    if args.command == "triage":
+        return command_triage(args)
     if args.command == "report":
         return command_report(args)
     parser.error("unknown command")

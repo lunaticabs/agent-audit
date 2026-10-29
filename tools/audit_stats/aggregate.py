@@ -268,6 +268,17 @@ def aggregate(
     repro_passed = sum(
         int((item.get("fork", {}).get("findings_repro") or {}).get("passed") or 0) for item in evaluable
     )
+    repro_attested = sum(
+        int((item.get("fork", {}).get("findings_repro") or {}).get("attested") or 0) for item in evaluable
+    )
+    repro_state_sensitive = sum(
+        int((item.get("fork", {}).get("findings_repro") or {}).get("state_sensitive") or 0)
+        for item in evaluable
+    )
+    replay_runs = [
+        item for item in evaluable if ((item.get("fork") or {}).get("replay") or {}).get("present")
+    ]
+    fork_verified_runs = [item for item in evaluable if (item.get("fork") or {}).get("fork_verified")]
     fork_runs = [item for item in evaluable if (item.get("fork") or {}).get("fork_backed")]
     fork_findings = sum(int(item["report"]["findings_total"]) for item in fork_runs)
     fork_repro_passed = sum(
@@ -435,8 +446,14 @@ def aggregate(
             "repro_passed": repro_passed,
             "repro_rate": ratio(repro_passed, findings_total),
             "repro_linked_rate": ratio(repro_linked, findings_total),
+            "repro_attested": repro_attested,
+            "repro_attested_rate": ratio(repro_attested, findings_total),
+            "repro_state_sensitive": repro_state_sensitive,
+            "repro_state_sensitive_of_passed": ratio(repro_state_sensitive, repro_passed),
             "runs_with_harness": len(harness_runs),
+            "runs_with_replay": len(replay_runs),
             "runs_fork_backed": len(fork_runs),
+            "runs_fork_verified": len(fork_verified_runs),
             "fork_findings": fork_findings,
             "fork_repro_passed": fork_repro_passed,
             "fork_repro_rate": ratio(fork_repro_passed, fork_findings),
@@ -647,6 +664,16 @@ def render_markdown(summary: Dict[str, Any], metrics: Sequence[Dict[str, Any]]) 
                 ["Linked to a harness test", fork["repro_linked"], format_pct(fork["repro_linked_rate"])],
                 ["Linked test passed", fork["repro_passed"], format_pct(fork["repro_rate"])],
                 [
+                    "...and re-run by the post-exit replay",
+                    fork["repro_attested"],
+                    format_pct(fork["repro_attested_rate"]),
+                ],
+                [
+                    "...and state-sensitive (pass at N, fail at N-delta)",
+                    fork["repro_state_sensitive"],
+                    format_pct(fork["repro_state_sensitive_of_passed"]),
+                ],
+                [
                     "Findings in fork-backed runs",
                     fork["fork_findings"],
                     format_pct(fork["fork_repro_rate"]),
@@ -657,16 +684,28 @@ def render_markdown(summary: Dict[str, Any], metrics: Sequence[Dict[str, Any]]) 
     out.append("")
     out.append(
         "Runs with a fork harness: {harness}; runs with a detected fork: {backed}; "
-        "harness tests: {tests}; fuzz tests: {fuzz}; fuzz runs executed: {runs}; "
-        "forge pass/fail: {passed}/{failed}.".format(
+        "runs with a post-exit replay: {replay}; runs whose fork is corroborated by a replay, "
+        "a pinned block, or a fork log: {verified}; harness tests: {tests}; fuzz tests: {fuzz}; "
+        "fuzz runs executed: {runs}; forge pass/fail: {passed}/{failed}.".format(
             harness=fork["runs_with_harness"],
             backed=fork["runs_fork_backed"],
+            replay=fork["runs_with_replay"],
+            verified=fork["runs_fork_verified"],
             tests=fork["tests_total"],
             fuzz=fork["tests_fuzz"],
             runs=fork["fuzz_runs"],
             passed=fork["forge_passed"],
             failed=fork["forge_failed"],
         )
+    )
+    out.append("")
+    out.append(
+        "`Linked test passed` counts a PASS in a forge log. `Re-run by the post-exit replay` "
+        "counts only PASSes that the replay produced itself after the agent exited. "
+        "`State-sensitive` is a diagnostic, not part of the reproduction rate: it means the "
+        "same test passed at the pinned block and failed at block minus delta, so the assertion "
+        "reads chain state. A logic bug present at both blocks is correctly reproduced but not "
+        "state-sensitive, so the diagnostic under-counts rather than over-counts."
     )
     out.append("")
 
@@ -962,7 +1001,10 @@ RUN_FIELDS = (
     "max_severity",
     "repro_linked",
     "repro_passed",
+    "repro_attested",
+    "repro_state_sensitive",
     "repro_rate",
+    "replay_status",
     "evidence_refs",
     "evidence_missing",
     "anomalies",
@@ -1011,6 +1053,9 @@ FINDING_FIELDS = (
     "has_reproduction",
     "repro_linked",
     "repro_passed",
+    "repro_source",
+    "repro_attested",
+    "repro_state_sensitive",
     "evidence_total",
     "evidence_missing",
     "severity_ok",
@@ -1047,7 +1092,10 @@ def run_rows(metrics: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "max_severity": report.get("max_severity"),
                 "repro_linked": repro.get("linked"),
                 "repro_passed": repro.get("passed"),
+                "repro_attested": repro.get("attested"),
+                "repro_state_sensitive": repro.get("state_sensitive"),
                 "repro_rate": repro.get("rate"),
+                "replay_status": (fork.get("replay") or {}).get("status"),
                 "evidence_refs": (item.get("evidence") or {}).get("refs_total"),
                 "evidence_missing": (item.get("evidence") or {}).get("refs_missing"),
                 "anomalies": len(item.get("anomalies") or []),
@@ -1071,6 +1119,8 @@ def finding_rows(metrics: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
             row["run_id"] = item.get("run_id")
             row["repro_linked"] = int(bool(finding.get("repro_linked")))
             row["repro_passed"] = int(bool(finding.get("repro_passed")))
+            row["repro_attested"] = int(bool(finding.get("repro_attested")))
+            row["repro_state_sensitive"] = int(bool(finding.get("repro_state_sensitive")))
             rows.append(row)
     return rows
 

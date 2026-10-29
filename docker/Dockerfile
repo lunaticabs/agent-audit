@@ -150,6 +150,10 @@ RUN bash -lc 'set -euo pipefail \
     && test -f /opt/agent-audit/dsh-home/skills/evm-audit/references/report.md \
     && test -f /opt/agent-audit/dsh-home/skills/evm-audit/references/chains.md \
     && PYTHONPATH=/opt/agent-audit/tools python3 -m audit_stats --version \
+    && PYTHONPATH=/opt/agent-audit/tools python3 -m audit_stats replay --help >/dev/null \
+    && PYTHONPATH=/opt/agent-audit/tools python3 -m audit_stats triage --help >/dev/null \
+    && PYTHONPATH=/opt/agent-audit/tools python3 -m unittest discover \
+        -s /opt/agent-audit/tools/audit_stats/tests -t /opt/agent-audit/tools >/dev/null \
     && python3 -c "import pymongo; print(pymongo.version)" \
     && PYTHONPATH=/opt/agent-audit/tools python3 -m run_persist --help >/dev/null \
     && PYTHONPATH=/opt/agent-audit/tools python3 -m unittest discover \

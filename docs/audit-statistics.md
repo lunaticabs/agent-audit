@@ -24,8 +24,9 @@
 | 结构化报告 | `reports/final_report.json` | 漏洞数、严重度、置信度、假设、局限、声明的覆盖 |
 | 证据引用 | 报告 `findings[].evidence` | 证据解析率、缺失/越界引用 |
 | 复现命令 | 报告 `findings[].reproduction` | 复现是否落到具体测试、测试是否通过 |
-| Foundry harness | `test/**/*.t.sol` | 测试数、fuzz 测试、是否 fork、测试名清单 |
+| Foundry harness | `test/**/*.t.sol` | 测试数、fuzz 测试、是否 fork、测试名清单、文件 sha256 |
 | forge 输出 | `artifacts/*forge*.log` | pass/fail/skip、fuzz runs、与 harness 的一致性 |
+| 退出后重放 | `artifacts/replay/replay.json` + `artifacts/replay/**/*.log` | 我们自己重跑得到的 PASS/FAIL、双块判别、命令与块号存证 |
 | 工具产物 | `artifacts/slither*`、`heimdall/`、`echidna*`、`trace_*` | 工具真实使用情况、静态信号数 |
 | 执行痕迹 | `artifacts/trace_*.log` 里的 `地址::函数名(...)` | 目标函数级覆盖（trace 来源） |
 | ABI | `sources/*.abi.json`、`artifacts/etherscan_getabi.json` | 目标函数全集、覆盖分母 |
@@ -52,10 +53,17 @@
 - **证据解析率**：先剥离 `:行号`、行号区间和尾注，再判断报告引用的路径是否真的存在于 run 目录内。
 - **无证据发现数**：`findings` 里 `evidence` 为空的条目。
 - **复现链接率**：`reproduction` 提到的测试名是否存在于 harness。
-- **复现通过率**：链接到的测试是否在 forge 日志里 PASS。
-- **fork 复现覆盖率**：只统计"确有 fork 证据"的 run（`createSelectFork`/`createFork`/
-  `forkBlockNumber`/`envString("RPC_URL")`/`--fork-url`/`pinned_block.json`）。
+- **复现通过率**：链接到的测试是否 PASS。**默认取重放结果**，没有重放记录时才回退到
+  agent 留下的 forge 日志；两者在报告里分开计数（`attested` vs 仅日志）。
+- **fork 证据分两步**：
+  1. `fork_backed`：fork 标记出现在**函数体内**（`testXxx` / `setUp` / helper 都算），
+     注释、字符串、文件作用域里的标记一律不算；或存在 `artifacts/pinned_block.json`。
+  2. `fork_verified`：在 1 之上，还要求有运行时证据——重放记录、`pinned_block.json`
+     的块号，或日志里的 fork 信号。
   本地 anvil 上跑通不算 fork 复现，两者必须分开。
+- **`state_sensitive` 是诊断项，不是证据等级**：同一测试在块 N PASS、在 N−delta FAIL，
+  说明断言确实读链上状态。**它不进复现率**：逻辑漏洞在两个块上都成立，复现正确但不
+  state-sensitive，所以这一项只会少算、不会多算。
 - **声明 vs 观察的覆盖**：报告说做了源码审阅/静态分析/fork 测试/模糊测试，磁盘上是否
   有对应产物。不一致记为 overclaim / underclaim。
 - **静态信号**：slither 结果条数、按 impact 分布；工具 JSON 与 stdout 是否一致。
@@ -80,6 +88,10 @@
 - 异常码计数：`report_missing`、`evidence_missing`、`evidence_outside_run`、
   `schema_legacy`、`declared_coverage_overclaim`、`slither_result_mismatch`、
   `target_address_mismatch`、`duration_inconsistent` 等。
+- 证据完整性异常（"声称"与"可复算"不一致）：`repro_contradicted_by_replay`（我们重跑失败）、
+  `repro_unattested`（只有 agent 日志说通过）、`forge_log_test_unknown`（日志里 PASS 了
+  harness 中不存在的测试）、`fork_marker_not_in_test_body`（fork 标记只在注释里）、
+  `fork_replay_failed` / `fork_replay_skipped`。这些只证伪，不证明清白。
 - 重复 finding ID、报告 run_id 与目录名不一致、prompt 地址与报告地址不一致。
 - legacy 报告占比（跨期比较必须先分层）。
 - **跨 run 稳定性**：同一 `(chain, address)` 的多次审计一一配对。优先用 `function`
@@ -105,6 +117,8 @@
 2. **严重度是提示词驱动的。** 历史归档里 `critical` 占 74%，是旧 prompt 要求
    "命中优先类一律 very high"的结果。任何严重度分布都要标注产生它的 prompt/模型版本。
 3. **复现 ≠ 真值。** 测试通过只说明测试通过；fork 复现率要和证据解析率一起看。
+   更细的一层：即使测试真的跑了，断言也可能恒真。退出后重放解决"日志是谁写的"，
+   双块判别缓解"断言有没有区分力"，两者都不能替代人工抽样。
 4. **四种"覆盖率"必须分开命名**：证据覆盖率（引用可解析）、复现覆盖率（发现被测试复现）、
    函数覆盖率（ABI 函数被执行，trace 来源）、行/分支覆盖率（`forge coverage`）。
    混用会让数字失去意义；本工具只实现前三种。
@@ -114,18 +128,39 @@
 
 ## 5. 工具实现
 
-两个阶段，职责分离：
+四个阶段，职责分离：
+
+### `replay`（每个 run 一次，在 agent 退出后、collect 之前）
+
+入口：`docker/entrypoint.sh` 的 `finalize()`，在写完 `run_meta.json` 之后、`collect` 之前。
+
+- 从报告里取出每个发现声称的测试名，找到 run 目录下的 Foundry 工程，用固定 argv
+  重跑 `forge test --fork-url $RPC_URL --fork-block-number N --match-test <claimed>`。
+- 命令、块号、RPC host（脱敏）、stdout/stderr 一起写进 `artifacts/replay/`，
+  并记录 harness 文件的 sha256。collector 优先信这份记录，而不是 agent 留下的日志。
+- 再在 N−delta 跑一次；两次结果不同（PASS→FAIL）记 `state_sensitive`，只作诊断。
+- 纯 stdlib + 子进程；有总预算（默认 900s）、单次超时、失败即降级，绝不改变审计退出码。
+- `AGENT_AUDIT_REPLAY=0` 关闭；没有 `RPC_URL`、没有工程、没有声称的测试时记 skipped 并写明原因。
 
 ### `collect`（每个 run 一次，在容器退出时）
 
-入口：`docker/entrypoint.sh` 的 `finalize()`，在写完 `run_meta.json` 之后、持久化拷贝之前。
+入口：`docker/entrypoint.sh` 的 `finalize()`，在 `replay` 之后、持久化拷贝之前。
 
-- 纯 stdlib，无网络、无子进程；只读 run 目录 + 写 `stats/metrics.json`。
+- 纯 stdlib，无网络、无子进程；只读 run 目录（含 `artifacts/replay/`）+ 写 `stats/metrics.json`。
 - 原子写（临时文件 + `os.replace`），被 SIGKILL 也不会留下半截 JSON。
 - 任何异常只写 `logs/stats.log`，不改变审计退出码；`AGENT_AUDIT_STATS=0` 可关闭。
 - 报告字段全部归一化；未知严重度记 `unknown` 并产生异常，不丢分母。
 - 证据路径做 realpath 包含性校验，拒绝绝对路径、`..`、越界软链。
 - 文本读取上限 8 MB，避免异常大文件拖垮收集。
+
+### `triage`（一轮一次，离线）
+
+- 只读各 run 的 `stats/metrics.json`，不跑代码、不改 run 目录；输出 `<out>/TRIAGE.md`
+  与 `triage.csv`。
+- 列出"还没有资格相信"的发现：`not_reproduced`、`unattested`、`log_only`、
+  `evidence_missing`、`no_reproduction`、`vacuity_risk`、`unknown_severity`。
+  排序先严重度、后理由；另列有完整性异常的 run。
+- 它是审阅入口，不是结论：没进列表不等于清白，`vacuity_risk` 也只是提示。
 
 ### `report`（一轮一次，离线）
 

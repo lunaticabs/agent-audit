@@ -32,6 +32,14 @@ optional:
   AGENT_AUDIT_STATS_MODULE
                        Python path containing the audit_stats package.
                        Default: /opt/agent-audit/tools
+  AGENT_AUDIT_REPLAY   Set to 0 to skip the post-exit fork replay. The replay
+                       re-runs the tests each finding claims, at the pinned fork
+                       block and at block minus delta. Default: on
+  AGENT_AUDIT_REPLAY_TIMEOUT_MS
+                       Total replay budget in milliseconds. Default: 900000
+  AGENT_AUDIT_REPLAY_BLOCK_DELTA
+                       Blocks between the replay and the state-sensitivity run.
+                       Default: 7200
   AGENT_AUDIT_MONGO_URI
                        MongoDB URI. Persistence is skipped when this is unset.
   AGENT_AUDIT_MONGO_DB   Database name. Default: agent
@@ -226,6 +234,23 @@ finalize() {
         stdout_log: $stdout_log,
         stderr_log: $stderr_log
       }' >"${RUN_DIR}/input/run_meta.json"
+
+    # Rebuild fork evidence after the agent has exited. The replay re-runs the
+    # tests each finding claims against RPC_URL, records the command and block,
+    # and repeats at block-minus-delta to test whether the assertion really
+    # reads chain state. It runs before collection so metrics can trust it, and
+    # it is best-effort: a replay failure never changes the audit exit code.
+    if [[ "$code" -eq 0 ]] \
+      && [[ "${AGENT_AUDIT_REPLAY:-1}" != "0" ]] \
+      && command -v python3 >/dev/null 2>&1 \
+      && [[ -s "${RUN_DIR}/reports/final_report.json" ]]; then
+      local replay_module="${AGENT_AUDIT_STATS_MODULE:-${PROJECT_ROOT}/tools}"
+      if [[ -d "${replay_module}/audit_stats" ]]; then
+        PYTHONPATH="${replay_module}${PYTHONPATH:+:${PYTHONPATH}}" \
+          python3 -m audit_stats replay "${RUN_DIR}" \
+          >"${RUN_DIR}/logs/replay.log" 2>&1 || true
+      fi
+    fi
 
     # Derive stats/metrics.json from the finished run. This is best-effort:
     # a metrics failure must never change the audit's exit code, and the

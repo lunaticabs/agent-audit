@@ -67,6 +67,8 @@ AGENT_AUDIT_MONGO_URI AGENT_AUDIT_MONGO_DB
 AGENT_AUDIT_MONGO_RUNS_META_COLLECTION AGENT_AUDIT_MONGO_RUNS_FILES_COLLECTION
 AGENT_AUDIT_MONGO_MAX_INLINE_FILE_BYTES AGENT_AUDIT_MONGO_TIMEOUT_MS
 AGENT_AUDIT_MONGO_RETRIES AGENT_AUDIT_MONGO_PERSIST
+AGENT_AUDIT_STATS AGENT_AUDIT_REPLAY
+AGENT_AUDIT_REPLAY_TIMEOUT_MS AGENT_AUDIT_REPLAY_BLOCK_DELTA
 AGENT_AUDIT_RPC_TIMEOUT_MS
 ```
 
@@ -130,8 +132,11 @@ stats/metrics.json
 The entrypoint runs DSH headless with the run directory as its working
 directory. When the audit exits, an exit trap writes `input/run_meta.json`
 (status, exit code, timings), captures the final answer in
-`reports/final_answer.md`, derives `stats/metrics.json` (set
-`AGENT_AUDIT_STATS=0` to skip it), persists the run to MongoDB when
+`reports/final_answer.md`, re-runs the claimed fork tests from outside the
+agent's own logs when the audit exited 0 (`artifacts/replay/`, set
+`AGENT_AUDIT_REPLAY=0` to skip it),
+derives `stats/metrics.json` (set `AGENT_AUDIT_STATS=0` to skip it), persists
+the run to MongoDB when
 `AGENT_AUDIT_MONGO_URI` is set (set `AGENT_AUDIT_MONGO_PERSIST=0` to skip it),
 and optionally copies the run to `AGENT_AUDIT_PERSIST_DIR`.
 
@@ -139,6 +144,14 @@ and optionally copies the run to `AGENT_AUDIT_PERSIST_DIR`.
 reproduction, tool usage, and anomalies. The collector never changes the audit
 exit code; failures land in `logs/stats.log`. Aggregation happens outside the
 container, see [../tools/audit_stats/README.md](../tools/audit_stats/README.md).
+
+The replay is the only post-exit step that runs code. It re-runs the tests each
+finding names, at the pinned block and at `block - AGENT_AUDIT_REPLAY_BLOCK_DELTA`
+(default 7200), writes `artifacts/replay/replay.json` plus one log per run, and
+records the harness file hashes. Metrics prefer that record over the agent's
+logs, and count a PASS as `attested` only when the replay produced it. Budget is
+`AGENT_AUDIT_REPLAY_TIMEOUT_MS` (default 900000); failures land in
+`logs/replay.log` and never change the exit code.
 
 The MongoDB mirror is also one run per write: one `runs_meta` document with
 top-level `target_address` / `target_chain` and embedded `stats`, plus one

@@ -15,8 +15,8 @@ Layout produced by `collect`:
 
 from __future__ import annotations
 
-__version__ = "0.2.2"
+__version__ = "0.3.0"
 
-STATS_SCHEMA_VERSION = 2
+STATS_SCHEMA_VERSION = 3
 
 __all__ = ["__version__", "STATS_SCHEMA_VERSION"]
