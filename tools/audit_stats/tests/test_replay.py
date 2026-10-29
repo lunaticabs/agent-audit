@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 from audit_stats.replay import (
+    _forge_command,
     discover_foundry_roots,
     linked_tests,
     load_replay,
@@ -172,6 +173,30 @@ class ReplayModuleTests(unittest.TestCase):
         log = (run / payload["tests"]["test_alpha"]["log"]).read_text(encoding="utf-8")
         self.assertNotIn("SECRETKEY123", log)
         self.assertIn("/redacted", log)
+
+    def test_rpc_basic_auth_is_redacted_in_the_log(self):
+        run = make_project_run(self.root)
+        payload = run_replay(
+            run,
+            rpc_url="http://nodeuser:nodepass@65.109.115.133:21311/v3/KEY",
+            block=1000,
+            delta=0,
+            budget=60_000,
+            forge_bin=str(self._forge()),
+        )
+        log = (run / payload["tests"]["test_alpha"]["log"]).read_text(encoding="utf-8")
+        self.assertNotIn("nodepass", log)
+        self.assertNotIn("nodeuser", log)
+        self.assertIn("***@65.109.115.133:21311", log)
+
+    def test_match_pattern_tolerates_test_signatures(self):
+        # Forge matches `--match-test` against the test signature, so a pattern
+        # that only matches the bare name silently selects nothing.
+        command = _forge_command("forge", "http://localhost:8545", ["test_alpha"], 1000)
+        pattern = command[command.index("--match-test") + 1]
+        for candidate in ("test_alpha", "test_alpha()", "test_alpha(uint96)", "Suite::test_alpha()"):
+            self.assertRegex(candidate, pattern)
+        self.assertNotRegex("test_beta()", pattern)
 
     def test_replay_is_persisted_and_reloaded(self):
         run = make_project_run(self.root)

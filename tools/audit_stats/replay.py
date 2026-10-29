@@ -202,11 +202,21 @@ def resolve_block(cast_bin: Optional[str], rpc_url: str, run_dir: Path) -> Tuple
 
 
 def _redact_rpc(rpc_url: str) -> str:
+    """Keep scheme, host and port; drop credentials, path and query.
+
+    Providers put API keys in the path, and private nodes put basic-auth
+    credentials in the userinfo, so neither `netloc` nor the URL may be copied
+    into a log header verbatim.
+    """
     try:
         parts = urlsplit(rpc_url)
     except ValueError:
         return "<unparseable>"
-    return urlunsplit((parts.scheme, parts.netloc, "/redacted", "", ""))
+    host = parts.hostname or ""
+    netloc = "{}:{}".format(host, parts.port) if parts.port else host
+    if parts.username is not None:
+        netloc = "***@{}".format(netloc)
+    return urlunsplit((parts.scheme, netloc, "/redacted", "", ""))
 
 
 def _test_file_index(run_dir: Path, roots: Sequence[Path]) -> Dict[str, str]:
@@ -240,7 +250,12 @@ def _forge_command(
     tests: Sequence[str],
     block: Optional[int],
 ) -> List[str]:
-    pattern = "^(?:{})$".format("|".join(re.escape(name) for name in tests))
+    # Forge matches `--match-test` against the test *signature*, so the pattern
+    # has to tolerate the trailing `()` (and fuzz arguments). A plain
+    # `^(?:name)$` silently matches nothing, which looks like "no tests" rather
+    # than a bad pattern.
+    names = "|".join(re.escape(name) for name in tests)
+    pattern = r"(?:^|::)(?:{names})(?:\(.*\))?$".format(names=names)
     command = [forge_bin, "test", "--fork-url", rpc_url]
     if block is not None:
         command.extend(["--fork-block-number", str(block)])
