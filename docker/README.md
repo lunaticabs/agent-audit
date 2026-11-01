@@ -183,7 +183,8 @@ The run directory remains the source of truth even when MongoDB is enabled.
 - `jq`, `curl`, `git`, and the usual shell
 - Python 3 with `pymongo` for the per-run MongoDB mirror
 - vendored `forge-std` for offline harnesses
-- the `evm-audit` skill under `DSH_HOME` (the run's entry point)
+- the `evm-audit` skill under `DSH_HOME` (the run's entry point), including
+  `references/severity.md`
 
 The base image is the pinned Trail of Bits eth-security-toolbox image. Heimdall
 is built from a pinned upstream revision in an Ubuntu 22.04 builder so its
@@ -204,10 +205,10 @@ The image ships a home-level DSH patch at `dsh-home/cordis.patch.yml`:
 - telemetry disabled by default
 
 The single main skill is `dsh-home/skills/evm-audit/SKILL.md`. Its root is a
-short router; tool commands, supported chains, and the report shape live in
-`references/` and load on demand. The skill description triggers on audit
-tasks. There is no role prompt, no per-tool workflow skill, and no separate
-AGENTS.md in the image.
+short router; tool commands, supported chains, the report shape, and the
+severity rubric live in `references/` and load on demand. The skill description
+triggers on audit tasks. There is no role prompt, no per-tool workflow skill,
+and no separate AGENTS.md in the image.
 
 ## Security boundary
 

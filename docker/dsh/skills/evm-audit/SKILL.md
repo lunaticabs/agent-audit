@@ -34,3 +34,5 @@ and choose your own approach.
   the network.
 - `references/report.md` — report shape and evidence examples. Read before
   writing the report.
+- `references/severity.md` — six-question rubric for `severity`. Read before
+  writing findings.

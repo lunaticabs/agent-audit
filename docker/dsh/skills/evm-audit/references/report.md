@@ -40,6 +40,14 @@ Write `reports/final_report.json` before finishing.
 }
 ```
 
+## Severity
+
+Before assigning `severity`, read `references/severity.md` and answer its six
+questions. Keep the five-level vocabulary; append the one-line rationale to
+`impact`:
+
+`Severity basis: impact=<...>; likelihood=<...>; trust=<...>; scope=<...>.`
+
 A confirmed finding needs evidence another reviewer can open: source reference,
 tool output, trace, fork-test result with harness source, minimized calldata, or
 a measured balance/accounting delta.

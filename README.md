@@ -26,7 +26,8 @@ Etherscan, RPC, and the installed tools directly.
 - `eval_docker/` and `EVMbench/` were removed. This repository is for audits,
   not agent benchmarking.
 - The per-tool workflow skills were replaced by **one main `evm-audit` skill**
-  plus a declared tool catalog. The agent chooses its own method.
+  (with a short severity rubric in `references/`), plus a declared tool catalog.
+  The agent chooses its own method.
 - MongoDB archival is restored as a **per-run mirror**: one `runs_meta`
   document (flattened `target_address` / `target_chain`, embedded `stats`) and
   this run's own `runs_files` material. It is triggered once by the entrypoint

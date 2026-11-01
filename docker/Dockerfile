@@ -149,6 +149,7 @@ RUN bash -lc 'set -euo pipefail \
     && test -f /opt/agent-audit/dsh-home/skills/evm-audit/references/tools.md \
     && test -f /opt/agent-audit/dsh-home/skills/evm-audit/references/report.md \
     && test -f /opt/agent-audit/dsh-home/skills/evm-audit/references/chains.md \
+    && test -f /opt/agent-audit/dsh-home/skills/evm-audit/references/severity.md \
     && PYTHONPATH=/opt/agent-audit/tools python3 -m audit_stats --version \
     && PYTHONPATH=/opt/agent-audit/tools python3 -m audit_stats replay --help >/dev/null \
     && PYTHONPATH=/opt/agent-audit/tools python3 -m audit_stats triage --help >/dev/null \
