@@ -117,6 +117,9 @@ COPY docker/dsh/skills ./dsh-home/skills
 COPY tools/audit_stats ./tools/audit_stats
 # Per-run MongoDB persistence: one runs_meta document plus this run's material.
 COPY tools/run_persist ./tools/run_persist
+# Runner-side task claim: KEDA creates one Job per queued task and the Job
+# claims exactly one message from the Redis Stream.
+COPY tools/task_queue ./tools/task_queue
 
 RUN chmod +x /opt/agent-audit/entrypoint.sh \
     && mkdir -p /opt/agent-audit/runs /opt/agent-audit/dsh-home
@@ -158,6 +161,9 @@ RUN bash -lc 'set -euo pipefail \
     && python3 -c "import pymongo; print(pymongo.version)" \
     && PYTHONPATH=/opt/agent-audit/tools python3 -m run_persist --help >/dev/null \
     && PYTHONPATH=/opt/agent-audit/tools python3 -m unittest discover \
-        -s /opt/agent-audit/tools/run_persist/tests -t /opt/agent-audit/tools >/dev/null'
+        -s /opt/agent-audit/tools/run_persist/tests -t /opt/agent-audit/tools >/dev/null \
+    && PYTHONPATH=/opt/agent-audit/tools python3 -m task_queue --help >/dev/null \
+    && PYTHONPATH=/opt/agent-audit/tools python3 -m unittest discover \
+        -s /opt/agent-audit/tools/task_queue/tests -t /opt/agent-audit/tools >/dev/null'
 
 FROM runtime AS final

@@ -3,7 +3,7 @@
 `agent-audit` 是一个 agent-first 的智能合约审计系统。DeepSeek Harness 在容器内自主完成一次审计；容器已经打包链上数据访问、源码获取和安全工具。两种部署方式共用同一个镜像：
 
 - **单次审计**：`docker/run.sh` 为一个完整 prompt 拉起一个容器。
-- **并行审计**：k3s dispatcher 把 Redis 消息转换成一次性 Kubernetes Job。
+- **并行审计**：KEDA 按 Redis Stream 积压创建一次性 Kubernetes Job；每个 Job 自己领一条任务，成功后才 ACK。
 
 没有 Rust 审计 CLI，也没有固定审计流水线。run 目录是主产物；配置 MongoDB 后，entrypoint 会在每条地址审计结束时把该 run 镜像到 `runs_meta` / `runs_files` 一次，批次级目录不会入库。agent 通过 Etherscan、RPC 和已安装工具直接工作。
 
@@ -15,6 +15,7 @@
 - 删除按工具/流程拆分的 skill，只保留一个主 `evm-audit` skill 和可用工具声明。审计方法由 agent 自己决定。
 - 恢复 MongoDB 归档，但改成**每条 run 一次**：一个 `runs_meta` 文档（`target_address` / `target_chain` 展平，内嵌 `stats`）加该 run 自己的 `runs_files` 材料。由 entrypoint 在审计结束时触发，不写批次级文档。run 目录仍是本地主产物；Docker 直接 bind mount，k3s 使用节点本地 hostPath。
 - 保留原有链集合、容器工具列表和 k3s 大规模部署能力。
+- **并行控制面**：KEDA ScaledJob 取代自研 dispatcher。runner 每个 Job 领一条任务（consumer 名用 Job 名，重试才能领回同一条），单次尝试超时以 124 退出，成功后才 ACK；入队时先把镜像 tag 解析成 `@sha256:`。
 
 ## 架构
 
@@ -24,18 +25,19 @@
          -> runs/<run_id>/ -> 宿主机 runs/（bind mount）
 
 批量审计：
-  地址列表 -> Redis Stream -> dispatcher -> Kubernetes Job
+  地址列表 -> Redis Stream -> KEDA ScaledJob（按 lag 建 Job，有上限）
+           -> 每个任务一个 runner Job，自己领消息
            -> 同一个 runner 镜像 -> /var/lib/agent-audit/runs/<run_id>
-           ->（配置后）该 run 的 runs_meta + runs_files
+           -> 成功后 ACK；（配置后）该 run 的 runs_meta + runs_files
 ```
 
 | 目录 | 作用 |
 | --- | --- |
-| `docker/` | 运行镜像、单次审计入口、DSH 指令和主 skill |
-| `k3s/` | Redis 队列、dispatcher Deployment、runner Job 模板、hostPath runs |
-| `dispatcher/` | Rust 实现的 Redis → Kubernetes Job 桥 |
-| `scripts/` | 批量入队脚本和地址列表 |
-| `tools/` | 审计后统计（`audit_stats`）和每条 run 的 MongoDB 持久化（`run_persist`） |
+| `docker/` | 运行镜像、入口（单 prompt 或从队列领活）、DSH 指令和主 skill |
+| `k3s/` | Redis 队列、KEDA ScaledJob、hostPath runs |
+| `dispatcher/` | 已退役的 Rust Redis → Job 桥（保留作参考/回滚） |
+| `scripts/` | 批量入队（digest 固定）、KEDA 安装、镜像固定、地址列表 |
+| `tools/` | 队列领活/ACK（`task_queue`）、审计后统计（`audit_stats`）、MongoDB 持久化（`run_persist`） |
 | `xtask/` | 格式化、lint、测试检查 |
 | `docs/` | 长报告 |
 
@@ -126,20 +128,24 @@ entrypoint 在退出时自动写 metadata、保存 stdout；审计成功退出�
 
 ## k3s 部署
 
+前置条件是 KEDA（负责创建 runner Job）。runner 自己从队列领任务，失败重试一次，入队时固定镜像 digest。
+
 ```bash
+./scripts/install_keda.sh
 cp k3s/runner-secret.example.yaml k3s/runner-secret.yaml
-cp k3s/dispatcher-secret.example.yaml k3s/dispatcher-secret.yaml
-# 填写 DEEPSEEK_API_KEY、ETHERSCAN_API_KEY、RPC_URL
+# 填写 DEEPSEEK_API_KEY、ETHERSCAN_API_KEY、RPC_URL、AGENT_AUDIT_REDIS_URL
 sudo mkdir -p /var/lib/agent-audit/runs
 k3s kubectl apply -f k3s/namespace.yaml
 k3s kubectl apply -f k3s/runner-secret.yaml
-k3s kubectl apply -f k3s/dispatcher-secret.yaml
+./scripts/set_runner_image.sh ghcr.io/lunaticabs/agent-audit:rebuild --apply
 k3s kubectl apply -k k3s/
 ```
 
-提交单个任务：
+提交单个任务（绕过入队脚本时要先建 consumer group，KEDA 按它的 lag 扩缩）：
 
 ```bash
+k3s kubectl -n agent-audit exec deploy/agent-audit-redis -- \
+  redis-cli XGROUP CREATE agent-audit:tasks agent-audit-runners '$' MKSTREAM
 k3s kubectl -n agent-audit exec deploy/agent-audit-redis -- \
   redis-cli XADD agent-audit:tasks '*' \
     task_id audit-20261026-001 \
@@ -155,7 +161,7 @@ python3 scripts/enqueue_redis.py \
   --image ghcr.io/lunaticabs/agent-audit:rebuild
 ```
 
-每个 Job 挂载节点本地 `hostPath` 到 `/opt/agent-audit/runs`，Pod 清理后 run 仍在。完整部署、secret 和多节点注意事项见 [k3s/README.md](k3s/README.md)。
+每个 Job 挂载节点本地 `hostPath` 到 `/opt/agent-audit/runs`，Pod 清理后 run 仍在。完整部署、KEDA 安装、暂停/恢复、重试与 pending 处理、多节点注意事项见 [k3s/README.md](k3s/README.md)。
 
 ## 运行统计
 
@@ -195,7 +201,7 @@ PYTHONPATH=tools python3 -m audit_stats report --runs-root runs --expected 120
 
 ## 开发检查
 
-Rust 侧只剩 dispatcher 和 xtask：
+Rust 侧只剩已退役的 dispatcher 和 xtask：
 
 ```bash
 cargo xtask check
@@ -214,6 +220,8 @@ Python 检查：
 ```bash
 PYTHONPATH=tools python3 -m unittest discover -s tools/audit_stats/tests -t tools -v
 PYTHONPATH=tools python3 -m unittest discover -s tools/run_persist/tests -t tools -v
+PYTHONPATH=tools python3 -m unittest discover -s tools/task_queue/tests -t tools -v
+python3 -m unittest discover -s scripts/tests -t scripts -v
 ```
 
 Docker 打包检查：

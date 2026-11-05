@@ -70,6 +70,10 @@ AGENT_AUDIT_MONGO_RETRIES AGENT_AUDIT_MONGO_PERSIST
 AGENT_AUDIT_STATS AGENT_AUDIT_REPLAY
 AGENT_AUDIT_REPLAY_TIMEOUT_MS AGENT_AUDIT_REPLAY_BLOCK_DELTA
 AGENT_AUDIT_RPC_TIMEOUT_MS
+AGENT_AUDIT_MAX_DURATION_SECONDS
+AGENT_AUDIT_QUEUE_MODE AGENT_AUDIT_REDIS_URL AGENT_AUDIT_QUEUE_STREAM
+AGENT_AUDIT_QUEUE_GROUP AGENT_AUDIT_QUEUE_CONSUMER AGENT_AUDIT_QUEUE_BLOCK_MS
+AGENT_AUDIT_QUEUE_ACK AGENT_AUDIT_ALLOW_IMAGE_MISMATCH
 ```
 
 An already-exported variable wins over the same key in `.env`; image defaults
@@ -111,6 +115,30 @@ prompt needs no routing or role text.
 
 `TASK_ID` is optional; use it for an external scheduler. `RUN_ID` overrides the
 generated run-directory name. Both are normalized to a safe directory name.
+
+## Pull mode (k3s / KEDA)
+
+When no prompt is supplied and `AGENT_AUDIT_REDIS_URL` is set, the entrypoint
+claims one task from the Redis Stream instead of reading `FULL_PROMPT`. This is
+the path KEDA uses: one Job per queued task, one task per Job.
+
+```bash
+docker run --rm \
+  -e AGENT_AUDIT_REDIS_URL=redis://redis:6379/0 \
+  -e AGENT_AUDIT_QUEUE_CONSUMER=my-job \
+  -v "$(pwd)/runs:/opt/agent-audit/runs" \
+  agent-audit:2.0.0
+```
+
+- The consumer name must be stable across retries; in k3s it is the Job name.
+- A failed attempt leaves the message pending so the retry re-claims the same
+  task; a successful run acknowledges it after the archive.
+- An empty queue is not an error: the container exits 0 without a run directory.
+- `AGENT_AUDIT_MAX_DURATION_SECONDS` bounds one attempt (the k3s ScaledJob sets
+  3000; unset means no per-attempt budget). On expiry the run is marked
+  `timeout` and the exit code is 124.
+- `AGENT_AUDIT_QUEUE_MODE=off` disables claiming; `pull` fails when the URL is
+  missing.
 
 ## Workspace and persistence
 

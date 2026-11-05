@@ -1,0 +1,105 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledJob
+metadata:
+  name: agent-audit-runner
+  namespace: agent-audit
+  labels:
+    app.kubernetes.io/name: agent-audit
+    app.kubernetes.io/component: runner
+    app.kubernetes.io/managed-by: keda
+spec:
+  # One Job per queued task. The Job itself claims the message (pull model):
+  # KEDA only decides how many Jobs should exist from the consumer-group lag.
+  jobTargetRef:
+    # Exactly one retry. The retry pod re-reads this Job's pending stream entry
+    # (consumer name == Job name), so it re-runs the same task, not a new one.
+    backoffLimit: 1
+    # Hard backstop for the whole Job. The per-attempt budget lives in the
+    # runner (AGENT_AUDIT_MAX_DURATION_SECONDS, default 3000s), so attempt 1
+    # times out with room left for attempt 2 plus replay/archive.
+    activeDeadlineSeconds: 7200
+    template:
+      metadata:
+        labels:
+          app.kubernetes.io/name: agent-audit
+          app.kubernetes.io/component: runner
+          app.kubernetes.io/managed-by: keda
+      spec:
+        restartPolicy: Never
+        terminationGracePeriodSeconds: 120
+        containers:
+          - name: agent-audit
+            # Pin a digest, not a tag: a batch must not silently change code
+            # when the mutable :rebuild tag moves. Use scripts/set_runner_image.sh
+            # so this value and AGENT_AUDIT_IMAGE below stay identical.
+            image: ghcr.io/lunaticabs/agent-audit@sha256:b509ec43ee8e5aae165ea1db78b31e76e4c202fc021af2634bfc4b16c0204671
+            imagePullPolicy: IfNotPresent
+            envFrom:
+              - secretRef:
+                  name: agent-audit-runner-env
+            env:
+              # Recorded in run_meta and stats; also compared with the queued
+              # message so a mismatched batch fails fast instead of mixing images.
+              - name: AGENT_AUDIT_IMAGE
+                value: ghcr.io/lunaticabs/agent-audit@sha256:b509ec43ee8e5aae165ea1db78b31e76e4c202fc021af2634bfc4b16c0204671
+              # The Job name is stable across pod retries; the pod name is not.
+              # Claim uses it as the consumer name so a retry reclaims its task.
+              - name: JOB_NAME
+                valueFrom:
+                  fieldRef:
+                    fieldPath: metadata.labels['job-name']
+              - name: AGENT_AUDIT_QUEUE_CONSUMER
+                value: "$(JOB_NAME)"
+              - name: AGENT_AUDIT_QUEUE_MODE
+                value: pull
+              - name: AGENT_AUDIT_QUEUE_STREAM
+                value: agent-audit:tasks
+              - name: AGENT_AUDIT_QUEUE_GROUP
+                value: agent-audit-runners
+              # 50 minutes per attempt. With the 2h Job deadline that leaves
+              # room for one retry plus the post-exit replay and archive.
+              - name: AGENT_AUDIT_MAX_DURATION_SECONDS
+                value: "3000"
+            resources:
+              # Tuned for ~20-26 concurrent audits on a small node. CPU is the
+              # admission gate (8 allocatable cores / 300m = 26); memory requests
+              # let a 20Gi node run ~26, a 16Gi node ~21. Raise the memory
+              # request if you see OOMKilled retries.
+              requests:
+                cpu: 300m
+                memory: 768Mi
+              limits:
+                cpu: "1500m"
+                memory: 3Gi
+            volumeMounts:
+              - name: runs
+                mountPath: /opt/agent-audit/runs
+        volumes:
+          # Node-local durable run root. One shared directory means a runner can
+          # read sibling runs; use per-run volumes if audits need tenant isolation.
+          - name: runs
+            hostPath:
+              path: /var/lib/agent-audit/runs
+              type: DirectoryOrCreate
+  pollingInterval: 15
+  minReplicaCount: 0
+  # Concurrency gate. KEDA creates at most this many unfinished Jobs, minus the
+  # ones already running. Pause the whole batch with:
+  #   kubectl -n agent-audit annotate scaledjob agent-audit-runner \
+  #     autoscaling.keda.sh/paused=true --overwrite
+  maxReplicaCount: 26
+  successfulJobsHistoryLimit: 10
+  # Keep failures long enough to inspect them; this is the batch's failure log.
+  failedJobsHistoryLimit: 100
+  scalingStrategy:
+    strategy: default
+  triggers:
+    - type: redis-streams
+      metadata:
+        address: agent-audit-redis.agent-audit.svc.cluster.local:6379
+        stream: agent-audit:tasks
+        consumerGroup: agent-audit-runners
+        # lag = entries in the stream that no consumer has been given yet.
+        # A claimed-but-unacked task is not lag: it is retried inside its Job.
+        lagCount: "1"
+        activationLagCount: "1"

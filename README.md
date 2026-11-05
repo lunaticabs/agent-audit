@@ -8,7 +8,8 @@ data, source data, and security tools. Two deployment modes share the same
 image:
 
 - **Single audit** — `docker/run.sh` launches one container for one prompt.
-- **Parallel audit** — k3s dispatcher turns Redis messages into one-shot Jobs.
+- **Parallel audit** — KEDA turns Redis Stream depth into one-shot Jobs; each
+  Job claims one task and acknowledges it only after a successful run.
 
 There is no Rust audit CLI and no fixed audit pipeline. The run directory is
 the primary artifact; when MongoDB is configured, the entrypoint mirrors each
@@ -36,6 +37,10 @@ Etherscan, RPC, and the installed tools directly.
   locally.
 - The supported chain set, the container tool list, and the k3s deployment are
   preserved.
+- **Parallel control plane:** KEDA ScaledJob replaces the custom dispatcher. The
+  runner claims one task per Job (consumer = Job name so a retry reclaims the
+  same task), exits 124 on a per-attempt timeout, and acknowledges only after a
+  successful run. Enqueue resolves the image tag to `@sha256:` first.
 
 ## Architecture
 
@@ -45,18 +50,19 @@ Single audit:
          -> runs/<run_id>/ -> host runs/ (bind mount)
 
 Parallel audit:
-  address list -> Redis Stream -> dispatcher -> Kubernetes Jobs
+  address list -> Redis Stream -> KEDA ScaledJob (lag -> Job count, capped)
+               -> one runner Job per task, claims its own message
                -> same runner image -> /var/lib/agent-audit/runs/<run_id>
-               -> (if configured) runs_meta + runs_files for that run
+               -> ack on success; (if configured) runs_meta + runs_files
 ```
 
 | Path | Role |
 | --- | --- |
-| `docker/` | Runtime image, single-audit entrypoint, DSH instructions and skill |
-| `k3s/` | Redis queue, dispatcher Deployment, runner Job template, hostPath runs |
-| `dispatcher/` | Rust Redis-to-Kubernetes-Job bridge |
-| `scripts/` | Batch enqueue helper and address lists |
-| `tools/` | Post-run statistics (`audit_stats`) and per-run MongoDB persistence (`run_persist`) |
+| `docker/` | Runtime image, entrypoint (single prompt or queue claim), DSH instructions and skill |
+| `k3s/` | Redis queue, KEDA ScaledJob, hostPath runs |
+| `dispatcher/` | Retired Rust Redis-to-Job bridge, kept for reference/rollback |
+| `scripts/` | Batch enqueue (digest-pinned), KEDA install, image pinning, address lists |
+| `tools/` | Queue claim/ack (`task_queue`), post-run statistics (`audit_stats`), MongoDB persistence (`run_persist`) |
 | `xtask/` | Workspace formatting, linting, and test checks |
 | `docs/` | Long-form reports |
 
@@ -174,20 +180,27 @@ short and routes to references for tools, chains, and report format.
 
 ## k3s deployment
 
+Prerequisite: KEDA (the controller that creates runner Jobs). The runner
+claims its own task from the stream, retries once on failure, and enqueues are
+digest-pinned.
+
 ```bash
+./scripts/install_keda.sh
 cp k3s/runner-secret.example.yaml k3s/runner-secret.yaml
-cp k3s/dispatcher-secret.example.yaml k3s/dispatcher-secret.yaml
-# fill DEEPSEEK_API_KEY, ETHERSCAN_API_KEY, RPC_URL
+# fill DEEPSEEK_API_KEY, ETHERSCAN_API_KEY, RPC_URL, AGENT_AUDIT_REDIS_URL
 sudo mkdir -p /var/lib/agent-audit/runs
 k3s kubectl apply -f k3s/namespace.yaml
 k3s kubectl apply -f k3s/runner-secret.yaml
-k3s kubectl apply -f k3s/dispatcher-secret.yaml
+./scripts/set_runner_image.sh ghcr.io/lunaticabs/agent-audit:rebuild --apply
 k3s kubectl apply -k k3s/
 ```
 
-Submit one task:
+Submit one task (create the consumer group first if you bypass the enqueue
+script — KEDA scales on its lag):
 
 ```bash
+k3s kubectl -n agent-audit exec deploy/agent-audit-redis -- \
+  redis-cli XGROUP CREATE agent-audit:tasks agent-audit-runners '$' MKSTREAM
 k3s kubectl -n agent-audit exec deploy/agent-audit-redis -- \
   redis-cli XADD agent-audit:tasks '*' \
     task_id audit-20261026-001 \
@@ -205,7 +218,7 @@ python3 scripts/enqueue_redis.py \
 
 Each Job mounts a node-local `hostPath` at `/opt/agent-audit/runs`, so the run
 survives Pod cleanup. See [k3s/README.md](k3s/README.md) for the full deployment,
-secret, and multi-node caveats.
+KEDA install, pause/resume, retry/pending behaviour, and multi-node caveats.
 
 ## Run statistics
 
@@ -251,7 +264,7 @@ schema.
 
 ## Development checks
 
-Only the dispatcher and xtask remain Rust:
+Only the retired dispatcher and xtask remain Rust:
 
 ```bash
 cargo xtask check
@@ -270,6 +283,14 @@ Python checks:
 ```bash
 PYTHONPATH=tools python3 -m unittest discover -s tools/audit_stats/tests -t tools -v
 PYTHONPATH=tools python3 -m unittest discover -s tools/run_persist/tests -t tools -v
+PYTHONPATH=tools python3 -m unittest discover -s tools/task_queue/tests -t tools -v
+python3 -m unittest discover -s scripts/tests -t scripts -v
+```
+
+Shell checks (no network, no cluster):
+
+```bash
+bash -n docker/entrypoint.sh scripts/install_keda.sh scripts/set_runner_image.sh
 ```
 
 Docker packaging checks:
