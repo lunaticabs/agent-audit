@@ -12,8 +12,10 @@ KUBECTL="${KUBECTL:-k3s kubectl}"
 MANIFEST_URL="https://github.com/kedacore/keda/releases/download/v${KEDA_VERSION}/keda-${KEDA_VERSION}.yaml"
 
 printf 'installing KEDA %s from %s\n' "$KEDA_VERSION" "$MANIFEST_URL"
+# Server-side apply: the ScaledJob CRD's annotation is larger than the 256KiB
+# limit kubectl's client-side apply enforces ("metadata.annotations: Too long").
 # shellcheck disable=SC2086
-${KUBECTL} apply -f "$MANIFEST_URL"
+${KUBECTL} apply --server-side --force-conflicts -f "$MANIFEST_URL"
 
 # The ScaledJob CRD must be established before k3s/kustomization.yaml applies
 # the runner. Wait for the operator so `apply -k` does not race the CRD.
