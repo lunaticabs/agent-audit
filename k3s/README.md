@@ -160,12 +160,16 @@ k3s kubectl -n agent-audit annotate scaledjob agent-audit-runner \
 ## Submit tasks
 
 KEDA scales on the consumer group's lag, so the group must exist before tasks
-are added. `scripts/enqueue_redis.py` creates it (`$`, new tasks only) when
-missing; if you add tasks by hand, create it too:
+are added. `scripts/enqueue_redis.py` creates it when missing. If you add tasks
+by hand, bootstrap it first — the command is idempotent and also pins
+`entries-read`, without which a trimmed stream reports `lag nil` and KEDA never
+activates:
 
 ```bash
-k3s kubectl -n agent-audit exec deploy/agent-audit-redis -- \
-  redis-cli XGROUP CREATE agent-audit:tasks agent-audit-runners '$' MKSTREAM
+k3s kubectl -n agent-audit port-forward svc/agent-audit-redis 6380:6379 &
+PYTHONPATH=tools AGENT_AUDIT_REDIS_URL=redis://127.0.0.1:6380/0 \
+  python3 -m task_queue bootstrap
+
 k3s kubectl -n agent-audit exec deploy/agent-audit-redis -- \
   redis-cli XADD agent-audit:tasks '*' \
     task_id audit-20261026-001 \

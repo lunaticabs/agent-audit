@@ -141,11 +141,12 @@ k3s kubectl apply -f k3s/runner-secret.yaml
 k3s kubectl apply -k k3s/
 ```
 
-提交单个任务（绕过入队脚本时要先建 consumer group，KEDA 按它的 lag 扩缩）：
+提交单个任务（绕过入队脚本时要先 bootstrap consumer group，KEDA 按它的 lag 扩缩；该命令幂等，并会固定 entries-read，否则 trim 过的流 lag 为 nil，KEDA 不会扩）：
 
 ```bash
-k3s kubectl -n agent-audit exec deploy/agent-audit-redis -- \
-  redis-cli XGROUP CREATE agent-audit:tasks agent-audit-runners '$' MKSTREAM
+k3s kubectl -n agent-audit port-forward svc/agent-audit-redis 6380:6379 &
+PYTHONPATH=tools AGENT_AUDIT_REDIS_URL=redis://127.0.0.1:6380/0 \
+  python3 -m task_queue bootstrap
 k3s kubectl -n agent-audit exec deploy/agent-audit-redis -- \
   redis-cli XADD agent-audit:tasks '*' \
     task_id audit-20261026-001 \

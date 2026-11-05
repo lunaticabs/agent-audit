@@ -195,12 +195,13 @@ k3s kubectl apply -f k3s/runner-secret.yaml
 k3s kubectl apply -k k3s/
 ```
 
-Submit one task (create the consumer group first if you bypass the enqueue
+Submit one task (bootstrap the consumer group first if you bypass the enqueue
 script — KEDA scales on its lag):
 
 ```bash
-k3s kubectl -n agent-audit exec deploy/agent-audit-redis -- \
-  redis-cli XGROUP CREATE agent-audit:tasks agent-audit-runners '$' MKSTREAM
+k3s kubectl -n agent-audit port-forward svc/agent-audit-redis 6380:6379 &
+PYTHONPATH=tools AGENT_AUDIT_REDIS_URL=redis://127.0.0.1:6380/0 \
+  python3 -m task_queue bootstrap
 k3s kubectl -n agent-audit exec deploy/agent-audit-redis -- \
   redis-cli XADD agent-audit:tasks '*' \
     task_id audit-20261026-001 \

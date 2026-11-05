@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import unittest
+from unittest import mock
 
 from task_queue import queue as task_queue
 from task_queue import runid
@@ -201,6 +202,57 @@ class AckAndPendingTests(unittest.TestCase):
         self.assertEqual(new_id, "2-0")
         self.assertEqual(client.commands[1][:3], ("XADD", "s", "*"))
         self.assertEqual(client.commands[2][0], "XACK")
+
+
+class GroupTests(unittest.TestCase):
+    def test_create_at_tail_pins_entries_read(self):
+        client = FakeClient(
+            [
+                "OK",
+                [b"length", 3, b"entries-added", 42],
+                "OK",
+            ]
+        )
+        created = task_queue.ensure_group(client, "s", "g", start_id="$")
+        self.assertTrue(created)
+        self.assertEqual(client.commands[0][:4], ("XGROUP", "CREATE", "s", "g"))
+        self.assertEqual(client.commands[2], ("XGROUP", "SETID", "s", "g", "$", "ENTRIESREAD", "42"))
+
+    def test_busygroup_is_not_an_error(self):
+        client = FakeClient([RedisError("BUSYGROUP Consumer Group name already exists")])
+        self.assertFalse(task_queue.ensure_group(client, "s", "g"))
+        self.assertEqual(len(client.commands), 1)
+
+    def test_entries_added_falls_back_to_xlen(self):
+        client = FakeClient([[b"length", 7], 7])
+        self.assertEqual(task_queue.entries_added(client, "s"), 7)
+
+
+class CliTests(unittest.TestCase):
+    class DummyClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def test_missing_group_is_a_config_error(self):
+        from task_queue import cli as task_cli
+
+        with mock.patch.object(task_cli.task_queue, "connect", return_value=self.DummyClient()):
+            with mock.patch.object(
+                task_cli.task_queue, "claim", side_effect=RedisError("NOGROUP No such key")
+            ):
+                code = task_cli.main(["--redis-url", "redis://x", "claim"])
+        self.assertEqual(code, 2)
+
+    def test_no_task_exit_code(self):
+        from task_queue import cli as task_cli
+
+        with mock.patch.object(task_cli.task_queue, "connect", return_value=self.DummyClient()):
+            with mock.patch.object(task_cli.task_queue, "claim", return_value=None):
+                code = task_cli.main(["--redis-url", "redis://x", "claim"])
+        self.assertEqual(code, task_cli.EXIT_NO_TASK)
 
 
 if __name__ == "__main__":

@@ -74,6 +74,11 @@ def build_parser() -> argparse.ArgumentParser:
     pending.add_argument("--details", action="store_true", help="List each pending message.")
     pending.add_argument("--json", action="store_true", help="Machine-readable output.")
 
+    sub.add_parser(
+        "bootstrap",
+        help="Create the consumer group KEDA scales on (idempotent).",
+    )
+
     requeue = sub.add_parser(
         "requeue",
         help="Copy a stranded pending message back onto the stream and ack the old id.",
@@ -94,8 +99,20 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     try:
         with task_queue.connect(args.redis_url) as client:
+            if args.command == "bootstrap":
+                created = task_queue.ensure_group(
+                    client, args.stream, args.group, start_id="$"
+                )
+                print(
+                    "group %s %s on %s"
+                    % (args.group, "created" if created else "already exists", args.stream)
+                )
+                return 0
+
             if args.command == "claim":
-                task_queue.ensure_group(client, args.stream, args.group, start_id="0")
+                # The group is created by bootstrap/enqueue. Creating it here
+                # would either replay a backlog (at 0) or silently skip queued
+                # tasks (at $), so a missing group is a configuration error.
                 task = task_queue.claim(
                     client,
                     stream=args.stream,
@@ -157,6 +174,14 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print("requeued %s -> %s" % (args.message_id, new_id))
                 return 0
     except RedisError as error:
+        if "NOGROUP" in error.message:
+            print(
+                "task_queue: consumer group %s does not exist on stream %s; "
+                "run `python3 -m task_queue bootstrap` (scripts/enqueue_redis.py "
+                "does this before enqueueing)" % (args.group, args.stream),
+                file=sys.stderr,
+            )
+            return 2
         print("task_queue: redis error: %s" % error, file=sys.stderr)
         return 1
     except ValueError as error:

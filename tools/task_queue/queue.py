@@ -87,21 +87,49 @@ def connect(url: str, timeout: Optional[float] = None) -> RedisClient:
     return RedisClient(host=host, port=port, db=db, password=password, timeout=timeout or 10.0)
 
 
+def entries_added(client: RedisClient, stream: str) -> Optional[int]:
+    """Total entries ever added to the stream (``XINFO STREAM``)."""
+
+    reply = client.execute("XINFO", "STREAM", stream)
+    if isinstance(reply, list):
+        for index in range(0, len(reply) - 1, 2):
+            if as_text(reply[index]) == "entries-added":
+                try:
+                    return int(reply[index + 1])
+                except (TypeError, ValueError):
+                    return None
+    length = client.execute("XLEN", stream)
+    return int(length) if isinstance(length, int) else None
+
+
 def ensure_group(
     client: RedisClient,
     stream: str,
     group: str,
     start_id: str = "$",
 ) -> bool:
-    """Create the consumer group if it is missing. Returns True when created."""
+    """Create the consumer group if it is missing. Returns True when created.
+
+    ``XGROUP CREATE ... $`` leaves ``entries-read`` unset. Redis can still
+    compute lag on an untrimmed stream, but after a trim it reports ``lag nil``
+    and KEDA (which scales on lag) never activates. Pinning ``entries-read`` to
+    the stream's ``entries-added`` makes lag deterministic from the first poll.
+    """
 
     try:
         client.execute("XGROUP", "CREATE", stream, group, start_id, "MKSTREAM")
-        return True
+        created = True
     except RedisError as error:
         if "BUSYGROUP" in error.message:
             return False
         raise
+
+    if created and start_id == "$":
+        added = entries_added(client, stream)
+        if added is not None:
+            client.execute("XGROUP", "SETID", stream, group, "$", "ENTRIESREAD", str(added))
+    return True
+
 
 
 def claim(
