@@ -32,7 +32,7 @@ spec:
             # Pin a digest, not a tag: a batch must not silently change code
             # when the mutable :rebuild tag moves. Use scripts/set_runner_image.sh
             # so this value and AGENT_AUDIT_IMAGE below stay identical.
-            image: ghcr.io/lunaticabs/agent-audit@sha256:a8af8647c7c7303d651c03531959628d2f6827f219d5464ba38c38bbbe4b2466
+            image: ghcr.io/lunaticabs/agent-audit@sha256:e9f8eb882d1431c74111bd351ac97668d431131468e2f94ab6b694658a4f23e9
             imagePullPolicy: IfNotPresent
             envFrom:
               - secretRef:
@@ -41,7 +41,7 @@ spec:
               # Recorded in run_meta and stats; also compared with the queued
               # message so a mismatched batch fails fast instead of mixing images.
               - name: AGENT_AUDIT_IMAGE
-                value: ghcr.io/lunaticabs/agent-audit@sha256:a8af8647c7c7303d651c03531959628d2f6827f219d5464ba38c38bbbe4b2466
+                value: ghcr.io/lunaticabs/agent-audit@sha256:e9f8eb882d1431c74111bd351ac97668d431131468e2f94ab6b694658a4f23e9
               # The Job name is stable across pod retries; the pod name is not.
               # Claim uses it as the consumer name so a retry reclaims its task.
               - name: JOB_NAME
@@ -93,6 +93,11 @@ spec:
   failedJobsHistoryLimit: 100
   scalingStrategy:
     strategy: default
+  # Default KEDA rollout terminates existing Jobs when this spec changes, which
+  # would kill audits running under the old image. Gradual keeps them and only
+  # applies the new spec to Jobs created afterwards.
+  rollout:
+    strategy: gradual
   triggers:
     - type: redis-streams
       metadata:
