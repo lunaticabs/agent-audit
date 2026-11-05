@@ -107,4 +107,6 @@ spec:
         # lag = entries in the stream that no consumer has been given yet.
         # A claimed-but-unacked task is not lag: it is retried inside its Job.
         lagCount: "1"
-        activationLagCount: "1"
+        # KEDA activates only when lag > activationLagCount (strict). At "1" a
+        # single queued task would never start, so the threshold must be 0.
+        activationLagCount: "0"
