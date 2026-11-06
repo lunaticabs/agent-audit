@@ -92,7 +92,14 @@ spec:
   # Keep failures long enough to inspect them; this is the batch's failure log.
   failedJobsHistoryLimit: 100
   scalingStrategy:
-    strategy: default
+    # The redis-streams lag metric counts only messages no consumer has been
+    # given yet; a running Job's message is already claimed and excluded. The
+    # default strategy computes `lag - runningJobs`, which double-subtracts the
+    # in-flight work: the batch decays to running ~= lag in the tail (half the
+    # remaining tasks queued while half run). `eager` fills every free slot up
+    # to maxReplicaCount while lag is non-zero, which keeps the tail at full
+    # concurrency and creates no extra Jobs once lag reaches 0.
+    strategy: eager
   # Default KEDA rollout terminates existing Jobs when this spec changes, which
   # would kill audits running under the old image. Gradual keeps them and only
   # applies the new spec to Jobs created afterwards.

@@ -96,6 +96,12 @@ Tuning notes:
   one runaway run, but 26 concurrent runs can still pressure a 16 Gi node into
   OOM kills. Watch for `OOMKilled` in failed Jobs and lower `maxReplicaCount` if
   it appears.
+- The ScaledJob uses `scalingStrategy: eager`, not the default. Redis `lag`
+  counts only messages no consumer has been given yet, so a running Job's
+  message is not in it; the default formula (`lag - runningJobs`) subtracts the
+  in-flight work twice and decays to `running ~= lag` in the tail, leaving half
+  the remaining tasks queued. `eager` fills every free slot up to
+  `maxReplicaCount` while lag is non-zero and creates nothing once lag is 0.
 - If you want `requests == limits` (Guaranteed QoS, predictable latency), raise
   requests to the measured p90 and lower `maxReplicaCount` accordingly.
 - Results can be stratified by image; the digest is recorded in `run_meta.image`
