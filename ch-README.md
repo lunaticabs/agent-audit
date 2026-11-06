@@ -155,11 +155,12 @@ k3s kubectl -n agent-audit exec deploy/agent-audit-redis -- \
 批量提交：
 
 ```bash
-python3 scripts/enqueue_redis.py \
-  --chain eth \
-  --address-file scripts/addresses/addrs.txt \
-  --image ghcr.io/lunaticabs/agent-audit:rebuild
+./scripts/enqueue_batch.py
 ```
+
+脚本会自己开 Redis port-forward（自动选空闲端口）、从 `k3s/runner-scaledjob.yaml`
+读取固定好的镜像 digest、入队并写 `runs/batch-<stamp>/manifest.json`，结束后关闭隧道。
+`--max-count 10` 试跑，`--chain base` 换链，`--dry-run` 只打印不发送。
 
 每个 Job 挂载节点本地 `hostPath` 到 `/opt/agent-audit/runs`，Pod 清理后 run 仍在。完整部署、KEDA 安装、暂停/恢复、重试与 pending 处理、多节点注意事项见 [k3s/README.md](k3s/README.md)。
 

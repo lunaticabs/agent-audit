@@ -210,11 +210,14 @@ k3s kubectl -n agent-audit exec deploy/agent-audit-redis -- \
 Submit a batch:
 
 ```bash
-python3 scripts/enqueue_redis.py \
-  --chain eth \
-  --address-file scripts/addresses/addrs.txt \
-  --image ghcr.io/lunaticabs/agent-audit:rebuild
+./scripts/enqueue_batch.py
 ```
+
+It opens the Redis port-forward itself, reads the pinned digest from
+`k3s/runner-scaledjob.yaml`, enqueues `scripts/addresses/addrs.txt`, writes
+`runs/batch-<stamp>/manifest.json`, and closes the tunnel. `--max-count 10`,
+`--chain base`, `--address-file ...` adjust it; `--dry-run` prints without
+sending.
 
 Each Job mounts a node-local `hostPath` at `/opt/agent-audit/runs`, so the run
 survives Pod cleanup. See [k3s/README.md](k3s/README.md) for the full deployment,

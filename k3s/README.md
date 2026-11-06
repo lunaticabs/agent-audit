@@ -178,20 +178,18 @@ k3s kubectl -n agent-audit exec deploy/agent-audit-redis -- \
     full_prompt 'Audit 0x0000000000000000000000000000000000000000 on eth.'
 ```
 
-Batch submission from an address list:
+Batch submission from an address list. The script opens the Redis
+port-forward itself (a free local port), reads the pinned image from
+[runner-scaledjob.yaml](runner-scaledjob.yaml), enqueues, writes a manifest,
+and closes the tunnel:
 
 ```bash
-k3s kubectl -n agent-audit port-forward svc/agent-audit-redis 6380:6379
+./scripts/enqueue_batch.py
 ```
 
-```bash
-python3 scripts/enqueue_redis.py \
-  --chain eth \
-  --address-file scripts/addresses/addrs.txt \
-  --host 127.0.0.1 \
-  --port 6380 \
-  --image ghcr.io/lunaticabs/agent-audit@sha256:...
-```
+`--max-count 10` for a trial batch, `--chain base` for another chain,
+`--host/--port` when a tunnel is already open, `--dry-run` to print only. The
+lower-level `scripts/enqueue_redis.py` remains for custom Redis endpoints.
 
 `--image` is resolved to `repo@sha256:...` before the first `XADD` (default
 `--pin-digest`); the tag is kept in the message as `image_tag` and the resolved
