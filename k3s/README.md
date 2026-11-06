@@ -145,6 +145,9 @@ Watch the control plane:
 ```bash
 k3s kubectl -n agent-audit get scaledjob,jobs,pods
 k3s kubectl -n agent-audit get jobs,pods -w
+
+# one screen: queue lag/pending, running/failed Jobs, pod phase, retries
+python3 scripts/watch_batch.py --kubectl "k3s kubectl"
 ```
 
 Pause the whole batch (no new Jobs; running ones continue):
