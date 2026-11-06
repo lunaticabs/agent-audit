@@ -25,8 +25,8 @@ docker build -f docker/Dockerfile -t agent-audit:2.0.0 .
 docker build -f docker/Dockerfile --target smoke-test -t agent-audit:smoke-test .
 ```
 
-GitHub Actions publishes the runtime and dispatcher images to GHCR. It runs the
-`smoke-test` target on pull requests before publishing.
+GitHub Actions publishes the runtime image to GHCR. It runs the `smoke-test`
+target on pull requests before publishing.
 
 ## Configure
 

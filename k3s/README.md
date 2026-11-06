@@ -19,15 +19,14 @@ Redis Stream (agent-audit:tasks, group agent-audit-runners)
   -> ack on success (when configured: runs_meta + runs_files for that run)
 ```
 
-There is no long-running runner Deployment and no dispatcher Deployment. KEDA
-owns admission control (how many Jobs may exist), Job history, and pause/resume;
-the runner owns claiming, retrying, and acknowledging its own task.
+There is no long-running runner Deployment. KEDA owns admission control (how
+many Jobs may exist), Job history, and pause/resume; the runner owns claiming,
+retrying, and acknowledging its own task.
 
-## Why pull instead of push
+## Why the runner claims its own task
 
-The old dispatcher read a message, created a Job, and injected `FULL_PROMPT` as
-an environment variable. KEDA cannot do that: it only creates Jobs from queue
-depth. So the Job claims its own task:
+KEDA cannot inject a prompt into a Job: it only creates Jobs from queue depth.
+So the Job claims its own task:
 
 - first attempt reads new work (`XREADGROUP ... >`);
 - a retry reads this Job's own pending entry (`... 0`) first, so the second pod
@@ -351,7 +350,7 @@ definitions and failure modes.
   `queue_message_id` for correlation back to the stream.
 - KEDA creates at most `maxReplicaCount` unfinished Jobs. A Job that is waiting
   on CPU/memory stays Pending and counts against that limit, so the queue waits
-  on scheduling, not on a dispatcher.
+  on scheduling, not on a queue controller.
 - There is no `ttlSecondsAfterFinished`: Jobs are reaped by the KEDA history
   limits so failures remain inspectable.
 - `hostPath` is node-local. All Jobs on the node share the runs root, so a
@@ -363,25 +362,3 @@ definitions and failure modes.
   --apply`. Running Jobs keep their image; new Jobs use the new digest. The
   runner then rejects tasks enqueued for the old digest until the batch is
   re-enqueued.
-
-## One-time migration from the dispatcher
-
-The old `agent-audit-dispatcher` Deployment consumed the same stream. Remove it
-before applying the ScaledJob, otherwise both controllers create Jobs:
-
-```bash
-k3s kubectl -n agent-audit delete deploy/agent-audit-dispatcher --ignore-not-found
-k3s kubectl -n agent-audit delete sa,role,rolebinding agent-audit-dispatcher --ignore-not-found
-k3s kubectl -n agent-audit delete cm agent-audit-runner-config agent-audit-dispatcher-config --ignore-not-found
-k3s kubectl -n agent-audit delete secret agent-audit-dispatcher-secret --ignore-not-found
-```
-
-Check for pending messages left in the old group before dropping it:
-
-```bash
-k3s kubectl -n agent-audit exec deploy/agent-audit-redis -- \
-  redis-cli XPENDING agent-audit:tasks agent-audit-dispatcher
-```
-
-The new group is `agent-audit-runners`; it starts at `$`, so only tasks enqueued
-after the switch are visible to KEDA. Re-enqueue anything unfinished.

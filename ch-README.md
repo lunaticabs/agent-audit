@@ -35,7 +35,6 @@
 | --- | --- |
 | `docker/` | 运行镜像、入口（单 prompt 或从队列领活）、DSH 指令和主 skill |
 | `k3s/` | Redis 队列、KEDA ScaledJob、hostPath runs |
-| `dispatcher/` | 已退役的 Rust Redis → Job 桥（保留作参考/回滚） |
 | `scripts/` | 批量入队（digest 固定）、KEDA 安装、镜像固定、地址列表 |
 | `tools/` | 队列领活/ACK（`task_queue`）、审计后统计（`audit_stats`）、MongoDB 持久化（`run_persist`） |
 | `xtask/` | 格式化、lint、测试检查 |
@@ -202,7 +201,7 @@ PYTHONPATH=tools python3 -m audit_stats report --runs-root runs --expected 120
 
 ## 开发检查
 
-Rust 侧只剩已退役的 dispatcher 和 xtask：
+Rust 侧只剩 xtask：
 
 ```bash
 cargo xtask check

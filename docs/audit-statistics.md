@@ -108,7 +108,7 @@
 - 轮次完成率：`--expected N` 对比实际产出；缺失 run 清单。
 - 唯一目标数、重复审计数。
 - 分层：model、reasoning_effort、image、chain、verified、schema grade。
-- 后续：队列等待时间（需要 dispatcher 记录 Job 创建时间）、每批次成本。
+- 后续：队列等待时间（需要记录 Job 创建时间）、每批次成本。
 
 ## 4. 口径与陷阱
 
@@ -179,7 +179,7 @@
 ## 6. k3s 落地
 
 ```text
-Redis -> dispatcher -> runner Job -> runs/<run_id>/stats/metrics.json (hostPath)
+Redis -> KEDA -> runner Job -> runs/<run_id>/stats/metrics.json (hostPath)
                                            |
                      per-node copy / CronJob / DaemonSet
                                            |
@@ -214,7 +214,7 @@ rsync -a --include='*/' --include='stats/' --include='stats/metrics.json' \
 
 ### 批次关联
 
-- `AGENT_AUDIT_IMAGE` 已由 dispatcher 注入，`metrics.run.image` 可用于按镜像分层。
+- `AGENT_AUDIT_IMAGE` 已由 ScaledJob 注入，`metrics.run.image` 可用于按镜像分层。
 - `batch_id` 建议加到 Redis 消息、Job annotation 和 Pod env，`metrics.run.batch_id`
   会记录它，用于"这一批 500 个地址跑完多少、产出多少"。
 - 提交侧建议同时落一份 manifest（task_id 列表）；`report --expected` 用它的长度，

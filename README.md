@@ -60,7 +60,6 @@ Parallel audit:
 | --- | --- |
 | `docker/` | Runtime image, entrypoint (single prompt or queue claim), DSH instructions and skill |
 | `k3s/` | Redis queue, KEDA ScaledJob, hostPath runs |
-| `dispatcher/` | Retired Rust Redis-to-Job bridge, kept for reference/rollback |
 | `scripts/` | Batch enqueue (digest-pinned), KEDA install, image pinning, address lists |
 | `tools/` | Queue claim/ack (`task_queue`), post-run statistics (`audit_stats`), MongoDB persistence (`run_persist`) |
 | `xtask/` | Workspace formatting, linting, and test checks |
@@ -265,7 +264,7 @@ schema.
 
 ## Development checks
 
-Only the retired dispatcher and xtask remain Rust:
+Only xtask remains Rust:
 
 ```bash
 cargo xtask check

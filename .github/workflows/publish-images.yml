@@ -28,10 +28,6 @@ jobs:
             image: agent-audit
             dockerfile: docker/Dockerfile
             description: DeepSeek Harness smart contract audit runner
-          - name: agent-audit-dispatcher
-            image: agent-audit-dispatcher
-            dockerfile: docker/dispatcher.Dockerfile
-            description: Redis-to-k3s bridge for one-shot audit jobs
 
     steps:
       - name: Checkout

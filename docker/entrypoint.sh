@@ -90,7 +90,7 @@ optional:
 
 The container persists the whole run directory. In the single-audit Docker
 entrypoint the host runs/ directory is bind-mounted at /opt/agent-audit/runs,
-so evidence is durable as soon as it is written. In k3s the dispatcher mounts
+so evidence is durable as soon as it is written. In k3s the ScaledJob mounts
 the node-local /var/lib/agent-audit/runs directory into every Job.
 
 Examples:
